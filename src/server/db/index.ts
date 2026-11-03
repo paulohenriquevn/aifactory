@@ -28,6 +28,7 @@ export function getDb(): Database {
 /**
  * A pool that resolves the storage manager's pool when a query runs, not when it is built, so it
  * can be handed to `theo.config.ts` (evaluated before the manager has been configured).
+ * `PostgresJobBackend.fromStorageManager` cannot be used there: usetheokit/theokit#1133.
  */
 export const lazyPool: PoolLike = {
   async query<R>(sql: string, params?: unknown[]) {
