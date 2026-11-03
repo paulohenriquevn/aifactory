@@ -1,0 +1,74 @@
+# Product context
+
+Prepended to your agent's context on **every turn**, and it is the strongest source in the file
+layer (priority 60) — nothing else overrides it. That is what decides what belongs here.
+
+> **Not the same file as `AGENTS.md` at the root.** That one tells agents how to work on this
+> codebase: commands, layout, conventions. This one tells your agent what your product IS, for the
+> conversations it has with your users. If a sentence would help someone edit the code, it goes
+> there instead.
+
+**Put facts here, not preferences.** A preference written here wins against every personality, so a
+tone instruction in this file quietly makes `usePersonality` do nothing. Tone belongs in
+`.theokit/personalities/`; instructions about specific files belong in `.theokit/rules/`.
+
+## Why this file is here and not at the root
+
+This project installs `@theokit/sdk@^5.11.0`, where **both** locations work: 5.x added a root
+`THEO.md` (`usetheokit/theokit-sdk#531`) at priority 55, and `.theokit/THEO.md` at 60 still wins a
+conflict. The scaffold keeps the file here because it wins, not because the root is unreadable.
+
+That reason is new. This paragraph used to say the template pinned `^4.52.1` — where
+`.theokit/THEO.md` was the **only** path read and a root copy was silently ignored — and that 5.x
+was published on the `next` channel only, so moving the file would break the default install. Both
+halves expired: 5.5.0 is `latest`, and the template's pin moved to `^5.3.0` because every `.claude`
+parity surface this framework advertises is absent from 4.x. A scaffold that hands a new project an
+SDK delivering none of that, with nothing saying so, is the defect the pin change closes.
+
+The floor was 5.3 rather than 5.0 because the framework's persistence barrel re-exports six names that
+5.0.0 does not have — measured with controls, 1 of 7 at 5.0.0 and 7 of 7 from 5.3.0 — so the range had
+to name a version that can actually build it.
+
+It moved to 5.9.2 on 2026-09-28, for a reason that is about deployment rather than about exports. Every
+version below it resolves a path at module scope in `internal/providers/catalog-loader.ts`, and Cloudflare
+executes the top-level module during validation — so a Workers deploy of a project declaring an agent was
+refused outright with code 10021. The framework carried a compensation for it in the `wrangler.toml` it
+generates, substituting a literal for `import.meta.url`; that made a broken dependency appear to work and
+would have covered the next one with the same vice in silence. 5.9.2 fixes the cause, measured on the
+published tarball — 0 of 254 executable files resolve a path at module scope — so the compensation is gone
+and the requirement is declared here instead, where a reader can see it.
+
+It moved to 5.11.0 on 2026-10-21. That release marks the system prompt for the provider cache on an
+Anthropic-family model, `@theokit/agents` requires it, and `theokit` now asks for it in its peer range, so
+a scaffold pinning lower would admit an SDK the framework refuses.
+
+Two more things worth knowing if you do move it once 5.x is stable:
+
+- The root spec sets `followImports: true`, this one does not. `@file` references resolve there and
+  not here.
+- Keep the pair. `AGENTS.md` is read by Cursor, Copilot and Claude Code as well as by TheoKit, and
+  it addresses a different audience — agents that write your code, rather than the agent that talks
+  to your users. That distinction survives whichever location this file ends up in.
+
+Keep it short — every line costs tokens on every turn.
+
+## What this app is
+
+Replace this with two or three sentences: what your product does, who uses it, and the one thing an
+agent must never get wrong about it.
+
+## Vocabulary
+
+The highest-value section, and the one most projects skip. Define the words your domain uses
+differently from everyone else — a model that guesses what "account" means in your system will
+guess wrong in a way that reads as fluent, which is the hardest kind of wrong to notice.
+
+| Term   | In this app it means                     |
+| ------ | ---------------------------------------- |
+| _term_ | _the definition your team actually uses_ |
+
+## Boundaries
+
+What the agent should refuse or hand off, stated as fact rather than as tone. "Refunds are issued
+by support, never by the assistant" is a fact. "Be careful with refunds" is a preference, and it
+belongs in a personality where a user could switch it.

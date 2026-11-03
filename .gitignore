@@ -1,0 +1,48 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# theokit
+# `.theokit/` holds the agent context you write AND what `theokit build` generates. The context
+# (THEO.md, rules, personalities, skills, agents, commands, hooks.json) is versioned; build
+# output, agent memory, local overrides and MCP tokens stay out (usetheokit/theokit#1075).
+.theokit/*
+!.theokit/THEO.md
+!.theokit/rules/
+!.theokit/personalities/
+!.theokit/skills/
+!.theokit/agents/
+!.theokit/commands/
+!.theokit/hooks.json
+dist/
+
+# env files
+.env
+.env.local
+.env.*.local
+
+# testing
+coverage/
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# misc
+.DS_Store
+*.pem
+*.tsbuildinfo
+
+# framework-written app data — conversation transcripts (.data/agent-sessions/**/*.jsonl)
+# and the local SQLite DB both live here. This said `data/`, without the dot, and
+# matched nothing the framework writes: every prompt, answer, tool input and tool
+# result went into version control on the first commit after the first run (#395).
+.data/
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo

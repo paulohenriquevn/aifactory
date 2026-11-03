@@ -1,0 +1,52 @@
+{
+  "name": "aifactory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A software factory that turns GitHub issues into verified pull requests with coding agents running in cloud sandboxes.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "dev": "theokit dev",
+    "build": "theokit build",
+    "start": "theokit start",
+    "preview": "theokit preview",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.4",
+    "pg": "8.23.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router": "^7.0.0",
+    "theokit": "^0.77.4",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "8.23.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "drizzle-kit": "0.31.11",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "jsdom": "^25.0.0",
+    "prettier": "^3.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  }
+}

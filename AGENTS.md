@@ -1,0 +1,72 @@
+# aifactory
+
+Software factory that turns GitHub issues into verified pull requests. The plan, milestones and
+current state are in `docs/PLAN.md`; the decisions behind it are in `docs/adr/`.
+
+Context for coding agents working **on this repository** — Cursor, Copilot, Claude Code and
+TheoKit itself all read this file. It sits at the root and is discovered from any subdirectory, so
+it is the right place for what someone needs to know before changing code here.
+
+> **Not the same file as `.theokit/THEO.md`.** This one describes the codebase, for agents that
+> write it. That one describes your product, for the agent that talks to your users. Two audiences,
+> two files — see the table at the bottom.
+
+## Commands
+
+| What                 | Command                                 |
+| -------------------- | --------------------------------------- |
+| Run in development   | `npm run dev`                           |
+| Build for production | `npm run build`                         |
+| Serve the build      | `npm start`                             |
+| Tests (unit)         | `npm test`                              |
+| Tests (Postgres)     | `npm run test:integration`              |
+| Types                | `npm run typecheck`                     |
+| Lint / format        | `npm run lint` · `npm run format:check` |
+
+The integration suite needs Postgres (`docker compose up -d`) and `DATABASE_URL` exported; it fails
+without it on purpose.
+
+Run `typecheck` and `test` before proposing a change is finished. `format:check` runs in the same
+suite, so a formatting slip fails the build rather than surfacing in review.
+
+## Layout
+
+```
+src/app/            frontend — the only half that reaches a browser
+src/server/         backend — never leaves the machine
+  agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
+  db/               Postgres config, pool, Drizzle schema, health probe
+  routes/           file-based HTTP
+src/shared/         contracts both sides import
+.theokit/           agent context read at runtime (no rebuild)
+```
+
+The paths are declared in `theo.config.ts`. Move them there if you move them at all — the framework
+reads that file, not a convention.
+
+## Conventions
+
+- **An agent is a file.** `src/server/agents/chat.ts` is served at `POST /api/agents/chat`. Adding
+  a second agent means adding a second file, not registering anything.
+- **Sub-folders under `agents/` are semantic, not routes.** `tools/`, `skills/`, `prompts/` and
+  `hooks/` are skipped by the route scanner, so `tools/weather.ts` never becomes an endpoint.
+- **TheoKit first.** Before adding a library or a mechanism, check what `theokit` already ships.
+  A gap becomes an issue on `usetheokit/theokit`, and a workaround cites it.
+- **One Postgres pool, owned by TheoKit.** Get it from `getPool()`, which goes through
+  `getStorageManager().usePostgres`. Never `new pg.Pool` in application code: the manager drains
+  it on shutdown and keeps the process alive when Postgres drops an idle connection.
+- **Commits carry no co-author trailer.**
+- **Validate at the boundary.** A route validates input with Zod once, then trusts it.
+- **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`
+  in `chat.ts`, not with a check buried inside the tool.
+
+## The two context files
+
+|          | `AGENTS.md` (this file)                     | `.theokit/THEO.md`                   |
+| -------- | ------------------------------------------- | ------------------------------------ |
+| Audience | agents that **write** this code             | the agent your **users** talk to     |
+| Content  | commands, layout, conventions               | product facts, domain vocabulary     |
+| Read by  | many tools (root, walks up to the git root) | TheoKit only, this directory         |
+| Priority | 10 — anything else can override it          | 60 — the strongest file-layer source |
+
+Because `THEO.md` wins conflicts, keep facts there and preferences here.
