@@ -188,8 +188,8 @@ importers:
         specifier: ^7.0.0
         version: 7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       theokit:
-        specifier: ^0.77.4
-        version: 0.77.4(@theokit/sdk@5.12.0(ws@8.22.0))(@types/node@22.20.5)(csstype@3.2.3)(jiti@2.7.0)(lightningcss@1.32.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7)
+        specifier: ^0.78.0
+        version: 0.78.0(@theokit/sdk@5.12.0(ws@8.22.0))(@types/node@22.20.5)(csstype@3.2.3)(jiti@2.7.0)(lightningcss@1.32.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7)
       zod:
         specifier: ^4.0.0
         version: 4.6.7
@@ -2458,8 +2458,8 @@ packages:
   text-decoder@1.2.7:
     resolution: {integrity: sha512-vlLytXkeP4xvEq2otHeJfSQIRyWxo/oZGEbXrtEEF9Hnmrdly59sUbzZ/QgyWuLYHctCHxFF4tRQZNQ9k60ExQ==}
 
-  theokit@0.77.4:
-    resolution: {integrity: sha512-IH8HWB3NznXS75J/acpAM7DNL7wCIlT7EBuo+K8r2zqykciUQqdC0ORQsubjzQCZDnfDUzt77lJQC/CxSTdKjQ==}
+  theokit@0.78.0:
+    resolution: {integrity: sha512-97/2DQVERSeOm8K/CYCt+vRJnJk3m6ujPRYAUa9EhtFjKnMFbIKIiU818gJ+mYDk+mQIFsh5IChTcgCOBy42Vw==}
     engines: {node: '>=22.12.0'}
     hasBin: true
     peerDependencies:
@@ -4590,7 +4590,7 @@ snapshots:
     transitivePeerDependencies:
       - react-native-b4a
 
-  theokit@0.77.4(@theokit/sdk@5.12.0(ws@8.22.0))(@types/node@22.20.5)(csstype@3.2.3)(jiti@2.7.0)(lightningcss@1.32.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7):
+  theokit@0.78.0(@theokit/sdk@5.12.0(ws@8.22.0))(@types/node@22.20.5)(csstype@3.2.3)(jiti@2.7.0)(lightningcss@1.32.0)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7):
     dependencies:
       '@theokit/agents': 16.1.1(@theokit/http@2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(reflect-metadata@0.2.2)(zod@4.6.7))(react@19.3.1)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7)
       '@theokit/http': 2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(reflect-metadata@0.2.2)(zod@4.6.7)

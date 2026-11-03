@@ -27,4 +27,4 @@ allowBuilds:
   workerd: true
 minimumReleaseAgeExclude:
   - '@theokit/http@2.3.1'
-  - theokit@0.77.4
+  - theokit@0.77.4 || 0.78.0

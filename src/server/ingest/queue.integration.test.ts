@@ -4,14 +4,14 @@ import { PostgresJobBackend, createOutbox, createQueueClient } from 'theokit/ser
 import { getStorageManager } from 'theokit/server/storage'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { getDb, getPool, lazyPool, readDatabaseUrl } from '../db'
+import { createPool, getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, task } from '../db/schema'
 
 import { recordAndQueue } from './queue'
 import type { Delivery } from './record'
 
-const backend = new PostgresJobBackend({ pool: lazyPool })
+const backend = PostgresJobBackend.fromStorageManager(getStorageManager(), 'main', createPool)
 const queue = createQueueClient(backend, createOutbox())
 
 beforeAll(async () => {

@@ -1,6 +1,6 @@
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
-import { getStorageManager, type PoolLike } from 'theokit/server/storage'
+import { getStorageManager, type PostgresFactory } from 'theokit/server/storage'
 
 import { DATABASE_NAME } from './config'
 import * as schema from './schema'
@@ -15,24 +15,15 @@ export type Database = NodePgDatabase<typeof schema>
  * use, so importing this module never connects.
  */
 export function getPool(): pg.Pool {
-  return getStorageManager().usePostgres(DATABASE_NAME, (server, db) => {
-    const { host, port, user, password } = server
-    return new pg.Pool({ host, port, user, password, database: db.database, ...db.pool })
-  }) as pg.Pool
+  return getStorageManager().usePostgres(DATABASE_NAME, createPool) as pg.Pool
+}
+
+/** How the storage manager builds the pool: from the server and database in `theo.config.ts`. */
+export const createPool: PostgresFactory = (server, db) => {
+  const { host, port, user, password } = server
+  return new pg.Pool({ host, port, user, password, database: db.database, ...db.pool })
 }
 
 export function getDb(): Database {
   return drizzle(getPool(), { schema })
-}
-
-/**
- * A pool that resolves the storage manager's pool when a query runs, not when it is built, so it
- * can be handed to `theo.config.ts` (evaluated before the manager has been configured).
- * `PostgresJobBackend.fromStorageManager` cannot be used there: usetheokit/theokit#1133.
- */
-export const lazyPool: PoolLike = {
-  async query<R>(sql: string, params?: unknown[]) {
-    const result = await getPool().query(sql, params)
-    return { rows: result.rows as unknown as R[], rowCount: result.rowCount }
-  },
 }

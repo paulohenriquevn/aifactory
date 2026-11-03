@@ -1,8 +1,10 @@
 import { config } from 'theokit'
 import { PostgresJobBackend } from 'theokit/server/jobs'
+import { getStorageManager } from 'theokit/server/storage'
 
-import { lazyPool } from './src/server/db'
-import { storageFromEnv } from './src/server/db/config'
+import { createPool } from './src/server/db'
+import { DATABASE_NAME, storageFromEnv } from './src/server/db/config'
+import { LOCK_SECONDS } from './src/server/factory/lease'
 
 /**
  * The project has two surfaces, and one of them is the whole backend.
@@ -26,19 +28,18 @@ export default config()
 
 /**
  * Persistent jobs on the same Postgres pool. `theokit start` creates the table, leases jobs and
- * runs them in this process. The worker runs the leases of a tick one after another, so a lease
- * waits with its lock ticking while the one before it runs: one job per tick, and a lock longer
- * than the longest run (the sandbox is capped at 30 minutes), or a second job could be taken
- * while the first still runs. A handler cannot extend its lease, which is why the lock is one hour
- * for every job (usetheokit/theokit#1132).
+ * runs them in this process. The worker runs the leases of a tick one after another, so one job per
+ * tick. The lock is short (two minutes) and the `run-task` job extends it while a run is alive
+ * (`ctx.extendLease`), so a worker that crashes frees its job in minutes, not after the longest
+ * possible run (usetheokit/theokit#1132).
  *
  * Without `DATABASE_URL` there is no backend, and the server still starts and reports not ready.
  */
 function jobsFromEnv(): TheoConfigJobs | undefined {
   if (!storageFromEnv()) return undefined
   return {
-    backend: new PostgresJobBackend({ pool: lazyPool }),
-    worker: { enabled: true, pollIntervalMs: 2_000, batchSize: 1, lockSeconds: 3_600 },
+    backend: PostgresJobBackend.fromStorageManager(getStorageManager(), DATABASE_NAME, createPool),
+    worker: { enabled: true, pollIntervalMs: 2_000, batchSize: 1, lockSeconds: LOCK_SECONDS },
   }
 }
 type TheoConfigJobs = NonNullable<Parameters<ReturnType<typeof config>['set']>[0]['jobs']>
