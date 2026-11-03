@@ -100,23 +100,17 @@ factory-global                    repositório privado global
 - O onboarding cria a base privada do projeto a partir do template; a execução
   recebe acesso somente às bases correspondentes.
 
-## Sandbox: recomendação pendente de validação
+## Sandbox: Vercel Sandbox aceito como primeiro adapter
 
-O benchmark documental de 2026-10-30 recomendou Vercel Sandbox como primeiro
-adapter e E2B como alternativa. Isso não é uma escolha validada em execução.
-As contas e o spike estavam pendentes; bloqueiam M2, não M0 ou M1.
+O benchmark documental de 2026-10-30 recomendou o Vercel Sandbox, e o Paulo aceitou a escolha em
+2026-11-03. O spike rodou no mesmo dia contra um projeto Hobby e verificou os cinco pontos
+previstos: bloqueio de hosts fora da allowlist (incluindo DNS), segredo fora do sandbox,
+streaming incremental de stdout, workspace preservado ao retomar e o que o estado `waiting`
+precisa preservar. Os resultados estão na [ADR 0003](adr/0003-sandbox.md).
 
-O spike deve verificar ao menos:
-
-- Bloqueio de hosts fora da allowlist, incluindo comportamento de DNS.
-- Ausência de secrets dentro da sandbox e compatibilidade do Claude Code com
-  credenciais intermediadas pelo provedor.
-- Streaming incremental de stdout.
-- Preservação do workspace ao retomar.
-- Se `waiting` exige preservar processos em memória ou apenas o filesystem.
-
-As condições e capacidades dos provedores devem ser verificadas novamente no
-spike, sem tratar o benchmark histórico como garantia atual.
+Ficou em aberto uma chamada real do Claude Code com a chave injetada pelo firewall, porque o
+ambiente não tem `ANTHROPIC_API_KEY`. O caminho de rede e a substituição do header já foram
+observados. O E2B segue como segundo adapter.
 
 ## Ponto de retomada
 
@@ -133,8 +127,8 @@ fechadas com evidências. Veja o [registro da release](THEOKIT-RELEASE-0.76.1.md
 Entre 2026-10-31 e 2026-11-03 a auditoria de prontidão do TheoKit abriu, corrigiu e verificou
 no pacote publicado as issues #1069 a #1079, #1086, #1096, #1097, #1100 a #1102 e #1123. A
 última versão é a `theokit@0.77.4`, que a fábrica adotou. Ficam fora da auditoria a
-documentação do site (`website#26` e `website#27`) e o que depende de contas do Paulo: sandbox
-na nuvem, Claude Code headless e OAuth do GitHub.
+documentação do site (`website#26` e `website#27`) e o que depende de contas do Paulo: a chave
+da Anthropic para o Claude Code headless e o acesso do GitHub à fábrica.
 
 Estado local confirmado em 2026-11-03, com `theokit@0.77.4`:
 
@@ -159,8 +153,8 @@ Estado local confirmado em 2026-11-03, com `theokit@0.77.4`:
 - [x] Resolver o contrato de `createPool`: o teste passou a exercitar o pool de `getPool()`.
 - [x] Definir o comportamento de readiness para configuração inválida do banco.
 - [x] Alinhar README e configuração com a fábrica.
-- [x] Registrar ADRs da arquitetura, base de conhecimento e sandbox; esta última permanece
-      proposta até o spike.
+- [x] Registrar ADRs da arquitetura, base de conhecimento e sandbox; a do sandbox foi
+      aceita depois do spike.
 - [x] Configurar o CI: formatação, `theokit check` (tipos, lint e scan), testes de unidade e de
       integração, e build.
 - [x] Confirmar o CI verde no GitHub após o primeiro push (run 41696481251, todos os passos).

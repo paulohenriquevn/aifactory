@@ -17,6 +17,9 @@ node_modules/
 !.theokit/hooks.json
 dist/
 
+# vercel (project link written by `vercel link`)
+.vercel/
+
 # env files
 .env
 .env.local
@@ -46,3 +49,5 @@ pnpm-debug.log*
 .idea/
 *.swp
 *.swo
+.vercel
+.env*

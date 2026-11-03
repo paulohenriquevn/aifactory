@@ -24,6 +24,7 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@vercel/sandbox": "^3.9.1",
     "drizzle-orm": "0.45.4",
     "pg": "8.23.1",
     "react": "^19.0.0",
