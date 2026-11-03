@@ -7,7 +7,8 @@ import type { IsolatedSandbox, IsolatedSandboxProvider, SandboxSpec } from './sa
 const TIMED_OUT = 124
 
 /**
- * A `SandboxBackend` over a Vercel Sandbox microVM. `execute` runs the command through `sh -c`
+ * A `SandboxBackend` over a Vercel Sandbox microVM. The contract has no network policy and no
+ * lifecycle, so both live beside it (usetheokit/theokit#1130). `execute` runs the command through `sh -c`
  * and returns the real exit code (the SDK's own backends coarsen it to 0, 124 and 1).
  */
 class VercelBackend extends SandboxBackend {

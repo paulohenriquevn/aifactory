@@ -230,6 +230,28 @@ describe('runTask', () => {
     expect(sandbox.specs).toHaveLength(0)
   })
 
+  it('stops the sandbox and says why when the job lease expires mid-run', async () => {
+    const id = await seedTask()
+    const abort = new AbortController()
+    const sandbox = new FakeSandbox(changed())
+    const slowAgent: CodingHarness = {
+      name: 'slow',
+      run: async () => {
+        abort.abort() // the lease runs out while the agent works
+        throw new Error('command killed')
+      },
+    }
+
+    const result = await runTask(deps(sandbox, { harness: slowAgent }), id, abort.signal)
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      stage: 'build',
+      error: 'the job lease expired before the run finished',
+    })
+    expect(sandbox.stopped).toBeGreaterThanOrEqual(1)
+  })
+
   it('throws for a task that does not exist', async () => {
     await expect(runTask(deps(new FakeSandbox()), 999)).rejects.toThrow(/does not exist/)
   })

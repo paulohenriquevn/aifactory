@@ -11,7 +11,7 @@ export default defineJob('run-task', {
   // A run that fails is recorded as the `failed` stage and goes to a person. Retrying it on its
   // own would spend the agent's budget again on the same issue.
   maxAttempts: 1,
-  async handler({ input }) {
+  async handler({ input, signal }) {
     let deps
     try {
       deps = factoryDeps()
@@ -22,7 +22,7 @@ export default defineJob('run-task', {
       await enterStage(getDb(), input.taskId, 'failed', { failedAt: 'config', error: message })
       throw error
     }
-    const result = await runTask(deps, input.taskId)
+    const result = await runTask(deps, input.taskId, signal)
     console.log(JSON.stringify({ event: 'task_finished', taskId: input.taskId, ...result }))
   },
 })

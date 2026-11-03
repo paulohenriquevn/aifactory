@@ -29,7 +29,8 @@ export default config()
  * runs them in this process. The worker runs the leases of a tick one after another, so a lease
  * waits with its lock ticking while the one before it runs: one job per tick, and a lock longer
  * than the longest run (the sandbox is capped at 30 minutes), or a second job could be taken
- * while the first still runs.
+ * while the first still runs. A handler cannot extend its lease, which is why the lock is one hour
+ * for every job (usetheokit/theokit#1132).
  *
  * Without `DATABASE_URL` there is no backend, and the server still starts and reports not ready.
  */

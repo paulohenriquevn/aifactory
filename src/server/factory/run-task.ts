@@ -43,7 +43,12 @@ class StageFailure extends Error {}
  * pushes the result to `factory/<issue>`. Each stage is recorded as the run enters it. The
  * sandbox is always stopped, and a failure is recorded as the `failed` stage with its reason.
  */
-export async function runTask(deps: RunTaskDeps, taskId: number): Promise<RunResult> {
+export async function runTask(
+  deps: RunTaskDeps,
+  taskId: number,
+  /** Aborts when the job's lease expires: the sandbox is stopped so the run does not outlive it. */
+  signal?: AbortSignal,
+): Promise<RunResult> {
   const { db } = deps
   const [row] = await db.select().from(task).where(eq(task.id, taskId))
   if (!row) throw new Error(`task ${taskId} does not exist`)
@@ -79,6 +84,8 @@ export async function runTask(deps: RunTaskDeps, taskId: number): Promise<RunRes
       ],
     })
     const { backend } = sandbox
+    const running = sandbox
+    signal?.addEventListener('abort', () => void running.stop().catch(() => {}), { once: true })
 
     // The SDK's provisioner clones with `--` and the `ext::` transport off. `HEAD` is the
     // repository's default branch, so the factory does not need to know its name.
@@ -111,7 +118,7 @@ export async function runTask(deps: RunTaskDeps, taskId: number): Promise<RunRes
       throw new StageFailure('the agent made no change to the repository')
     }
     // Text that came from outside (the issue title, the author) goes in by file, so none of it is
-    // ever parsed by a shell.
+    // ever parsed by a shell (the SDK does not export its quoting helper: usetheokit/theokit#1131).
     await backend.uploadFile(GITCONFIG, gitConfig(deps.author))
     await backend.uploadFile(COMMIT_MESSAGE, `${oneLine(issue.title)} (#${row.issueNumber})\n`)
     const git = `GIT_CONFIG_GLOBAL=${GITCONFIG} git -C ${repoDir}`
@@ -123,7 +130,11 @@ export async function runTask(deps: RunTaskDeps, taskId: number): Promise<RunRes
     await enterStage(db, taskId, 'done', { branch, sha, costUsd: result.costUsd })
     return { status: 'done', branch, sha, summary: result.summary }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = signal?.aborted
+      ? 'the job lease expired before the run finished'
+      : error instanceof Error
+        ? error.message
+        : String(error)
     await enterStage(db, taskId, 'failed', { failedAt: current, error: message })
     return { status: 'failed', stage: current, error: message }
   } finally {
