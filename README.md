@@ -5,8 +5,9 @@ programação em sandboxes na nuvem. É uma ferramenta pessoal, open source e si
 suporte a vários projetos.
 
 Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7. O M0
-(fundação) está concluído: hoje existem o scaffold, o Postgres, as rotas de liveness e
-readiness e o CI. Ingestão, execução, agentes e painel ainda não existem.
+(fundação) e o M1 (ingestão) estão concluídos: hoje existem o scaffold, o Postgres, as rotas de
+liveness e readiness, o CI e o webhook do GitHub que cria tasks. Execução, agentes e painel
+ainda não existem.
 
 ## Rodando localmente
 
@@ -14,6 +15,7 @@ readiness e o CI. Ingestão, execução, agentes e painel ainda não existem.
 pnpm install
 docker compose up -d                 # Postgres 17 na porta 54329
 cp .env.example .env                 # DATABASE_URL já aponta para o Compose
+pnpm db:migrate                      # cria as tabelas ingress e task
 pnpm dev
 ```
 
@@ -21,6 +23,20 @@ pnpm dev
 | ----------------- | -------------------------------------------------------------------- |
 | `GET /api/health` | 200 sempre que o processo está de pé                                 |
 | `GET /api/ready`  | 200 com o Postgres respondendo, 503 com o motivo quando não responde |
+
+### Webhook do GitHub
+
+`POST /api/webhooks/github` recebe as entregas. Configure no repositório um webhook de eventos
+`Issues`, com conteúdo `application/json` e o mesmo secret de `GITHUB_WEBHOOK_SECRET`.
+
+- Uma issue que recebe a label `factory`, ou que é aberta com ela, vira uma task em `intake`.
+- Cada entrega fica em `ingress`, com o resultado, um código e o motivo. Uma entrega repetida
+  (mesmo `X-GitHub-Delivery`) não muda nada. Uma issue tem no máximo uma task, mesmo que a label
+  seja removida e posta de novo.
+- A assinatura `X-Hub-Signature-256` é verificada sobre o corpo bruto antes de qualquer escrita.
+  Assinatura inválida ou ausente responde 401. Sem `GITHUB_WEBHOOK_SECRET` a rota responde 503.
+
+### Readiness
 
 Sem `DATABASE_URL` o servidor sobe e `/api/ready` responde 503 com "Database "main" not
 configured". Com `DATABASE_URL` que não é uma URL `postgres://`, o `theokit` recusa iniciar e
@@ -49,7 +65,9 @@ silêncio passaria por verde.
 src/app/              frontend (React, roteamento por arquivos)
 src/server/
   db/                 Postgres: config, pool, schema Drizzle e sonda de saúde
-  routes/             rotas HTTP (health, ready)
+  ingest/             decisão sobre cada entrega do GitHub e persistência de ingress e task
+  routes/             rotas HTTP (health, ready, webhooks/github)
+drizzle/              migrations geradas pelo drizzle-kit
 .theokit/             contexto de agente (THEO.md, rules, personalities), versionado
 docs/PLAN.md          plano, marcos e ponto de retomada
 docs/adr/             decisões de arquitetura

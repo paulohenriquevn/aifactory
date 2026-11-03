@@ -57,7 +57,7 @@ local inspecionado em 2026-11-03.
 | Marco | Entrega                                                        | Critério de aceite                                                                                                                  | Estado       |
 | ----- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------ |
 | M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                            | Concluído    |
-| M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                  | Não iniciado |
+| M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                  | Concluído    |
 | M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                      | Não iniciado |
 | M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                  | Não iniciado |
 | M4    | Review + `waiting`                                             | Reprovação retorna ao build; após três rodadas, encaminha ao humano. Pergunta vira comentário na issue e resposta retoma a execução | Não iniciado |
@@ -141,8 +141,11 @@ Estado local confirmado em 2026-11-03, com `theokit@0.77.4`:
 - Scaffold React/TheoKit com página inicial e rotas de liveness e readiness.
 - PostgreSQL local via Compose. O pool vem de `getStorageManager().usePostgres`, e o
   `theo.config.ts` monta o bloco `storage` a partir de `DATABASE_URL`.
-- Schema vazio, sem migrations de domínio, agentes, jobs ou ingestão.
-- Typecheck, lint, formatação, build e `theokit check` passam. Há 12 testes de unidade e 3 de
+- Tabelas `ingress` e `task` (migration `0000_ingest_and_task`) e o webhook
+  `POST /api/webhooks/github`. Ainda não há agentes nem jobs. No servidor real (`theokit start`)
+  contra o Postgres do Compose, uma entrega assinada criou uma task em `intake`, a mesma entrega
+  respondeu `duplicate` e a assinatura inválida respondeu 401.
+- Typecheck, lint, formatação, build e `theokit check` passam. Há 19 testes de unidade e 12 de
   integração, todos verdes contra o PostgreSQL do Compose.
 - ADRs 0001 a 0003 em `docs/adr/`, e CI em `.github/workflows/ci.yml`.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
@@ -161,7 +164,7 @@ Estado local confirmado em 2026-11-03, com `theokit@0.77.4`:
 - [x] Configurar o CI: formatação, `theokit check` (tipos, lint e scan), testes de unidade e de
       integração, e build.
 - [x] Confirmar o CI verde no GitHub após o primeiro push (run 41696481251, todos os passos).
-- [ ] Iniciar M1 com persistência do ingress, task e deduplicação de deliveries.
+- [x] Iniciar M1 com persistência do ingress, task e deduplicação de deliveries.
 
 ## Origem
 

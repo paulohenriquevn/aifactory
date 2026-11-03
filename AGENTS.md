@@ -36,6 +36,7 @@ src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   db/               Postgres config, pool, Drizzle schema, health probe
+  ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
   routes/           file-based HTTP
 src/shared/         contracts both sides import
 .theokit/           agent context read at runtime (no rebuild)
