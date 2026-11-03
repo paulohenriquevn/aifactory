@@ -1,13 +1,12 @@
 import { defineWebhook, dispatchWebhook, github } from 'theokit/server/webhook'
 
-import type { Database } from '../db'
-
-import { recordDelivery } from './record'
+import type { Delivery, RecordResult } from './record'
 
 export type GithubWebhookDeps = {
   /** `GITHUB_WEBHOOK_SECRET`. Without it the endpoint refuses everything. */
   secret: string | undefined
-  db: () => Database
+  /** Stores a verified delivery. The route decides what else commits with it. */
+  record: (delivery: Delivery) => Promise<RecordResult>
 }
 
 /**
@@ -17,7 +16,7 @@ export type GithubWebhookDeps = {
  */
 export async function handleGithubDelivery(
   request: Request,
-  { secret, db }: GithubWebhookDeps,
+  { secret, record }: GithubWebhookDeps,
 ): Promise<Response> {
   if (!secret) {
     console.error(JSON.stringify({ event: 'github_webhook_not_configured' }))
@@ -51,7 +50,7 @@ export async function handleGithubDelivery(
         return Response.json({ error: 'invalid_json' }, { status: 400 })
       }
 
-      const result = await recordDelivery(db(), { deliveryId, event, payload })
+      const result = await record({ deliveryId, event, payload })
       return Response.json(result)
     },
   })

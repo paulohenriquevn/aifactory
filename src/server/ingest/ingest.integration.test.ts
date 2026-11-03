@@ -7,8 +7,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { storageFromUrl } from '../db/config'
 import { getDb, getPool, readDatabaseUrl } from '../db'
-import { ingress, task } from '../db/schema'
+import { ingress, stageEvent, task } from '../db/schema'
 
+import { recordDelivery, type Delivery } from './record'
 import { handleGithubDelivery } from './webhook'
 
 const SECRET = 'test-secret'
@@ -19,7 +20,7 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
-  await getPool().query('truncate table task, ingress restart identity cascade')
+  await getPool().query('truncate table stage_event, task, ingress restart identity cascade')
 })
 
 afterAll(() => getStorageManager().dispose())
@@ -51,7 +52,7 @@ function delivery(
   })
 }
 
-const deps = { secret: SECRET, db: getDb }
+const deps = { secret: SECRET, record: (d: Delivery) => recordDelivery(getDb(), d) }
 
 async function rows() {
   const db = getDb()
@@ -68,6 +69,8 @@ describe('GitHub deliveries', () => {
     expect(await response.json()).toMatchObject({ status: 'task_created' })
     expect(await rows()).toEqual({ deliveries: 1, tasks: 1 })
     const [created] = await getDb().select().from(task)
+    const events = await getDb().select().from(stageEvent)
+    expect(events.map((e) => [e.taskId, e.stage])).toEqual([[created.id, 'intake']])
     expect(created).toMatchObject({
       repository: 'paulo/app',
       issueNumber: 7,
@@ -134,7 +137,7 @@ describe('GitHub deliveries', () => {
   it('answers 503 and writes nothing when no secret is configured', async () => {
     const response = await handleGithubDelivery(delivery(labeledIssue()), {
       secret: undefined,
-      db: getDb,
+      record: deps.record,
     })
 
     expect(response.status).toBe(503)

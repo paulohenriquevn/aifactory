@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { ingress, task } from '../db/schema'
+import { ingress, stageEvent, task } from '../db/schema'
 
 import { decideIngress } from './decide'
 
@@ -25,7 +25,12 @@ export type RecordResult =
  * redelivery and changes nothing. A second delivery for an issue that already has a task is
  * recorded and points at the existing one.
  */
-export async function recordDelivery(db: Database, delivery: Delivery): Promise<RecordResult> {
+export async function recordDelivery(
+  db: Database,
+  delivery: Delivery,
+  /** Runs inside the transaction once a task exists, so whatever it writes commits or rolls back with it. */
+  onTaskCreated?: (taskId: number) => Promise<unknown>,
+): Promise<RecordResult> {
   const decision = decideIngress(delivery.event, delivery.payload)
 
   return db.transaction(async (tx) => {
@@ -56,7 +61,11 @@ export async function recordDelivery(db: Database, delivery: Delivery): Promise<
       })
       .onConflictDoNothing({ target: [task.repository, task.issueNumber] })
       .returning({ id: task.id })
-    if (created) return { status: 'task_created', taskId: created.id }
+    if (created) {
+      await tx.insert(stageEvent).values({ taskId: created.id, stage: 'intake' })
+      await onTaskCreated?.(created.id)
+      return { status: 'task_created', taskId: created.id }
+    }
 
     const [existing] = await tx
       .select({ id: task.id })

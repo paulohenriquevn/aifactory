@@ -37,6 +37,9 @@ src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
+  factory/          one task end to end: sandbox, agent, push, stage history
+  github/           GitHub App auth (repository-scoped tokens) and issue reads
+  jobs/             defineJob files; `run-task` runs a task
   routes/           file-based HTTP
 src/shared/         contracts both sides import
 .theokit/           agent context read at runtime (no rebuild)
@@ -56,6 +59,14 @@ reads that file, not a convention.
 - **One Postgres pool, owned by TheoKit.** Get it from `getPool()`, which goes through
   `getStorageManager().usePostgres`. Never `new pg.Pool` in application code: the manager drains
   it on shutdown and keeps the process alive when Postgres drops an idle connection.
+- **Jobs are TheoKit jobs.** Queue work with `ctx.queue` (`enqueueInTransaction` when it must commit
+  with a row), never a queue of our own. List each job in `types/jobs.d.ts`.
+- **Sandboxes are TheoKit `SandboxBackend`s.** An agent runs only in a sandbox built from an
+  explicit domain allowlist (`createIsolatedSandbox`). Credentials are attached by the firewall and
+  never written to a command, a file or an env var inside the sandbox. Text that came from an issue
+  reaches git by file, never through a shell.
+- **GitHub tokens are repository-scoped.** The App is installed on every repository of the account,
+  so `installationToken(repo)` is the only way to get one, and it always names the repository.
 - **Commits carry no co-author trailer.**
 - **Validate at the boundary.** A route validates input with Zod once, then trusts it.
 - **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`

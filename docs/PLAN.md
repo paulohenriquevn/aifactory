@@ -58,7 +58,7 @@ local inspecionado em 2026-11-03.
 | ----- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------ |
 | M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                            | Concluído    |
 | M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                  | Concluído    |
-| M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                      | Não iniciado |
+| M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                      | Em andamento |
 | M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                  | Não iniciado |
 | M4    | Review + `waiting`                                             | Reprovação retorna ao build; após três rodadas, encaminha ao humano. Pergunta vira comentário na issue e resposta retoma a execução | Não iniciado |
 | M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel                    | Não iniciado |
@@ -140,7 +140,12 @@ Estado local confirmado em 2026-11-03, com `theokit@0.77.4`:
   respondeu `duplicate` e a assinatura inválida respondeu 401.
 - Typecheck, lint, formatação, build e `theokit check` passam. Há 19 testes de unidade e 12 de
   integração, todos verdes contra o PostgreSQL do Compose.
-- ADRs 0001 a 0003 em `docs/adr/`, e CI em `.github/workflows/ci.yml`.
+- ADRs 0001 a 0004 em `docs/adr/`, e CI em `.github/workflows/ci.yml`.
+- M2: `runTask` leva uma task a `factory/<n>` e registra os estágios em `stage_event`. Contra o
+  GitHub, a Vercel e o Postgres reais, com um agente roteirizado no lugar do Claude (`pnpm
+test:e2e`), a issue #1 do playground virou uma branch `factory/1` enviada. A task e o job
+  `run-task` entram juntos, na mesma transação, e o worker do TheoKit executa o job. Falta rodar
+  com o Claude Code de verdade.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

@@ -5,9 +5,9 @@ programação em sandboxes na nuvem. É uma ferramenta pessoal, open source e si
 suporte a vários projetos.
 
 Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7. O M0
-(fundação) e o M1 (ingestão) estão concluídos: hoje existem o scaffold, o Postgres, as rotas de
-liveness e readiness, o CI e o webhook do GitHub que cria tasks. Execução, agentes e painel
-ainda não existem.
+(fundação) e o M1 (ingestão) estão concluídos, e o M2 (execução) funciona de ponta a ponta com um
+agente roteirizado. Falta rodar com o Claude Code de verdade, que depende de uma chave da
+Anthropic. Review, painel e merge ainda não existem.
 
 ## Rodando localmente
 
@@ -33,6 +33,9 @@ pnpm dev
 - Cada entrega fica em `ingress`, com o resultado, um código e o motivo. Uma entrega repetida
   (mesmo `X-GitHub-Delivery`) não muda nada. Uma issue tem no máximo uma task, mesmo que a label
   seja removida e posta de novo.
+- Quando a entrega cria uma task, o job `run-task` entra na fila na mesma transação (job do
+  TheoKit, em Postgres). O worker do `theokit start` o executa: sandbox isolado, agente e push de
+  `factory/<n>`.
 - A assinatura `X-Hub-Signature-256` é verificada sobre o corpo bruto antes de qualquer escrita.
   Assinatura inválida ou ausente responde 401. Sem `GITHUB_WEBHOOK_SECRET` a rota responde 503.
 
