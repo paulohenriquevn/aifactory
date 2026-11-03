@@ -108,9 +108,8 @@ previstos: bloqueio de hosts fora da allowlist (incluindo DNS), segredo fora do 
 streaming incremental de stdout, workspace preservado ao retomar e o que o estado `waiting`
 precisa preservar. Os resultados estão na [ADR 0003](adr/0003-sandbox.md).
 
-Ficou em aberto uma chamada real do Claude Code com a chave injetada pelo firewall, porque o
-ambiente não tem `ANTHROPIC_API_KEY`. O caminho de rede e a substituição do header já foram
-observados. O E2B segue como segundo adapter.
+Uma chamada real do Claude Code dentro do sandbox, com a chave só no firewall, também
+funcionou. O E2B segue como segundo adapter.
 
 ## Ponto de retomada
 

@@ -1,7 +1,6 @@
 # ADR 0003: sandbox de execução
 
-Status: aceita para o primeiro adapter (2026-11-03). Uma verificação continua aberta, descrita
-no fim.
+Status: aceita para o primeiro adapter (2026-11-03), com o spike concluído.
 
 ## Contexto
 
@@ -46,13 +45,15 @@ Consequência do critério 5: ao retomar uma execução em `waiting`, a fábrica
 sobre o workspace preservado, retomando pela sessão gravada em disco. Ela não depende de processos
 vivos.
 
-## Verificação em aberto
+## Chamada real com a chave no firewall
 
-Uma chamada real do Claude Code com a chave injetada pelo firewall ainda não foi feita, porque não
-existe `ANTHROPIC_API_KEY` no ambiente de trabalho. O que já está provado cobre o caminho de rede e a
-substituição do header. Falta ver a API aceitar a chave real quando o sandbox só conhece um
-placeholder. Login por assinatura (OAuth) provavelmente não passa por esse mecanismo, e só a chave
-de API foi considerada.
+Verificada em 2026-11-03. O Claude Code dentro do sandbox, com só um placeholder no ambiente, rodou
+`claude -p` e respondeu `pong` com `terminal_reason: completed` e `api_error_status: null`. A
+chamada custou cerca de US$ 0,027. O sandbox viu zero ocorrências da chave, que só o firewall
+conhece e anexa ao header `x-api-key` de `api.anthropic.com`.
+
+Só uma chave de API foi testada. Login por assinatura (OAuth) provavelmente não passa por esse
+mecanismo e não foi considerado.
 
 ## Riscos conhecidos da documentação
 
@@ -66,7 +67,7 @@ de API foi considerada.
 
 ## Consequências
 
-- O spike deixa de bloquear o M2, salvo pela verificação em aberto acima.
+- O spike não bloqueia mais o M2.
 - O token do sandbox é um token OIDC de 12 horas do projeto Vercel, obtido com `vercel env pull`.
   Fora da Vercel, a fábrica usa o ID do time, o ID do projeto e um token de acesso.
 - O `LocalSandbox` do TheoKit roda comandos no host, sem isolamento
