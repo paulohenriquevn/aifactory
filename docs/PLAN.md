@@ -52,11 +52,11 @@ Princípios:
 ## Marcos e critérios de aceite
 
 Os marcos abaixo recuperam a proposta da sessão; os estados refletem o código
-local inspecionado em 2026-10-31.
+local inspecionado em 2026-11-03.
 
 | Marco | Entrega                                                        | Critério de aceite                                                                                                                  | Estado       |
 | ----- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                            | Em andamento |
+| M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                            | Concluído    |
 | M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                  | Não iniciado |
 | M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                      | Não iniciado |
 | M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                  | Não iniciado |
@@ -121,7 +121,8 @@ spike, sem tratar o benchmark histórico como garantia atual.
 ## Ponto de retomada
 
 O M0 foi interrompido para corrigir problemas encontrados no TheoKit, seguindo a
-decisão de aproveitar o framework em vez de contorná-lo na fábrica.
+decisão de aproveitar o framework em vez de contorná-lo na fábrica. Com as correções
+publicadas e adotadas, ele foi concluído em 2026-11-03.
 
 A sessão relatou publicação do TheoKit 0.76.0 e correções em ORM e plugins.
 O lote seguinte (#1037, #1031, #1038 e #1051 de `usetheokit/theokit`) foi concluído
@@ -159,7 +160,7 @@ Estado local confirmado em 2026-11-03, com `theokit@0.77.4`:
       proposta até o spike.
 - [x] Configurar o CI: formatação, `theokit check` (tipos, lint e scan), testes de unidade e de
       integração, e build.
-- [ ] Confirmar o CI verde no GitHub após o primeiro push.
+- [x] Confirmar o CI verde no GitHub após o primeiro push (run 41696481251, todos os passos).
 - [ ] Iniciar M1 com persistência do ingress, task e deduplicação de deliveries.
 
 ## Origem

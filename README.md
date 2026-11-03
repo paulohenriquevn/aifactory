@@ -5,8 +5,8 @@ programação em sandboxes na nuvem. É uma ferramenta pessoal, open source e si
 suporte a vários projetos.
 
 Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7. O M0
-(fundação) está em andamento: hoje existem o scaffold, o Postgres e as rotas de liveness e
-readiness. Ingestão, execução, agentes e painel ainda não existem.
+(fundação) está concluído: hoje existem o scaffold, o Postgres, as rotas de liveness e
+readiness e o CI. Ingestão, execução, agentes e painel ainda não existem.
 
 ## Rodando localmente
 
