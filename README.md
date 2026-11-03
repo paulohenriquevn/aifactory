@@ -68,6 +68,7 @@ src/server/
   ingest/             decisão sobre cada entrega do GitHub e persistência de ingress e task
   routes/             rotas HTTP (health, ready, webhooks/github)
 drizzle/              migrations geradas pelo drizzle-kit
+scripts/               registro e verificação do GitHub App (ADR 0004)
 spikes/vercel-sandbox/ scripts que verificam o Vercel Sandbox (ADR 0003); rodam com `.env.local`
 .theokit/             contexto de agente (THEO.md, rules, personalities), versionado
 docs/PLAN.md          plano, marcos e ponto de retomada

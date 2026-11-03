@@ -17,6 +17,9 @@ node_modules/
 !.theokit/hooks.json
 dist/
 
+# credentials written by scripts/github-app-setup.mjs
+.secrets/
+
 # vercel (project link written by `vercel link`)
 .vercel/
 
