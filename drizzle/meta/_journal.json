@@ -8,6 +8,13 @@
       "when": 1793731550226,
       "tag": "0000_ingest_and_task",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793735015600,
+      "tag": "0001_stage_events",
+      "breakpoints": true
     }
   ]
 }

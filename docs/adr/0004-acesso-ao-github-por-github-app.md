@@ -37,6 +37,8 @@ token.
 
 - A fábrica precisa implementar a autenticação de App: JWT assinado com RS256 e troca por token de
   instalação, como no script de verificação.
-- Para cada projeto novo, o dono instala o App naquele repositório. A instalação deve ser por
-  repositórios selecionados, não em todos.
+- A instalação cobre todos os repositórios da conta `paulohenriquevn`. O Paulo assumiu esse risco
+  em 2026-11-03, em vez de limitar a instalação a repositórios selecionados. Por isso o limite
+  passa a ser do código: a função que obtém um token de instalação exige o repositório e não tem
+  caminho para mintar um token sem esse filtro. Um teste cobre essa regra.
 - Um check run criado não pode ser apagado. O de verificação ficou em `main` do playground.

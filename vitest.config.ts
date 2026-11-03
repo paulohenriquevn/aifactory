@@ -7,13 +7,22 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['src/**/*.test.{ts,tsx}'],
-          exclude: ['src/**/*.integration.test.ts'],
+          exclude: ['src/**/*.integration.test.ts', 'src/**/*.e2e.test.ts'],
         },
       },
       {
         test: {
           name: 'integration',
           include: ['src/**/*.integration.test.ts'],
+        },
+      },
+      {
+        // Real GitHub, real Vercel Sandbox, real Postgres. Costs a little and needs credentials.
+        test: {
+          name: 'e2e',
+          include: ['src/**/*.e2e.test.ts'],
+          testTimeout: 300_000,
+          hookTimeout: 60_000,
         },
       },
     ],

@@ -52,6 +52,7 @@ pnpm lint
 pnpm format:check
 pnpm test               # unidade
 pnpm test:integration   # exige Postgres e DATABASE_URL exportada
+pnpm test:e2e           # GitHub, Vercel Sandbox e Postgres reais; exige o .env.local e gasta um pouco
 pnpm db:generate        # drizzle-kit: gera migrations a partir do schema
 pnpm db:migrate
 ```
@@ -66,6 +67,8 @@ src/app/              frontend (React, roteamento por arquivos)
 src/server/
   db/                 Postgres: config, pool, schema Drizzle e sonda de saúde
   ingest/             decisão sobre cada entrega do GitHub e persistência de ingress e task
+  factory/            execução de uma task: sandbox isolado, agente, push de factory/<n>, estágios
+  github/             autenticação do GitHub App e leitura de issues
   routes/             rotas HTTP (health, ready, webhooks/github)
 drizzle/              migrations geradas pelo drizzle-kit
 scripts/               registro e verificação do GitHub App (ADR 0004)

@@ -1,5 +1,9 @@
 import { integer, jsonb, pgTable, serial, text, timestamp, unique } from 'drizzle-orm/pg-core'
 
+/** The stages of a task, in the order a successful run passes through them. */
+export const TASK_STAGES = ['intake', 'sandbox', 'build', 'push', 'done', 'failed'] as const
+export type TaskStage = (typeof TASK_STAGES)[number]
+
 /**
  * One row per webhook delivery GitHub sends, kept whether or not it became work. The delivery ID
  * is unique, so a redelivery cannot be processed twice.
@@ -28,10 +32,19 @@ export const task = pgTable(
     repository: text('repository').notNull(),
     issueNumber: integer('issue_number').notNull(),
     issueTitle: text('issue_title').notNull(),
-    stage: text('stage', { enum: ['intake'] })
-      .notNull()
-      .default('intake'),
+    stage: text('stage', { enum: TASK_STAGES }).notNull().default('intake'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [unique('task_issue_unique').on(table.repository, table.issueNumber)],
 )
+
+/** Every stage a task entered, in order. `task.stage` is only the latest of these. */
+export const stageEvent = pgTable('stage_event', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  stage: text('stage', { enum: TASK_STAGES }).notNull(),
+  detail: jsonb('detail'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})

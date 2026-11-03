@@ -14,16 +14,18 @@
     "start": "theokit start",
     "preview": "theokit preview",
     "test": "vitest run --project unit",
-    "test:integration": "vitest run --project integration",
+    "test:integration": "vitest run --project integration --no-file-parallelism",
+    "test:e2e": "node --env-file=.env.local node_modules/vitest/vitest.mjs run --project e2e --no-file-parallelism",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:generate": "theokit db generate",
+    "db:migrate": "theokit db migrate"
   },
   "dependencies": {
+    "@theokit/agents": "^16.1.1",
     "@vercel/sandbox": "^3.9.1",
     "drizzle-orm": "0.45.4",
     "pg": "8.23.1",
