@@ -37,8 +37,9 @@ pnpm dev
 
 ### Webhook do GitHub
 
-`POST /api/webhooks/github` recebe as entregas. Configure no repositório um webhook de eventos
-`Issues`, com conteúdo `application/json` e o mesmo secret de `GITHUB_WEBHOOK_SECRET`.
+`POST /api/webhooks/github` recebe as entregas. A GitHub App entrega os eventos `Issues` de todos os
+repositórios em que está instalada, com o secret de `GITHUB_WEBHOOK_SECRET`; sem a App, configure no
+repositório um webhook de eventos `Issues`, com conteúdo `application/json` e o mesmo secret.
 
 - Uma issue que recebe a label `factory`, ou que é aberta com ela, vira uma task em `intake`.
 - Cada entrega fica em `ingress`, com o resultado, um código e o motivo. Uma entrega repetida

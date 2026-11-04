@@ -63,24 +63,287 @@ Princípios:
 Os marcos abaixo recuperam a proposta da sessão; os estados refletem o código
 local inspecionado em 2026-11-03.
 
-| Marco | Entrega                                                        | Critério de aceite                                                                                                                                                                                   | Estado    |
-| ----- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                                                                                             | Concluído |
-| M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                                                                                   | Concluído |
-| M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                                                                                       | Concluído |
-| M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                                                                                   | Concluído |
-| M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                            | Concluído |
-| M4a   | Review independente + rodadas                                  | Checks vermelhos ou review que pede mudanças devolvem o trabalho à mesma sessão do agente; após três tentativas, PR em rascunho e comentário na issue; um PR só abre com evidência verde e aprovação | Concluído |
-| M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Concluído |
-| M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel (local, com um dono)                                                                | Concluído |
-| M6a   | Pré-release e release                                          | A fábrica gera uma pré-release para todo commit com checks verdes que chegou a um PR; um humano (painel) ou um agente (modo `auto`) promove a release, com o merge preso ao SHA entregue             | Concluído |
-| M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Concluído |
-| M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Concluído |
+| Marco | Entrega                                                        | Critério de aceite                                                                                                                                                                                   | Estado       |
+| ----- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                                                                                             | Concluído    |
+| M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                                                                                   | Concluído    |
+| M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                                                                                       | Concluído    |
+| M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                                                                                   | Concluído    |
+| M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                            | Concluído    |
+| M4a   | Review independente + rodadas                                  | Checks vermelhos ou review que pede mudanças devolvem o trabalho à mesma sessão do agente; após três tentativas, PR em rascunho e comentário na issue; um PR só abre com evidência verde e aprovação | Concluído    |
+| M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Concluído    |
+| M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel (local, com um dono)                                                                | Concluído    |
+| M6a   | Pré-release e release                                          | A fábrica gera uma pré-release para todo commit com checks verdes que chegou a um PR; um humano (painel) ou um agente (modo `auto`) promove a release, com o merge preso ao SHA entregue             | Concluído    |
+| M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Concluído    |
+| M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Concluído    |
+| M8    | Operação contínua                                              | A fábrica volta sozinha depois de um reboot, recupera webhooks perdidos e tem backup restaurável do banco                                                                                            | Não iniciado |
+| M9    | Painel com os componentes do TheoKit UI                        | O painel usa `@usetheo/ui` e `@theokit/ui`, com quadro e lista, painel lateral e tela cheia                                                                                                          | Não iniciado |
+| M10   | Repositórios e configurações                                   | Só repositórios habilitados geram task; agentes, checks, domínios e release por repositório; primeiro projeto real                                                                                   | Não iniciado |
+| M11   | Novo job pelo painel                                           | O painel abre a issue com a label e a task nasce pelo caminho normal do webhook                                                                                                                      | Não iniciado |
+| M12   | Transcrição ao vivo                                            | O painel mostra o que o agente faz enquanto faz, e o transcript fica gravado                                                                                                                         | Não iniciado |
+| M13   | Conversa com os agentes                                        | O Paulo escreve para a instância que está implementando, ou para uma que parou, pelo painel                                                                                                          | Não iniciado |
+| M14   | Painel acessível de fora                                       | O painel abre fora desta máquina, atrás de um acesso próprio, sem abrir o resto                                                                                                                      | Não iniciado |
 
 As aprovações de ferramentas com efeitos externos seguem a convenção do
 `AGENTS.md`. A interação com o modo `auto` ficou definida pelo conceito de pré-release: o que a
 fábrica faz sem licença (a pré-release) não mexe na branch padrão, e o que mexe (o release) só começa
 por um humano ou por um veredito de agente no modo `auto`, que é opt-in e vem desligado.
+
+## Próximos marcos: operação, repositórios, painel e conversa
+
+Pedido do Paulo em 2026-11-04, depois de comparar o painel com o do `marshal-factory`: um painel mais
+completo, feito com os componentes do TheoKit UI, e a possibilidade de **conversar com os agentes pelo
+sistema**, por exemplo com a instância que está implementando. Os marcos M8 a M14 cobrem isso, mais o que
+faltava para usar a fábrica de verdade (rodar sempre ligada, vários repositórios).
+
+### O que já se sabe (observado em 2026-11-04)
+
+- A GitHub App `aifactory-paulohenriquevn` tem o webhook ativo em `factory.aquim.ai`, evento `issues`, e
+  está instalada em todos os repositórios da conta. Qualquer repositório da conta já entrega eventos; o
+  webhook por repositório do playground é redundante (a regra de uma task por issue impede a segunda).
+  Isso corrige o que o README dizia sobre configurar um webhook por repositório.
+- Não existe lista de repositórios habilitados. Hoje a label `factory` em qualquer repositório da conta
+  cria uma task e gasta dinheiro. Só quem tem permissão de triagem consegue rotular, mas o M10 fecha isso.
+- O agente roda como `claude -p --output-format json` ou `codex exec`, por um `execute` que bloqueia até o
+  fim. A fábrica só vê o resultado final: nada do que o agente faz no meio é visível nem alcançável.
+- O Vercel Sandbox aceita comando destacado (`detached`), leitura dos logs em fluxo e escrita no stdin do
+  processo. O `SandboxBackend` do TheoKit expõe só `execute` e `uploadFile`. Isso é uma lacuna do
+  framework: vira issue em `usetheokit/theokit` antes do contorno, e o contorno é uma capacidade opcional
+  do `IsolatedSandbox`, como já é o `snapshot`.
+- O Claude Code tem `--input-format stream-json`, `--output-format stream-json`,
+  `--include-partial-messages`, `--replay-user-messages`, `--resume` e `--fork-session`. O Codex tem
+  `codex exec --json`, `codex exec resume` e `app-server` (experimental). Nenhum foi exercitado dentro do
+  sandbox ainda: são os spikes S1 a S3 abaixo.
+
+### Ordem
+
+M8 e M9 são independentes e podem andar juntos. M10 e M11 usam o M9, para não escrever as páginas novas
+duas vezes. M12 precede M13, porque conversar com uma instância exige ver o que ela faz e ter um canal
+até o processo. M14 vem por último de propósito: com a conversa, o painel passa a poder mandar agentes
+com shell trabalharem, e o acesso de fora só abre depois de esse poder estar testado.
+
+### M8: operação contínua
+
+Serviços `systemd --user` para o servidor e para o `cloudflared`, `linger` ligado para subirem sem
+login, e o Postgres com `restart: unless-stopped`. Isso muda a máquina do Paulo, então começa só com o OK
+dele (ainda não dado).
+
+Webhook perdido: um cron lê as entregas da App (`GET /app/hook/deliveries`) e reentrega as que falharam
+enquanto a fábrica estava fora (`POST .../attempts`). Backup: `pg_dump` diário em `~/backups/aifactory/`,
+modo 600, guardando os últimos 14.
+
+Critérios de aceite:
+
+- Depois de reiniciar a máquina sem abrir sessão, `GET https://factory.aquim.ai/api/health` responde 200 sem
+  nenhuma ação manual.
+- Com o servidor parado, rotular uma issue e subir o servidor cria a task, uma só, sem nova ação.
+- Restaurar o dump mais recente num banco vazio devolve o mesmo `count(*)` de `task`, `evidence` e
+  `stage_event` que o banco de origem (um script de restauração roda isso).
+- Um dump de mais de 14 dias é removido, e um mais novo não.
+
+### M9: painel com os componentes do TheoKit UI
+
+`@usetheo/ui` traz a estrutura (shell, navegação, tabela, diálogo, abas, aviso, estado vazio) e
+`@theokit/ui` traz as peças de agente (`RunStatusPill`, `AgentTimeline`, `ApprovalCard`, `ChatThread`,
+`ChatComposer`). Hoje o `@theokit/ui` só está instalado porque o Tailwind do TheoKit depende dele: nenhuma
+tela usa um componente. O M9 troca o Tailwind escrito à mão pelos componentes, com o tema da biblioteca, e
+acrescenta o que o painel do `marshal-factory` tem de útil: quadro ou lista, painel lateral da task com
+tela cheia e filtro por repositório (o filtro só ganha opções no M10).
+
+Critérios de aceite:
+
+- Os testes de interface de hoje passam sem mudar uma asserção de comportamento.
+- Alternar para a lista mostra as mesmas tasks do quadro, e a escolha continua depois de recarregar.
+- Abrir uma task com `?full=1` mostra o detalhe em tela cheia, e Esc volta ao quadro.
+- Os pares de cor usados pelo painel passam na auditoria de contraste WCAG AA da própria biblioteca
+  (`auditColorScale`).
+
+### M10: repositórios e configurações
+
+Tabela `repository` com o nome completo (único), se está habilitado (começa desabilitado), nome de
+exibição, agente construtor e revisor padrão, modo de release, checks, domínios extras de saída e tempos
+limite. Uma entrega de repositório desabilitado é gravada em `ingress` com o código `repository_disabled`
+e não cria task.
+
+Receita `.factory/setup.json`, com o comando de instalação, os checks e os domínios de saída que o projeto
+pede. Ela é lida **da branch padrão**, nunca da branch do agente, para o agente não ampliar a própria saída
+editando o arquivo. Os domínios da receita só valem depois de aprovados no painel, que mostra a diferença
+em relação ao que já estava liberado. A precedência é: painel, depois receita, depois o padrão de hoje
+(`npm test`, `github.com`, `registry.npmjs.org` e o domínio do agente). As labels `harness:` e `reviewer:`
+continuam vencendo o padrão do repositório, que vence o global.
+
+Para listar os repositórios que a App alcança, o painel precisa de um token de instalação sem a restrição
+de repositório. Isso afrouxa a regra de que `installationToken(repo)` sempre nomeia um repositório. A saída
+é uma função separada, `installationRepositories()`, que pede um token só com `metadata: read`, usado só
+para listar e nunca para escrever, e um ADR curto que registra a exceção.
+
+Páginas: Repositories (lista, detalhe, habilitar, agentes, release, checks e domínios) e Settings (padrões
+globais, o modo de cada credencial dos agentes e quando o token do Codex vence).
+
+Critérios de aceite:
+
+- Rotular uma issue num repositório desabilitado não cria task, e a entrega aparece em `ingress` com
+  `repository_disabled`.
+- Habilitar o repositório no painel e rotular de novo cria uma task, uma só.
+- Uma receita que pede um domínio novo roda sem acesso a ele até a aprovação, e com acesso depois (teste ao
+  vivo contra um domínio de teste).
+- Mudar `.factory/setup.json` na branch do agente não muda os domínios do sandbox daquela execução.
+- Dois repositórios, um em `manual` e outro em `auto`, respeitam cada um o seu modo na mesma hora.
+- O Paulo escolhe um projeto dele, com testes, e uma issue real vira PR com checks verdes. O resultado e
+  tudo o que falhar nessa execução entram neste plano.
+- O webhook do repositório do playground é removido, e o README descreve o webhook da App.
+
+### M11: novo job pelo painel
+
+Formulário com repositório (só os habilitados), título, descrição e, opcionalmente, agente e revisor. O
+painel abre a issue pela App (a permissão `issues: write` já existe), com a label `factory` e as labels
+`harness:` e `reviewer:` quando escolhidas. A task nasce pelo webhook da própria issue, o mesmo caminho de
+qualquer outra, e não por um atalho. Imagens ficam de fora até alguém precisar delas.
+
+Critérios de aceite:
+
+- Enviar o formulário cria uma issue com a label e uma task, e a task vem do webhook, não do painel.
+- Se a API do GitHub recusar, o formulário mostra o motivo e nenhuma task fica criada.
+- Um repositório desabilitado não aparece na lista do formulário.
+- O corpo da issue diz que foi aberta pelo painel.
+
+### M12: transcrição ao vivo
+
+É a base da conversa: o painel passa a mostrar o que o agente faz enquanto faz, e a fábrica ganha um canal
+até o processo do agente.
+
+Spike S1, antes de qualquer código: no Vercel Sandbox, rodar o Claude Code em comando destacado com
+`--output-format stream-json --verbose`, ler os logs em fluxo do lado da fábrica e provar que os eventos
+chegam antes de o processo terminar, em ordem, com o `session_id` já no primeiro. O mesmo para
+`codex exec --json`. Se algum dos dois não entrega, o desenho muda e este marco é reescrito antes de
+seguir.
+
+Entrega: a capacidade opcional `spawn` no `IsolatedSandbox` (comando destacado com leitura de logs em
+fluxo, escrita no stdin, espera e interrupção), implementada no adapter da Vercel, mais uma issue no
+TheoKit pedindo isso no `SandboxBackend`. O `CodingHarness` passa a aceitar um `onEvent`, e cada harness
+traduz o seu fluxo para um `AgentEvent` nosso: mensagem do agente, uso de ferramenta (nome e entrada
+resumida), resultado da ferramenta (truncado), custo parcial e erro. A tabela `agent_event` guarda a
+sequência (task, execução, ordem, tipo, conteúdo truncado, hora) e o SSE do painel a repassa. O resultado
+final continua saindo do evento de resultado, então o custo e o estado da task não mudam.
+
+O sandbox não guarda segredos (o firewall injeta as credenciais), mas a saída de um comando pode ter um.
+O transcript passa por um filtro que troca os formatos de token conhecidos (`ghs_`, `sk-ant-`, `sk-proj-`,
+`vcp_`) antes de gravar e antes de exibir.
+
+Critérios de aceite:
+
+- Numa execução real, o painel mostra o primeiro evento do agente antes de o agente terminar (o teste ao
+  vivo compara a hora do primeiro evento exibido com a do fim da execução).
+- Reabrir a task depois do fim mostra a mesma sequência de eventos que foi vista ao vivo.
+- Os testes de integração de hoje passam sem mudar uma asserção, com o mesmo custo e o mesmo estágio final.
+- Um token plantado na saída de um comando do agente de teste não aparece em `agent_event` nem na resposta
+  do painel.
+- O SSE de uma task com mais de 5 mil eventos entrega só os novos depois da primeira carga (teste com
+  eventos gerados).
+
+### M13: conversa com os agentes
+
+O Paulo escreve para um agente pelo painel. Há dois casos, e eles têm mecânicas diferentes.
+
+**Falar com a instância que está trabalhando.** A mensagem chega ao processo do builder (ou do reviewer)
+enquanto ele roda. Há três caminhos, e o spike S2 escolhe, no sandbox real, com Claude e com Codex:
+
+- Pelo stdin, com `--input-format stream-json`: o Claude Code enfileira a mensagem e a trata na virada
+  seguinte, sem perder o passo em andamento.
+- Por uma caixa de correio em arquivo, lida por um hook (`PostToolUse` ou `UserPromptSubmit`) que injeta o
+  conteúdo no contexto: não precisa de stdin, mas depende de hooks dentro do sandbox.
+- Interromper e retomar: a fábrica mata o processo e roda `--resume` com a mensagem. Sempre funciona, mas
+  perde o passo em andamento.
+
+O padrão previsto é o stdin onde existir, e interromper e retomar como alternativa e como o botão
+Interromper. Não verificado: o `codex exec` aceitar entrada depois de iniciado. O `app-server` é
+experimental. Para o Codex o mais provável é interromper e retomar, e então a interface diz que a mensagem
+interrompe o passo atual. O resultado do S2 vai para um ADR.
+
+**Falar com uma instância que parou** (`waiting`, `handoff`, `done` ou `failed`). A fábrica retoma a mesma
+sessão com a mensagem. O obstáculo é que o sandbox já parou e a sessão do CLI estava dentro dele. A saída é
+copiar o arquivo da sessão para o banco (`agent_session`) no fim de cada execução, e restaurá-lo num
+sandbox novo, clonado da branch, antes do `resume`. Um snapshot por task, a alternativa, pesa uns 820 MB e
+já estourou o plano Hobby uma vez; só o `waiting` continua usando snapshot. O spike S3 prova que o
+`claude --resume <id>` num sandbox novo com o arquivo restaurado continua a conversa, e faz o mesmo para
+`codex exec resume <id>` com a pasta de sessões do Codex.
+
+**Dois modos de mensagem**, escolhidos no compositor:
+
+- Perguntar: o agente responde e não altera o repositório. Previsto: Claude com `--permission-mode plan`
+  e Codex com `--sandbox read-only`. Não verificado que isso impeça toda escrita; o S2 testa e, se não
+  impedir, a garantia vira uma checagem do SHA da branch depois da resposta.
+- Orientar: o agente pode mudar o código, e qualquer mudança segue o caminho normal: commit, push, checks,
+  revisão e PR. Numa task `done` ou `handoff`, a mensagem a leva de volta a `build` com um evento
+  `conversa`, e o laço de hoje assume daí. Uma mensagem do dono não gasta uma das três tentativas do laço:
+  abre uma rodada própria.
+
+**Regras que não mudam com a conversa:**
+
+- Uma mensagem nunca pula o portão. Tudo o que muda o repositório passa por verificação e revisão no commit
+  novo, e a conversa não aprova nada.
+- Só o dono escreve, pelo painel e com o cabeçalho `X-Theo-Action`. Cada mensagem fica gravada
+  (`agent_message`: autor, hora, texto, modo e entrega: pendente, entregue ou falhou).
+- Uma instância tem um escritor por vez. Duas mensagens seguidas entram em fila e são entregues em ordem,
+  e a segunda não abre outro processo na mesma sessão.
+- O custo da conversa entra na task e em `agent_run`, marcado como conversa, e aparece em Health.
+- O texto do dono chega ao agente por arquivo ou stdin, nunca por um shell, como o texto de uma issue.
+- Uma mensagem não amplia a saída do sandbox nem o tempo da execução.
+
+**Interface.** O detalhe da task ganha uma aba Conversa, com `ChatThread` e `ChatComposer` do
+`@theokit/ui`: mostra o transcript do M12 com as mensagens do Paulo no meio, o estado da instância
+(trabalhando, parada, esperando você), o botão Interromper, o seletor Perguntar ou Orientar, e uma aba
+para o builder e outra para o reviewer. A pergunta de uma task em `waiting` pode ser respondida no mesmo
+compositor, além de pelo comentário na issue; a primeira resposta vence.
+
+Critérios de aceite:
+
+- Com o Claude real trabalhando, uma mensagem pelo painel pedindo um nome diferente de função aparece no
+  transcript como entregue, e o commit final exporta o nome pedido (teste ao vivo com uma instrução que o
+  arquivo prova).
+- "Perguntar" a uma task em `done` traz uma resposta no transcript, e o SHA da branch no GitHub é o mesmo
+  antes e depois.
+- "Orientar" numa task em `done` gera um commit novo, que passa pelos checks e pela revisão, atualiza o PR e
+  devolve a task a `done`.
+- Duas mensagens enviadas ao mesmo tempo são entregues em ordem, e um agente de teste que registra
+  concorrência nunca tem dois processos na mesma sessão.
+- Uma mensagem para uma instância sem cota fica `falhou` com o motivo visível, e não some.
+- Um pedido sem sessão do dono recebe 401 e nada é entregue.
+- O custo de uma conversa aparece em Health, separado do build e da revisão.
+- A sessão restaurada num sandbox novo responde sobre algo dito antes da restauração (S3).
+
+### M14: painel acessível de fora
+
+Reverte, com ADR, a decisão de que o painel nunca passa pelo túnel. A opção recomendada é um segundo
+hostname, por exemplo `panel.factory.aquim.ai`, atrás do Cloudflare Access (login por e-mail, com uma
+política de um só e-mail), apontando para o mesmo servidor. Hoje a restrição é do túnel, que deixa passar
+só o webhook e o health check. Com dois hostnames ela passa a ser também do servidor: o hostname público
+serve `/api/webhooks/github` e `/api/health` e mais nada, e o do painel exige o JWT do Access
+(`Cf-Access-Jwt-Assertion`) verificado contra as chaves da equipe. O painel mantém a sessão própria
+(`FACTORY_PANEL_TOKEN`) e o cabeçalho anti-CSRF, e o Access é a primeira camada. A alternativa é o
+Tailscale, sem host público nenhum; fica para o Paulo escolher.
+
+Critérios de aceite:
+
+- Sem o login do Access, `GET https://panel.factory.aquim.ai/api/panel/inbox` não chega ao servidor.
+- Chegando ao servidor sem o JWT do Access (pedido forjado direto no túnel), o painel responde 403.
+- `https://factory.aquim.ai/api/panel/inbox` responde 404 ou 403, e o webhook com assinatura válida
+  continua respondendo 200.
+- O Paulo abre o painel no celular, fora da rede de casa, e vê a Inbox.
+
+### Decisões que dependem do Paulo
+
+- O OK para os serviços `systemd --user` (M8).
+- Cloudflare Access ou Tailscale (M14).
+- Se o Novo job precisa de imagens já no começo (M11); o padrão é não ter.
+- Por quanto tempo guardar o transcript (M12); o padrão previsto é 30 dias, com o conteúdo de cada evento
+  limitado a 8 KB.
+- Se uma mensagem "Orientar" deve gastar uma das três tentativas (M13); o padrão previsto é não gastar.
+
+### Fora desta rodada
+
+Notificações no Slack, a aba Machines e o runner local do `marshal-factory` (a fábrica não tem runner
+local), sandboxes na Modal, a fonte Linear e mais de um dono no painel.
 
 ## Agentes de código e autenticação
 
@@ -158,8 +421,7 @@ no plano Hobby termina em 45 minutos. Fica depois do painel (M5), a menos que o 
 
 ## Fora do escopo por enquanto, mas decidido que virá
 
-- Vários repositórios com onboarding (hoje, um por vez, pelo GitHub App instalado em todos).
-- Rodar sempre ligado: hoje o servidor e o túnel são processos da sessão de trabalho.
+- Vários repositórios com onboarding (M10) e rodar sempre ligado (M8): ver "Próximos marcos".
 - Fonte Linear por adapter, depois do GitHub Issues.
 
 ## Base de conhecimento aprovada
