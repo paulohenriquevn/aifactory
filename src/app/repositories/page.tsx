@@ -1,5 +1,6 @@
 import { Alert, Badge, Button, Card, Textarea } from '@usetheo/ui'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router'
 
 import type { RepositoriesView, RepositoryView } from '../../shared/panel'
 import { put } from '../lib/api'
@@ -182,63 +183,117 @@ function Repo({
 }
 
 /** The repositories the GitHub App reaches, and the ones the owner lets the factory work in. */
+type Watch = { since: number; accounts: string[]; repositories: number }
+
+/** How long the page keeps asking GitHub after the owner went to install the App. */
+const WATCH_MS = 5 * 60_000
+
+/** The button that sends the owner to GitHub to install the App, and the page notices when they are back. */
+function InstallButton({ url, onClick }: { url: string; onClick: () => void }) {
+  return (
+    <Button asChild size="sm" onClick={onClick}>
+      <a href={url} target="_blank" rel="noreferrer">
+        Install on GitHub
+      </a>
+    </Button>
+  )
+}
+
 export default function RepositoriesPage() {
+  const [watch, setWatch] = useState<Watch>()
+  const [installed, setInstalled] = useState<string>()
+  const [params, setParams] = useSearchParams()
   const resource = useResource<RepositoriesView>('/api/panel/repositories', {
-    everyMs: 30_000,
+    // While the owner is on GitHub installing, the page asks every few seconds instead of every half minute.
+    everyMs: watch ? 3_000 : 30_000,
     stream: false,
   })
   const data = resource.data
+
+  // GitHub can send the owner back here with the installation in the address.
+  useEffect(() => {
+    if (params.get('installation_id')) {
+      setInstalled('GitHub confirmed the installation.')
+      setParams({}, { replace: true })
+      resource.reload()
+    }
+  }, [params, setParams, resource])
+
+  // Once an account or a repository shows up that was not there when the owner left, say so and stop asking.
+  useEffect(() => {
+    if (!watch || !data) return
+    const added = data.installations
+      .map((i) => i.account)
+      .filter((a) => !watch.accounts.includes(a))
+    if (added.length > 0 || data.repositories.length > watch.repositories) {
+      setInstalled(
+        added.length > 0
+          ? `Installed on ${added.join(', ')}. ${data.repositories.length} repositories are in reach.`
+          : `${data.repositories.length} repositories are in reach.`,
+      )
+      setWatch(undefined)
+    } else if (Date.now() - watch.since > WATCH_MS) {
+      setWatch(undefined)
+    }
+  }, [data, watch])
+
+  const startWatching = () => {
+    setInstalled(undefined)
+    setWatch({
+      since: Date.now(),
+      accounts: data?.installations.map((i) => i.account) ?? [],
+      repositories: data?.repositories.length ?? 0,
+    })
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Repositories</h1>
-        <div className="flex gap-2">
-          {data?.installations.map((i) => (
-            <a
-              key={i.account}
-              href={i.url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm text-foreground underline underline-offset-2"
-            >
-              {i.selection === 'all'
-                ? `Restrict which repositories the App reaches (${i.account})`
-                : `Choose which repositories the App reaches (${i.account})`}
-            </a>
-          ))}
+        <div className="flex items-center gap-2">
           {data?.installUrl ? (
-            <a
-              href={data.installUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm text-foreground underline underline-offset-2"
-            >
-              {data.installations.length === 0 ? 'Install the App' : 'Install on another account'}
-            </a>
+            <InstallButton url={data.installUrl} onClick={startWatching} />
           ) : null}
           <Button size="sm" variant="secondary" onClick={resource.reload}>
             Refresh
           </Button>
         </div>
       </div>
+      {watch ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Waiting for GitHub. Pick the account and the repositories there, then come back: this page
+          notices on its own.
+        </p>
+      ) : null}
+      {installed ? (
+        <Alert
+          intent="success"
+          title={installed}
+          description="Enable the repositories you want below."
+        />
+      ) : null}
       {resource.error ? <p className="text-sm text-destructive">{resource.error}</p> : null}
       {data?.error ? (
         <Alert intent="warning" title="GitHub could not be asked" description={data.error} />
       ) : null}
-      {data?.installations.map((i) =>
-        i.selection === 'all' ? (
-          <p key={i.account} className="text-sm text-muted-foreground">
-            The App already reaches every repository of {i.account}, so there is nothing to grant:
-            enable the ones you want below. The link above is only for narrowing that list, and
-            GitHub shows it only when you are signed in as {i.account}.
-          </p>
-        ) : null,
-      )}
-      {data?.owner ? (
-        <p className="text-sm text-muted-foreground">
-          The App is private: signed in as any other account, GitHub answers 404 or &ldquo;private
-          GitHub App&rdquo;.
-        </p>
+      {data && data.installations.length > 0 ? (
+        <ul aria-label="Installations" className="space-y-1 text-sm text-muted-foreground">
+          {data.installations.map((i) => (
+            <li key={i.account}>
+              Installed on {i.account},{' '}
+              {i.selection === 'all' ? 'every repository' : 'the repositories chosen there'}.{' '}
+              <a
+                href={i.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-foreground underline underline-offset-2"
+              >
+                Manage on GitHub
+              </a>{' '}
+              (GitHub shows that page only when you are signed in as {i.account}.)
+            </li>
+          ))}
+        </ul>
       ) : null}
       {data ? (
         data.repositories.length === 0 ? (
@@ -248,14 +303,7 @@ export default function RepositoriesPage() {
             description="Install it on GitHub and choose the repositories it may work in, then refresh."
             action={
               data.installUrl ? (
-                <a
-                  href={data.installUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm underline underline-offset-2"
-                >
-                  Install the App
-                </a>
+                <InstallButton url={data.installUrl} onClick={startWatching} />
               ) : undefined
             }
           />

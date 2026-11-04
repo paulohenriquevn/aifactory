@@ -16,7 +16,13 @@ function Row({ item }: { item: SetupItem }) {
       </Badge>
       <span className="font-medium">{item.label}</span>
       <span className="text-muted-foreground">{item.detail}</span>
-      {item.link ? (
+      {item.link && external && item.status === 'missing' ? (
+        <Button asChild size="sm" className="ml-auto">
+          <a href={item.link.href} target="_blank" rel="noreferrer">
+            {item.link.label}
+          </a>
+        </Button>
+      ) : item.link ? (
         external ? (
           <a
             href={item.link.href}

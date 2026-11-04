@@ -129,6 +129,18 @@ describe('setup', () => {
     expect(inside.getAttribute('target')).toBeNull()
   })
 
+  it('shows what is missing on GitHub as a button, and what is only worth a look as a link', async () => {
+    serve({ 'GET /api/panel/setup': report() })
+    render(
+      <MemoryRouter>
+        <SetupPage />
+      </MemoryRouter>,
+    )
+    const github = await screen.findByRole('link', { name: 'Install it and choose repositories' })
+    expect(github.getAttribute('data-slot')).toBe('button')
+    expect(screen.getByRole('link', { name: 'Enable one' }).getAttribute('data-slot')).toBeNull()
+  })
+
   it('says it is ready when nothing is missing, and asks again on request', async () => {
     serve({
       'GET /api/panel/setup': report({
@@ -157,26 +169,109 @@ describe('repositories', () => {
       </MemoryRouter>,
     )
 
-  it('lists the repositories with their state and a link to give the App more access', async () => {
+  it('lists the repositories with their state, and where the App is installed', async () => {
     serve({ 'GET /api/panel/repositories': repos() })
     mount()
     await waitFor(() => expect(screen.getByText('paulo/app')).toBeDefined())
     expect(screen.getByText('paulo/other')).toBeDefined()
     expect(screen.getByText('enabled')).toBeDefined()
     expect(screen.getByText('public')).toBeDefined()
-    const manage = screen.getByRole('link', {
-      name: 'Restrict which repositories the App reaches (paulo)',
-    })
-    expect(manage.getAttribute('href')).toBe('https://github.com/settings/installations/9')
-    expect(screen.queryByRole('link', { name: 'Install the App' })).toBeNull()
-    expect(
-      screen.getByRole('link', { name: 'Install on another account' }).getAttribute('href'),
-    ).toBe('https://github.com/apps/x/installations/new')
-    expect(screen.getByText(/already reaches every repository of paulo/)).toBeDefined()
-    expect(screen.getByText(/signed in as any other account, GitHub answers 404/)).toBeDefined()
+    const installations = within(screen.getByRole('list', { name: 'Installations' }))
+    expect(installations.getByText(/Installed on paulo, every repository/)).toBeDefined()
+    expect(installations.getByRole('link', { name: 'Manage on GitHub' }).getAttribute('href')).toBe(
+      'https://github.com/settings/installations/9',
+    )
   })
 
-  it('offers to choose repositories, and says nothing about "already reaches", when the App was given only some', async () => {
+  it('has a button that opens the install page on GitHub in a new tab', async () => {
+    serve({ 'GET /api/panel/repositories': repos() })
+    mount()
+    const button = await screen.findByRole('link', { name: 'Install on GitHub' })
+    expect(button.getAttribute('href')).toBe('https://github.com/apps/x/installations/new')
+    expect(button.getAttribute('target')).toBe('_blank')
+    expect(button.getAttribute('rel')).toContain('noreferrer')
+  })
+
+  it('waits for GitHub after the button, and says so when an account shows up', async () => {
+    let answer = repos()
+    serve({ 'GET /api/panel/repositories': (() => new Response(JSON.stringify(answer))) as never })
+    mount()
+    const button = await screen.findByRole('link', { name: 'Install on GitHub' })
+    expect(screen.queryByText(/Waiting for GitHub/)).toBeNull()
+
+    button.addEventListener('click', (e) => e.preventDefault())
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByText(/Waiting for GitHub/)).toBeDefined())
+
+    answer = repos({
+      installations: [
+        { account: 'paulo', selection: 'all', url: 'https://github.com/settings/installations/9' },
+        {
+          account: 'acme',
+          selection: 'selected',
+          url: 'https://github.com/organizations/acme/settings/installations/2',
+        },
+      ],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    await waitFor(() =>
+      expect(screen.getByText(/Installed on acme\. 2 repositories are in reach/)).toBeDefined(),
+    )
+    expect(screen.queryByText(/Waiting for GitHub/)).toBeNull()
+  })
+
+  it('notices new repositories on an account that was already installed', async () => {
+    let answer = repos()
+    serve({ 'GET /api/panel/repositories': (() => new Response(JSON.stringify(answer))) as never })
+    mount()
+    const button = await screen.findByRole('link', { name: 'Install on GitHub' })
+    button.addEventListener('click', (e) => e.preventDefault())
+    fireEvent.click(button)
+    answer = repos()
+    answer.repositories.push({ ...answer.repositories[1], fullName: 'paulo/third' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    await waitFor(() => expect(screen.getByText('3 repositories are in reach.')).toBeDefined())
+  })
+
+  it('keeps waiting while nothing changed', async () => {
+    serve({ 'GET /api/panel/repositories': repos() })
+    mount()
+    const button = await screen.findByRole('link', { name: 'Install on GitHub' })
+    button.addEventListener('click', (e) => e.preventDefault())
+    fireEvent.click(button)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.getByText(/Waiting for GitHub/)).toBeDefined()
+    expect(screen.queryByText(/in reach/)).toBeNull()
+  })
+
+  it('confirms when GitHub sends the owner back with the installation in the address', async () => {
+    serve({ 'GET /api/panel/repositories': repos() })
+    render(
+      <MemoryRouter initialEntries={['/repositories?installation_id=77&setup_action=install']}>
+        <Routes>
+          <Route
+            path="/repositories"
+            element={
+              <>
+                <RepositoriesPage />
+                <Where />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect(screen.getByText('GitHub confirmed the installation.')).toBeDefined(),
+    )
+    await waitFor(() => expect(screen.getByLabelText('where').textContent).toBe('/repositories'))
+  })
+
+  it('lists an installation with only some repositories as that, with its own page', async () => {
     serve({
       'GET /api/panel/repositories': repos({
         installations: [
@@ -190,12 +285,10 @@ describe('repositories', () => {
     })
     mount()
     await waitFor(() => expect(screen.getByText('paulo/app')).toBeDefined())
-    expect(
-      screen
-        .getByRole('link', { name: 'Choose which repositories the App reaches (acme)' })
-        .getAttribute('href'),
-    ).toBe('https://github.com/organizations/acme/settings/installations/2')
-    expect(screen.queryByText(/already reaches every repository/)).toBeNull()
+    expect(screen.getByText(/Installed on acme, the repositories chosen there/)).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Manage on GitHub' }).getAttribute('href')).toBe(
+      'https://github.com/organizations/acme/settings/installations/2',
+    )
   })
 
   it('enables a repository through the API, with the header the server asks for', async () => {
@@ -292,7 +385,7 @@ describe('repositories', () => {
     serve({ 'GET /api/panel/repositories': repos({ repositories: [] }) })
     mount()
     await waitFor(() => expect(screen.getByText('The App reaches no repository yet')).toBeDefined())
-    expect(screen.getByRole('link', { name: 'Install the App' })).toBeDefined()
+    expect(screen.getAllByRole('link', { name: 'Install on GitHub' })).toHaveLength(2)
   })
 
   it('says when GitHub could not be asked and marks a repository the App no longer reaches', async () => {

@@ -26,8 +26,8 @@ Com o servidor no ar (`scripts/install-services.sh`, ou `pnpm dev`), abra `http:
 com o token de `FACTORY_PANEL_TOKEN`.
 
 1. A página Setup mostra o que falta e leva à página que conserta.
-2. Em Repositories, o link "Give the App access to more repositories" abre o GitHub, onde você escolhe
-   o que a App alcança. Habilite os repositórios em que a fábrica pode trabalhar e ajuste os checks, os
+2. Em Repositories, o botão "Install on GitHub" abre o GitHub, onde você escolhe a conta ou a
+   organização e o que a App alcança, e o painel percebe quando a instalação termina. Habilite os repositórios em que a fábrica pode trabalhar e ajuste os checks, os
    domínios e os agentes de cada um.
 3. Em Plans, escreva o objetivo, revise as issues que o agente propõe e crie-as (já iniciadas ou não).
 4. O botão New job no quadro abre uma issue avulsa.

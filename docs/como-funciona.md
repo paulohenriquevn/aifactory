@@ -367,9 +367,13 @@ ele abre. Nenhum comando.
 1. **Setup.** A página lista o que falta: a GitHub App, o webhook, o segredo do webhook, o sandbox, ao
    menos um agente (Claude Code ou Codex) e um repositório habilitado. Cada linha diz o que está
    errado e leva à página que conserta. Nunca mostra um segredo, só se ele existe e o que o paga.
-2. **Dar acesso aos repositórios.** O link "Give the App access to more repositories" abre a página da
-   App no GitHub, onde o dono escolhe quais repositórios ela alcança. Voltando ao painel, "Refresh"
-   lista o que ela alcança. A permissão é do GitHub, não nossa.
+2. **Instalar a App e dar acesso aos repositórios.** O botão "Install on GitHub" (em Repositories e no
+   Setup) abre a página de instalação da App no GitHub, numa aba nova. Lá o dono escolhe a conta ou a
+   organização e os repositórios, e o painel, que passa a perguntar ao GitHub a cada poucos segundos,
+   percebe sozinho quando a instalação aparece e avisa. A permissão é do GitHub, não nossa. A App precisa
+   ser pública para ser instalada fora da conta que a criou (uma organização, por exemplo). Para o GitHub
+   devolver o dono ao painel ao terminar, preencha o "Setup URL" da App com
+   `http://localhost:3000/repositories` e marque "Redirect on update"; sem isso o dono volta ao painel por conta própria, e a página percebe o mesmo.
 3. **Habilitar.** Alcançar um repositório não é licença para trabalhar nele: a App está instalada em
    todos os da conta, e uma issue com a label `factory` num repositório não habilitado é gravada e
    ignorada (`repository_disabled`). Habilitar é o clique em Enable na página Repositories. Só quem a
