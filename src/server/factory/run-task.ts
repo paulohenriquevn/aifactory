@@ -8,7 +8,7 @@ import { fetchIssue as defaultFetchIssue, type Issue } from '../github/issues'
 import { createGithubApi, type GithubApi } from '../github/pulls'
 
 import { DEFAULT_CHECKS, gate, runChecks, type CheckResult, type CheckSpec } from './evidence'
-import { buildPrompt, type CodingHarness } from './harness'
+import { anthropicEgress, buildPrompt, type ClaudeCredential, type CodingHarness } from './harness'
 import {
   createIsolatedSandbox,
   type IsolatedSandbox,
@@ -22,7 +22,7 @@ export type RunTaskDeps = {
   sandbox: IsolatedSandboxProvider
   harness: CodingHarness
   /** Held by the factory and attached by the sandbox firewall. Never passed into the sandbox. */
-  anthropicApiKey: string
+  claude: ClaudeCredential
   /** The commit author, so the pull request shows who wrote it. */
   author: { name: string; email: string }
   fetchIssue?: (repo: string, number: number, token: string, fetch?: FetchLike) => Promise<Issue>
@@ -87,7 +87,7 @@ export async function runTask(
             authorization: `Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
           },
         },
-        { domain: 'api.anthropic.com', headers: { 'x-api-key': deps.anthropicApiKey } },
+        anthropicEgress(deps.claude),
         { domain: 'registry.npmjs.org' },
       ],
     })

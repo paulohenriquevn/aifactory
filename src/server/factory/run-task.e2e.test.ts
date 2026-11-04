@@ -111,7 +111,7 @@ describe('the factory against the real services', () => {
         github,
         sandbox: vercelSandboxProvider(),
         harness: scriptedAgent,
-        anthropicApiKey: 'not-used-by-the-scripted-agent',
+        claude: { kind: 'api-key', secret: 'not-used-by-the-scripted-agent' },
         author: {
           name: 'aifactory-paulohenriquevn[bot]',
           email: 'aifactory@users.noreply.github.com',

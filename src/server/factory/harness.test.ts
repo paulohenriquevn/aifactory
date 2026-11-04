@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildPrompt, claudeCodeHarness, parseClaudeResult } from './harness'
+import {
+  anthropicEgress,
+  buildPrompt,
+  claudeCodeHarness,
+  claudeCredentialFromEnv,
+  parseClaudeResult,
+} from './harness'
 import { FakeSandbox } from './fake-sandbox'
 
 describe('parseClaudeResult', () => {
@@ -57,6 +63,65 @@ describe('claudeCodeHarness', () => {
     expect(command).toContain('claude -p')
     expect(command).toContain('< /tmp/factory-prompt.md')
     expect(command).toContain('ANTHROPIC_API_KEY=placeholder-not-a-secret')
+  })
+})
+
+describe('claudeCodeHarness with a subscription', () => {
+  it('carries a placeholder for the OAuth token and none for an API key', async () => {
+    const sandbox = new FakeSandbox(() => ({ stdout: JSON.stringify({ result: 'ok' }) }))
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+
+    await claudeCodeHarness('subscription').run(backend, { prompt: 'P', cwd: '/w', timeoutMs: 5 })
+
+    const [command] = sandbox.backend.commands
+    expect(command).toContain('CLAUDE_CODE_OAUTH_TOKEN=placeholder-not-a-secret')
+    expect(command).not.toContain('ANTHROPIC_API_KEY')
+  })
+})
+
+describe('anthropicEgress', () => {
+  it('signs an API key as x-api-key and a subscription token as a bearer token', () => {
+    expect(anthropicEgress({ kind: 'api-key', secret: 'k' })).toEqual({
+      domain: 'api.anthropic.com',
+      headers: { 'x-api-key': 'k' },
+    })
+    expect(anthropicEgress({ kind: 'subscription', secret: 't' })).toEqual({
+      domain: 'api.anthropic.com',
+      headers: { authorization: 'Bearer t' },
+    })
+  })
+})
+
+describe('claudeCredentialFromEnv', () => {
+  it('uses whichever credential exists, the API key first', () => {
+    expect(claudeCredentialFromEnv({ ANTHROPIC_API_KEY: 'k' })).toEqual({
+      kind: 'api-key',
+      secret: 'k',
+    })
+    expect(claudeCredentialFromEnv({ CLAUDE_CODE_OAUTH_TOKEN: 't' })).toEqual({
+      kind: 'subscription',
+      secret: 't',
+    })
+    expect(
+      claudeCredentialFromEnv({ ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 't' }).kind,
+    ).toBe('api-key')
+  })
+
+  it('lets FACTORY_CLAUDE_AUTH pick when both are set', () => {
+    const env = { ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 't' }
+    expect(claudeCredentialFromEnv({ ...env, FACTORY_CLAUDE_AUTH: 'subscription' }).secret).toBe(
+      't',
+    )
+  })
+
+  it('names what is missing instead of picking something else', () => {
+    expect(() => claudeCredentialFromEnv({})).toThrow(/ANTHROPIC_API_KEY.*CLAUDE_CODE_OAUTH_TOKEN/)
+    expect(() =>
+      claudeCredentialFromEnv({ ANTHROPIC_API_KEY: 'k', FACTORY_CLAUDE_AUTH: 'subscription' }),
+    ).toThrow(/setup-token/)
+    expect(() => claudeCredentialFromEnv({ FACTORY_CLAUDE_AUTH: 'oauth' })).toThrow(
+      /api-key or subscription/,
+    )
   })
 })
 

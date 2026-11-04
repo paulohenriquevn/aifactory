@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { getDb } from '../db'
 import { createGithubApp } from '../github/app'
 
-import { claudeCodeHarness } from './harness'
+import { claudeCodeHarness, claudeCredentialFromEnv } from './harness'
 import type { RunTaskDeps } from './run-task'
 import { vercelSandboxProvider } from './vercel-sandbox'
 
@@ -19,6 +19,7 @@ const required = (env: NodeJS.ProcessEnv, name: string): string => {
  */
 export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
   const slug = required(env, 'GITHUB_APP_SLUG')
+  const claude = claudeCredentialFromEnv(env)
   return {
     db: getDb(),
     github: createGithubApp({
@@ -26,8 +27,8 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
       privateKey: readFileSync(required(env, 'GITHUB_APP_PRIVATE_KEY_PATH'), 'utf8'),
     }),
     sandbox: vercelSandboxProvider(),
-    harness: claudeCodeHarness(),
-    anthropicApiKey: required(env, 'ANTHROPIC_API_KEY'),
+    harness: claudeCodeHarness(claude.kind),
+    claude,
     author: { name: `${slug}[bot]`, email: `${slug}[bot]@users.noreply.github.com` },
   }
 }

@@ -91,7 +91,7 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
     githubApi,
     sandbox,
     harness: okHarness,
-    anthropicApiKey: ANTHROPIC,
+    claude: { kind: 'api-key', secret: ANTHROPIC },
     pushRetryDelayMs: 0,
     author: { name: 'aifactory[bot]', email: 'bot@users.noreply.github.com' },
     fetchIssue: async () => ({
