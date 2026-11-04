@@ -306,9 +306,9 @@ Três gates rodam no job `quality` do CI, ao lado do `check`. Localmente: `pnpm 
 - **CRAP.** Para cada função, `complexidade² × (1 − cobertura)³ + complexidade`: uma função complicada que
   os testes não alcançam é o código mais arriscado, e um número diz o quanto. A complexidade é a ciclomática
   (ramos, laços, `catch`, ternários, `&&`, `||`, `??`), pela API do TypeScript, e a cobertura é a real, de
-  `pnpm coverage`. Nenhuma função nova pode passar de 30, e as que já passam estão em
-  `quality/crap-baseline.json` e só podem diminuir. A dívida de hoje é uma função, `execute` do `runTask`, com
-  complexidade 66. Quando uma melhorar, `node scripts/crap.mjs --update` trava o ganho.
+  `pnpm coverage`. Nenhuma função nova pode passar de 30, e as que já passassem estariam em
+  `quality/crap-baseline.json` e só poderiam diminuir. Hoje não há dívida: nenhuma função passa de 30 e o baseline está vazio. Se algum
+  dia uma função entrar nele, só poderá diminuir, e `node scripts/crap.mjs --update` trava cada ganho.
 - **Duplicação.** Menos de 1% de código copiado (`jscpd`; hoje 0,15%). Os testes ficam de fora, porque
   repetem por natureza.
 - **Mutação.** O Stryker muda a lógica de decisão (o portão de evidência, o veredito do review, as guardas do
@@ -553,7 +553,6 @@ responde `/api/health` mesmo sem as credenciais.
 - O painel é local e tem um dono só, com um token.
 - A resposta é lida por sondagem a cada minuto, não por evento.
 - O supervisor só reporta; não corrige nada sozinho.
-- A dívida de CRAP é uma função, `execute`, e vale quebrá-la quando houver ocasião.
 - Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.
 - O Codex ainda não completou uma issue do início ao fim, por causa da cota da conta usada.
 - A sessão do Vercel Sandbox no plano Hobby termina em 45 minutos.

@@ -83,9 +83,12 @@ reads that file, not a convention.
 - **The factory opens a revert and never merges it.** `watch-main` may open a pull request that
   reverts a release when its merge commit goes red. Nothing in `factory/watch.ts` calls a merge, and a
   test fails if it does.
-- **New code stays under the quality gates.** No new function over CRAP 30 (the known one is in
-  `quality/crap-baseline.json` and may only shrink), duplication under 1%, and a mutation score of 90 on the
+- **New code stays under the quality gates.** No new function over CRAP 30 (the baseline in
+  `quality/crap-baseline.json` is empty, and an entry may only shrink), duplication under 1%, and a mutation score of 90 on the
   decision logic. A gate that fails is fixed with a test or a smaller function, not by raising the line.
+- **A run is `Run`, one method per step.** `factory/run.ts` holds what changes during a run (cost, the
+  agent's last words, its session) and a method for each step; `run-task.ts` is only the public entry
+  points. A new step is a new method, not a branch inside another.
 - **Commits carry no co-author trailer.**
 - **Validate at the boundary.** A route validates input with Zod once, then trusts it.
 - **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`

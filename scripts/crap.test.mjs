@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { complexityOf, coverageOf, crap, functionsIn, judge } from './crap.mjs'
+import { coverageOf, crap, functionsIn, judge } from './crap.mjs'
 
 const complexities = (code) =>
   Object.fromEntries(functionsIn('x.ts', code).map((f) => [f.name, f.complexity]))

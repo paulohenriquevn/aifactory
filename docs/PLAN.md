@@ -341,6 +341,15 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   classificação da `main`, resposta ao agente, versões, notas, formatação do painel), com piso de 90: a
   nota foi de 75,9 para 97,2 depois de escrever os testes que os sobreviventes pediam. Cada gate foi visto
   falhando de propósito (uma função complexa sem teste, um limite apertado e um piso alto).
+- M7, a dívida paga: o `execute` virou a classe `Run` (`factory/run.ts`), com um método por etapa
+  (abrir o sandbox, primeira passada, perguntar, retrabalhar, verificar, rever, entregar, promover,
+  entregar a uma pessoa e o laço de tentativas), e o estado que muda durante a execução (custo, o que o
+  agente disse, a sessão) mora nela, não em fechamentos soltos. Os tipos foram para `run-types.ts` e os
+  erros e utilitários para `run-support.ts`; `run-task.ts` ficou com a API pública (`runTask`,
+  `resumeTask`) e a casca de `execute`. A complexidade do `execute` foi de 66 para 6, a maior peça nova
+  (`loop`) tem 11, e o baseline de CRAP ficou vazio. O comportamento não mudou: os 142 testes de
+  integração, o e2e roteirizado e os testes ao vivo (Claude real, retrabalho com `--resume`, pergunta
+  com snapshot e retomada) passaram sem alterar uma asserção.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 
