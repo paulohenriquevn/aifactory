@@ -60,12 +60,22 @@ export function networkPolicyFor(spec: SandboxSpec): NetworkPolicy {
   return { allow }
 }
 
-/** Needs `VERCEL_OIDC_TOKEN` (`vercel env pull`) or the team, project and token variables. */
+/**
+ * An access token with its team and project outlives the OIDC token, which `vercel env pull`
+ * issues for 12 hours. Returns nothing unless all three variables are set.
+ */
+export function vercelCredentials(env: NodeJS.ProcessEnv = process.env) {
+  const { VERCEL_TOKEN: token, VERCEL_TEAM_ID: teamId, VERCEL_PROJECT_ID: projectId } = env
+  return token && teamId && projectId ? { token, teamId, projectId } : undefined
+}
+
+/** Needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`, or else `VERCEL_OIDC_TOKEN`. */
 export function vercelSandboxProvider(): IsolatedSandboxProvider {
   return {
     name: 'vercel-sandbox',
     async create(spec): Promise<IsolatedSandbox> {
       const sandbox = await Sandbox.create({
+        ...vercelCredentials(),
         timeout: spec.timeoutMs,
         networkPolicy: networkPolicyFor(spec),
       })
