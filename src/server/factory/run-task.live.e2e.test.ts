@@ -13,6 +13,7 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, stageEvent, task } from '../db/schema'
 import { createGithubApp } from '../github/app'
+import { deletePreReleases } from '../../test/playground'
 
 import { DEFAULT_HARNESS, harnessRegistry, pickHarness } from './harness-registry'
 import { runTask } from './run-task'
@@ -46,7 +47,10 @@ describe.skipIf(!live)('the factory with the real agent', () => {
       headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },
     })
   }
-  const deleteBranch = () => api(`/git/refs/heads/factory/${ISSUE}`, { method: 'DELETE' })
+  const deleteBranch = async () => {
+    await api(`/git/refs/heads/factory/${ISSUE}`, { method: 'DELETE' })
+    await deletePreReleases((await github!.installationToken(REPO)).token, REPO, ISSUE)
+  }
 
   beforeAll(async () => {
     getStorageManager().configure(storageFromUrl(readDatabaseUrl()))

@@ -9,6 +9,7 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, stageEvent, task } from '../db/schema'
 import { createGithubApp } from '../github/app'
+import { deletePreReleases } from '../../test/playground'
 
 import type { CodingHarness } from './harness'
 import { runTask } from './run-task'
@@ -75,6 +76,7 @@ const scriptedReviewer: CodingHarness = {
 
 async function deleteBranch(branch: string) {
   const { token } = await github.installationToken(REPO)
+  await deletePreReleases(token, REPO, ISSUE)
   await fetch(`https://api.github.com/repos/${REPO}/git/refs/heads/${branch}`, {
     method: 'DELETE',
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },

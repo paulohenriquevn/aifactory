@@ -10,6 +10,7 @@ import { getDb, getPool } from '../db'
 import { storageFromEnv } from '../db/config'
 import { ingress, question, stageEvent, task } from '../db/schema'
 import { createGithubApp } from '../github/app'
+import { deletePreReleases } from '../../test/playground'
 import { createGithubApi } from '../github/pulls'
 
 import { DEFAULT_HARNESS, harnessRegistry, pickHarness } from './harness-registry'
@@ -64,6 +65,7 @@ describe.skipIf(!live)('a task that waits for an answer, with the real agent', (
   })
   afterAll(async () => {
     await app(`/git/refs/heads/factory/${issueNumber}`, { method: 'DELETE' })
+    await deletePreReleases((await github!.installationToken(REPO)).token, REPO, issueNumber)
     await app(`/issues/${issueNumber}`, {
       method: 'PATCH',
       body: JSON.stringify({ state: 'closed' }),
