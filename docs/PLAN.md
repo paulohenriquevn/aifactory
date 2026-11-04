@@ -269,6 +269,10 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   levou menos de um segundo, e nenhum sobrou depois. O cron enfileira por um backend de jobs
   compartilhado, porque job e cron não têm `ctx.queue`
   ([usetheokit/theokit#1150](https://github.com/usetheokit/theokit/issues/1150)).
+  Pelo caminho de produção, sem nada simulado (label `factory` numa issue nova, webhook, servidor
+  real, Claude real, resposta de um comentário real e o cron real), a task perguntou em 24
+  segundos, e depois da resposta terminou em 77 segundos com o PR #15, por US$ 0,18 (chave de API,
+  revisão incluída).
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 
