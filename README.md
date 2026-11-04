@@ -6,13 +6,14 @@ suporte a vários projetos.
 
 Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7, e
 [como a fábrica funciona](docs/como-funciona.md) descreve o fluxo, o isolamento, a evidência e o
-uso do Claude Code e do Codex. Os marcos M0 a M4 estão concluídos: uma issue com a label `factory`
+uso do Claude Code e do Codex. Os marcos M0 a M5 estão concluídos: uma issue com a label `factory`
 chega a um pull request, aberto só com os checks verdes no commit enviado e a aprovação de um
 revisor independente, com até três tentativas de retrabalho na mesma sessão do agente. O Claude Code
 funciona por chave de API ou por assinatura. O Codex está implementado e verificado até a chamada ao
 modelo, e falta uma execução que complete, por causa da cota da conta usada. Quando o agente precisa
 de uma decisão, ele pergunta na issue e a task espera a resposta de quem tem acesso de escrita.
-Painel e merge ainda não existem.
+O painel local (quadro, caixa de entrada, detalhe, aprovar, pedir mudanças e tentar de novo) mostra
+tudo ao vivo. O merge ainda não existe.
 
 ## Rodando localmente
 
@@ -43,6 +44,12 @@ pnpm dev
   `factory/<n>`.
 - A assinatura `X-Hub-Signature-256` é verificada sobre o corpo bruto antes de qualquer escrita.
   Assinatura inválida ou ausente responde 401. Sem `GITHUB_WEBHOOK_SECRET` a rota responde 503.
+
+### Painel
+
+`http://localhost:3000`, com o token de `FACTORY_PANEL_TOKEN`. O servidor deve escutar só nesta
+máquina (`HOST=127.0.0.1 pnpm start`): o painel não passa pelo túnel, que só deixa o webhook e o health
+check saírem. Veja [como a fábrica funciona](docs/como-funciona.md#o-painel).
 
 ### Exposição pública
 
@@ -94,7 +101,9 @@ pnpm db:migrate
 ```
 
 Os testes de integração falham quando `DATABASE_URL` não está definida. Uma suíte pulada em
-silêncio passaria por verde.
+silêncio passaria por verde. Eles nunca rodam no banco da fábrica: um arquivo de setup aponta as
+suítes para `<nome>_test` no mesmo servidor, que é criado sozinho, porque elas truncam as tabelas e
+o banco real guarda as tasks.
 
 ## Estrutura
 
@@ -105,6 +114,9 @@ src/server/
   ingest/             decisão sobre cada entrega do GitHub e persistência de ingress e task
   factory/            execução de uma task: sandbox isolado, agente, push de factory/<n>, estágios
   github/             autenticação do GitHub App e leitura de issues
+  panel/              consultas, ações, sessão e eventos do painel
+src/shared/           contratos que o servidor e a interface leem
+src/app/              a interface do painel (React)
   routes/             rotas HTTP (health, ready, webhooks/github)
 drizzle/              migrations geradas pelo drizzle-kit
 scripts/               registro e verificação do GitHub App (ADR 0004)

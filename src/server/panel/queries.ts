@@ -1,0 +1,181 @@
+import { asc, desc, eq, inArray, sql } from 'drizzle-orm'
+
+import type { Database } from '../db'
+import { decision, evidence, question, review, stageEvent, task } from '../db/schema'
+import {
+  columnOf,
+  type DecisionView,
+  type EvidenceView,
+  type InboxItem,
+  type QuestionView,
+  type ReviewView,
+  type Stage,
+  type TaskCard,
+  type TaskDetail,
+  type TimelineEvent,
+} from '../../shared/panel'
+
+type TaskRow = typeof task.$inferSelect
+
+const iso = (date: Date) => date.toISOString()
+
+/**
+ * Cards for the given tasks: what the board shows. The attempts, the last activity and whether a
+ * person approved the current commit come from three small aggregates instead of one query per task.
+ */
+async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
+  if (rows.length === 0) return []
+  const ids = rows.map((r) => r.id)
+  const activity = await db
+    .select({
+      taskId: stageEvent.taskId,
+      last: sql<Date>`max(${stageEvent.at})`,
+      verifies: sql<number>`count(*) filter (where ${stageEvent.stage} = 'verify')`,
+    })
+    .from(stageEvent)
+    .where(inArray(stageEvent.taskId, ids))
+    .groupBy(stageEvent.taskId)
+  const approvals = await db
+    .select({ taskId: decision.taskId, sha: decision.sha })
+    .from(decision)
+    .where(inArray(decision.taskId, ids))
+    .orderBy(asc(decision.id))
+  const byTask = new Map(activity.map((a) => [a.taskId, a]))
+  return rows.map((r) => {
+    const seen = byTask.get(r.id)
+    const kinds = approvals.filter((a) => a.taskId === r.id)
+    return {
+      id: r.id,
+      repository: r.repository,
+      issueNumber: r.issueNumber,
+      title: r.issueTitle,
+      stage: r.stage as Stage,
+      column: columnOf(r.stage as Stage),
+      pullRequestUrl: r.pullRequestUrl,
+      headSha: r.headSha,
+      costUsd: r.costUsd,
+      attempts: Number(seen?.verifies ?? 0),
+      createdAt: iso(r.createdAt),
+      updatedAt: iso(new Date(seen?.last ?? r.createdAt)),
+      approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
+    }
+  })
+}
+
+/** Every task, newest activity first. */
+export async function listTasks(db: Database): Promise<TaskCard[]> {
+  const rows = await db.select().from(task).orderBy(desc(task.id))
+  return (await cards(db, rows)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
+export async function taskDetail(db: Database, id: number): Promise<TaskDetail | undefined> {
+  const [row] = await db.select().from(task).where(eq(task.id, id))
+  if (!row) return undefined
+  const [card] = await cards(db, [row])
+  const [events, checks, reviews, questions, decisions] = await Promise.all([
+    db.select().from(stageEvent).where(eq(stageEvent.taskId, id)).orderBy(asc(stageEvent.id)),
+    db.select().from(evidence).where(eq(evidence.taskId, id)).orderBy(asc(evidence.id)),
+    db.select().from(review).where(eq(review.taskId, id)).orderBy(asc(review.id)),
+    db.select().from(question).where(eq(question.taskId, id)).orderBy(asc(question.id)),
+    db.select().from(decision).where(eq(decision.taskId, id)).orderBy(asc(decision.id)),
+  ])
+  return {
+    task: card,
+    timeline: events.map((e): TimelineEvent => ({
+      id: e.id,
+      stage: e.stage as Stage,
+      at: iso(e.at),
+      detail: (e.detail ?? null) as Record<string, unknown> | null,
+    })),
+    evidence: checks.map((e): EvidenceView => ({
+      id: e.id,
+      name: e.name,
+      command: e.command,
+      sha: e.sha,
+      passed: e.passed,
+      exitCode: e.exitCode,
+      timedOut: e.timedOut,
+      durationMs: e.durationMs,
+      output: e.output,
+      at: iso(e.at),
+    })),
+    reviews: reviews.map((r): ReviewView => ({
+      id: r.id,
+      round: r.round,
+      sha: r.sha,
+      reviewer: r.reviewer,
+      verdict: r.verdict,
+      summary: r.summary,
+      findings: r.findings as ReviewView['findings'],
+      at: iso(r.at),
+    })),
+    questions: questions.map((q): QuestionView => ({
+      id: q.id,
+      body: q.body,
+      askedAt: iso(q.askedAt),
+      answer: q.answer,
+      answeredBy: q.answeredBy,
+      answeredAt: q.answeredAt ? iso(q.answeredAt) : null,
+    })),
+    decisions: decisions.map((d): DecisionView => ({
+      id: d.id,
+      kind: d.kind,
+      sha: d.sha,
+      note: d.note,
+      at: iso(d.at),
+    })),
+  }
+}
+
+const oneLine = (text: string, max = 200) => text.replace(/\s+/g, ' ').trim().slice(0, max)
+
+/**
+ * What waits for a person: a question to answer, a pull request nobody approved yet, work handed
+ * over after three attempts, and a run that failed. Oldest first, because that is what has waited
+ * the longest.
+ */
+export async function inbox(db: Database): Promise<InboxItem[]> {
+  const rows = await db
+    .select()
+    .from(task)
+    .where(inArray(task.stage, ['waiting', 'done', 'handoff', 'failed']))
+  const all = await cards(db, rows)
+  const items: InboxItem[] = []
+  for (const card of all) {
+    const [last] = await db
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, card.id))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
+    const detail = (last?.detail ?? {}) as Record<string, unknown>
+    const at = last ? iso(last.at) : card.updatedAt
+    if (card.stage === 'waiting') {
+      items.push({
+        task: card,
+        kind: 'question',
+        summary: oneLine(String(detail.question ?? 'A question')),
+        at,
+      })
+    } else if (card.stage === 'handoff') {
+      items.push({
+        task: card,
+        kind: 'handoff',
+        summary: oneLine(String(detail.reason ?? 'Needs a person')),
+        at,
+      })
+    } else if (card.stage === 'failed') {
+      const quota = detail.quota === true
+      const error = oneLine(String(detail.error ?? 'The run failed'))
+      items.push({
+        task: card,
+        kind: 'failed',
+        summary: quota ? `Out of quota. ${error}` : error,
+        at,
+      })
+    } else if (card.stage === 'done' && !card.approved) {
+      items.push({ task: card, kind: 'review', summary: 'Pull request ready to review', at })
+    }
+  }
+  return items.sort((a, b) => a.at.localeCompare(b.at))
+}

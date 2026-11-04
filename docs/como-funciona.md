@@ -200,6 +200,47 @@ e o snapshot é apagado.
 Cada snapshot ocupa cerca de 800 MB, e o plano Hobby da Vercel limita o armazenamento. Muitas
 perguntas abertas ao mesmo tempo esgotam esse limite.
 
+## O painel
+
+Uma interface local para ver e conduzir a fábrica. Abre em `http://localhost:3000` e mostra, ao vivo:
+
+- O quadro: uma coluna por situação (na fila, trabalhando, esperando você, pull request, precisa de
+  uma pessoa), com o custo e o número de tentativas de cada task.
+- A caixa de entrada: só o que espera uma pessoa, do mais antigo ao mais novo. É uma pergunta do
+  agente, um PR que ninguém aprovou, um trabalho entregue depois de três tentativas ou uma execução
+  que falhou (com "sem cota" dito como tal).
+- O detalhe da task: a linha do tempo de estágios, a evidência (comando, SHA, código de saída e a
+  saída), os reviews com os achados, as perguntas e respostas e as decisões tomadas.
+
+**Tempo real.** O servidor manda um evento (SSE, `/api/panel/stream`) a cada mudança de estágio, e a
+página recarrega só o que mudou. Um relógio lento cobre o que o evento não traz, como o custo que cresce
+enquanto o agente trabalha, e uma conexão que caiu.
+
+**Ações.** Todas passam pelo servidor, que confere o estágio da task de novo, então uma página velha não
+consegue fazer o que a task já não permite.
+
+| Ação           | Quando                          | O que faz                                                                                                             |
+| -------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Aprovar        | task com PR (`done`, `handoff`) | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.       |
+| Pedir mudanças | task com PR, com um texto       | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review. |
+| Tentar de novo | task `failed` ou `handoff`      | Apaga a branch (o que fecha o PR) e recomeça do zero.                                                                 |
+
+Se o agente, ao receber um pedido de mudança, concluir que não há o que mudar (o teste já existia, por
+exemplo), a task volta a `done` e a resposta dele vira um comentário na issue, em vez de falhar.
+
+Aprovar não faz merge. O merge, preso ao SHA aprovado, é o M6.
+
+**Quem entra.** O painel tem um dono, que entra com o token de `FACTORY_PANEL_TOKEN`. A sessão é um
+cookie criptografado com `FACTORY_PANEL_SECRET` (os dois com pelo menos 32 caracteres, por exemplo
+`openssl rand -base64 36`). Cinco tokens errados do mesmo cliente bloqueiam esse cliente por uma hora.
+Sem token e segredo configurados, o painel recusa todo mundo. As rotas `/api/panel/*` só respondem ao
+dono, e as que mudam algo exigem o cabeçalho `X-Theo-Action: 1` (a proteção contra CSRF do TheoKit).
+
+**Onde ele aparece.** Só nesta máquina. O servidor escuta em `127.0.0.1` (`HOST=127.0.0.1`), e o
+Cloudflare Tunnel só deixa passar `/api/webhooks/github` e `/api/health`, então o painel não é
+alcançável pela internet. Expô-lo exigiria mudar essa regra do túnel, e isso só deve acontecer com o
+login já atrás de algo mais forte que um token (por exemplo, o Cloudflare Access).
+
 ## Claude Code
 
 O harness roda `claude -p --output-format json --dangerously-skip-permissions` com o prompt lido
@@ -392,7 +433,8 @@ responde `/api/health` mesmo sem as credenciais.
 - Uma task por issue. Repor a label não reexecuta, nem depois de uma task que falhou por falta de resposta.
 - Um repositório de cada vez no sentido de operação: não há onboarding de repositórios.
 - O servidor e o túnel rodam como processos da sessão de trabalho, sem supervisor.
-- Não há painel nem merge. Estão no M5 e no M6.
+- Não há merge. Está no M6.
+- O painel é local e tem um dono só, com um token.
 - A resposta é lida por sondagem a cada minuto, não por evento.
 - Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.
 - O Codex ainda não completou uma issue do início ao fim, por causa da cota da conta usada.

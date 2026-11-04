@@ -36,6 +36,13 @@
       "when": 1793798746376,
       "tag": "0004_question",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793799739743,
+      "tag": "0005_panel",
+      "breakpoints": true
     }
   ]
 }

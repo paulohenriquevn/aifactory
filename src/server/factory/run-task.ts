@@ -97,8 +97,13 @@ export function runTask(
   taskId: number,
   /** Aborts when the job's lease expires: the sandbox is stopped so the run does not outlive it. */
   signal?: AbortSignal,
+  /**
+   * Set when a person sent the pull request back: the run starts from the branch the agent already
+   * pushed, with what the person asked for in its prompt.
+   */
+  continuation?: { feedback: string },
 ): Promise<RunResult> {
-  return execute(deps, taskId, signal)
+  return execute(deps, taskId, signal, undefined, continuation)
 }
 
 type Parked = typeof questionTable.$inferSelect
@@ -134,6 +139,7 @@ async function execute(
   taskId: number,
   signal: AbortSignal | undefined,
   resuming?: Parked,
+  continuation?: { feedback: string },
 ): Promise<RunResult> {
   const { db } = deps
   const [row] = await db.select().from(task).where(eq(task.id, taskId))
@@ -203,7 +209,13 @@ async function execute(
     const baseSha = resuming
       ? resuming.baseSha
       : (await must(backend, `git -C ${repoDir} rev-parse HEAD`)).stdout.trim()
-    if (!resuming) await must(backend, `git -C ${repoDir} checkout -b ${branch}`)
+    if (!resuming && continuation) {
+      // The agent's earlier work is on the remote branch; start from it, not from the default branch.
+      await must(backend, `git -C ${repoDir} fetch origin ${branch}`)
+      await must(backend, `git -C ${repoDir} checkout -B ${branch} FETCH_HEAD`)
+    } else if (!resuming) {
+      await must(backend, `git -C ${repoDir} checkout -b ${branch}`)
+    }
     for (const agent of agents) await agent.prepare?.(backend)
 
     const api = deps.githubApi ?? createGithubApi()
@@ -214,8 +226,9 @@ async function execute(
     let sessionId: string | undefined = resuming?.sessionId
 
     /** Runs the agent, books its cost and session, and turns a quota stop or a failure into an error. */
-    const settle = (result: HarnessResult, who: CodingHarness): HarnessResult => {
+    const settle = async (result: HarnessResult, who: CodingHarness): Promise<HarnessResult> => {
       cost += result.costUsd ?? 0
+      await db.update(task).set({ costUsd: cost }).where(eq(task.id, taskId))
       if (result.quota) {
         throw new QuotaStop(
           `the ${who.name} quota ran out${result.quota.resetsAt ? `, resets ${result.quota.resetsAt}` : ''}: ${result.quota.message}`,
@@ -305,7 +318,7 @@ async function execute(
         attempt: resuming.attempt,
         resumed: true,
       })
-      first = settle(
+      first = await settle(
         await builder.resume(backend, resuming.sessionId, {
           cwd: repoDir,
           timeoutMs: timeouts.agentMs,
@@ -319,7 +332,7 @@ async function execute(
       )
     } else {
       await enterStage(db, taskId, 'build', { harness: builder.name, attempt: 1 })
-      first = settle(
+      first = await settle(
         await builder.run(backend, {
           cwd: repoDir,
           timeoutMs: timeouts.agentMs,
@@ -329,6 +342,7 @@ async function execute(
             title: issue.title,
             body: issue.body,
             branch,
+            feedback: continuation?.feedback,
           }),
         }),
         builder,
@@ -339,17 +353,59 @@ async function execute(
     sessionId = first.sessionId ?? sessionId
     if (firstQuestion) await ask(firstQuestion, resuming?.attempt ?? 1)
     summary = first.summary
-    let sha = await commitAndPush(resuming ? `${title}: continue after an answer` : title, {
-      costUsd: first.costUsd,
-      agentSummary: first.summary.slice(0, 4_000),
-      sessionId,
-    })
+    if (continuation) {
+      // A person asked for a change and the agent found nothing to change (the test was already
+      // there, say). That is an answer, not a failure: the pull request stays as it was, and the
+      // person reads why.
+      const pending = await must(backend, `git -C ${repoDir} status --porcelain`)
+      if (pending.stdout.trim() === '' && row.pullRequestUrl && row.headSha) {
+        await api.commentOnIssue(
+          row.repository,
+          token,
+          row.issueNumber,
+          `You asked for changes. The agent left the pull request as it is:\n\n${first.summary.slice(0, 3_000)}`,
+        )
+        await enterStage(
+          db,
+          taskId,
+          'done',
+          {
+            branch,
+            sha: row.headSha,
+            pullRequestUrl: row.pullRequestUrl,
+            unchanged: true,
+            agentSummary: first.summary.slice(0, 4_000),
+            costUsd: cost,
+          },
+          {},
+        )
+        return {
+          status: 'done',
+          branch,
+          sha: row.headSha,
+          pullRequestUrl: row.pullRequestUrl,
+          summary: first.summary,
+        }
+      }
+    }
+    let sha = await commitAndPush(
+      resuming
+        ? `${title}: continue after an answer`
+        : continuation
+          ? `${title}: address requested changes`
+          : title,
+      {
+        costUsd: first.costUsd,
+        agentSummary: first.summary.slice(0, 4_000),
+        sessionId,
+      },
+    )
 
     /** Sends the work back to the builder's own session with what was wrong, and pushes the fix. */
     const rework = async (attempt: number, findings: Finding[], failed: CheckResult[]) => {
       current = 'build'
       await enterStage(db, taskId, 'build', { harness: builder.name, attempt, rework: true })
-      const result = settle(
+      const result = await settle(
         await builder.resume!(backend, sessionId!, {
           cwd: repoDir,
           timeoutMs: timeouts.agentMs,
@@ -384,7 +440,7 @@ async function execute(
         baseTestScript: await showScript(baseSha),
         headTestScript: await showScript('HEAD'),
       })
-      const result = settle(
+      const result = await settle(
         await reviewer.run(backend, {
           cwd: repoDir,
           timeoutMs: timeouts.reviewMs ?? 10 * 60_000,

@@ -14,6 +14,8 @@ export default defineConfig({
         test: {
           name: 'integration',
           include: ['src/**/*.integration.test.ts'],
+          // Never the factory's own database: these suites truncate their tables.
+          setupFiles: ['src/test/use-test-database.ts'],
         },
       },
       {
@@ -23,6 +25,7 @@ export default defineConfig({
           include: ['src/**/*.e2e.test.ts'],
           testTimeout: 300_000,
           hookTimeout: 60_000,
+          setupFiles: ['src/test/use-test-database.ts'],
         },
       },
     ],

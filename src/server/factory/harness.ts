@@ -72,6 +72,8 @@ export function buildPrompt(input: {
   title: string
   body: string
   branch: string
+  /** What a person asked to change in an earlier pull request from this branch. */
+  feedback?: string
 }): string {
   return `You are working on the repository ${input.repo}, on the branch ${input.branch}.
 
@@ -89,5 +91,9 @@ Rules:
 - Do not edit anything under .github/.
 - If you cannot go on without a decision only a person can make, do not guess. Leave the repository as it is and end your final message with a line that starts with \`QUESTION:\`, followed by one specific question (offer the options you see).
 - Finish with a short summary of what you changed.
-`
+${
+  input.feedback
+    ? `\nA person reviewed your earlier pull request and asked for these changes:\n\n${input.feedback}\n\nThe branch already holds your earlier work. Build on it.\n`
+    : ''
+}`
 }

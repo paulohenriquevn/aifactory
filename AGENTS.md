@@ -24,7 +24,9 @@ it is the right place for what someone needs to know before changing code here.
 | Lint / format        | `npm run lint` · `npm run format:check` |
 
 The integration suite needs Postgres (`docker compose up -d`) and `DATABASE_URL` exported; it fails
-without it on purpose.
+without it on purpose. It never touches that database: a setup file points the suites at
+`<name>_test` on the same server, creating it when missing, because they truncate their tables and
+the real one holds the factory's tasks.
 
 Run `typecheck` and `test` before proposing a change is finished. `format:check` runs in the same
 suite, so a formatting slip fails the build rather than surfacing in review.
@@ -35,13 +37,15 @@ suite, so a formatting slip fails the build rather than surfacing in review.
 src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
+  panel/            what the panel shows and does: queries, actions, owner session, event stream
+  crons/            defineCron files (`poll-answers`)
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
   factory/          one task end to end: sandbox, agent, push, stage history
   github/           GitHub App auth (repository-scoped tokens) and issue reads
   jobs/             defineJob files; `run-task` runs a task
   routes/           file-based HTTP
-src/shared/         contracts both sides import
+src/shared/         contracts both sides import (`panel.ts` is what the panel API returns)
 .theokit/           agent context read at runtime (no rebuild)
 ```
 
@@ -67,6 +71,10 @@ reads that file, not a convention.
   reaches git by file, never through a shell.
 - **GitHub tokens are repository-scoped.** The App is installed on every repository of the account,
   so `installationToken(repo)` is the only way to get one, and it always names the repository.
+- **`src/server/jobs/` holds only jobs.** `theokit build` treats every file there as one and fails the
+  build on a helper; a test guards it. Shared helpers live in `factory/`.
+- **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;
+  `.policy('public')` is for the webhook and the probes. The panel never goes through the tunnel.
 - **Commits carry no co-author trailer.**
 - **Validate at the boundary.** A route validates input with Zod once, then trusts it.
 - **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`

@@ -84,6 +84,7 @@ const githubApi: GithubApi & {
     this.drafts.push(pull.draft ?? false)
     return { number: 12, url: PR_URL }
   },
+  async deleteBranch() {},
   async commentOnIssue(_repo, _token, _issue, body) {
     this.comments.push(body)
     return `comment-${this.comments.length}`
@@ -863,6 +864,84 @@ describe('runTask review loop', () => {
       await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
     )[0]
     expect(failed.detail).toMatchObject({ quota: true, resetsAt: 'tomorrow' })
+  })
+})
+
+describe('runTask continuing from a branch a person sent back', () => {
+  it('starts from the branch the agent pushed and gives the agent the note', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const prompts: string[] = []
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async (_b, input) => {
+        prompts.push(input.prompt)
+        dirty = true
+        return { ok: true, summary: 'adjusted' }
+      },
+    }
+
+    const result = await runTask(deps(sandbox, { harness: builder }), id, undefined, {
+      feedback: 'Rename the helper to cut.',
+    })
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(prompts[0]).toContain('A person reviewed your earlier pull request')
+    expect(prompts[0]).toContain('Rename the helper to cut.')
+    const commands = sandbox.backend.commands
+    expect(commands.some((c) => c.includes('fetch origin factory/7'))).toBe(true)
+    expect(commands.some((c) => c.includes('checkout -B factory/7 FETCH_HEAD'))).toBe(true)
+    expect(commands.some((c) => c.includes('checkout -b factory/7'))).toBe(false)
+  })
+
+  it('returns to done, and tells the person why, when the agent finds nothing to change', async () => {
+    const id = await seedTask()
+    await getDb()
+      .update(task)
+      .set({ stage: 'intake', headSha: 'oldsha1', pullRequestUrl: PR_URL })
+      .where(eq(task.id, id))
+    const sandbox = new FakeSandbox(changed())
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async () => {
+        dirty = false // nothing changed: the test the person asked for is already there
+        return { ok: true, summary: 'That test is already on the branch.' }
+      },
+    }
+
+    const result = await runTask(deps(sandbox, { harness: builder }), id, undefined, {
+      feedback: 'Add a test for n = 0.',
+    })
+
+    expect(result).toMatchObject({ status: 'done', sha: 'oldsha1', pullRequestUrl: PR_URL })
+    expect(githubApi.comments).toHaveLength(1)
+    expect(githubApi.comments[0]).toContain('That test is already on the branch.')
+    expect(githubApi.pulls).toEqual([])
+    expect(sandbox.backend.commands.some((c) => c.includes('push origin'))).toBe(false)
+    const stages = await stagesOf(id)
+    expect(stages.at(-1)).toBe('done')
+    expect(stages).not.toContain('failed')
+    const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
+    expect(done.detail).toMatchObject({ unchanged: true })
+    expect(sandbox.stopped).toBe(1)
+  })
+
+  it('does not mention a review when nobody sent anything back', async () => {
+    const id = await seedTask()
+    const prompts: string[] = []
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async (_b, input) => {
+        prompts.push(input.prompt)
+        dirty = true
+        return { ok: true, summary: 'done' }
+      },
+    }
+    await runTask(deps(new FakeSandbox(changed()), { harness: builder }), id)
+    expect(prompts[0]).not.toContain('A person reviewed')
   })
 })
 

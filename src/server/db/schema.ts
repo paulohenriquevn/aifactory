@@ -58,6 +58,8 @@ export const task = pgTable(
     /** The commit the factory pushed. Evidence counts only when it names this SHA. */
     headSha: text('head_sha'),
     pullRequestUrl: text('pull_request_url'),
+    /** What the run has spent so far, agents included. It grows while the run is going. */
+    costUsd: real('cost_usd').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [unique('task_issue_unique').on(table.repository, table.issueNumber)],
@@ -141,4 +143,20 @@ export const question = pgTable('question', {
   answeredAt: timestamp('answered_at', { withTimezone: true }),
   /** Set once, atomically, by the run that takes the answer, so two cannot resume one question. */
   resumedAt: timestamp('resumed_at', { withTimezone: true }),
+})
+
+/**
+ * What a person decided about a task from the panel. `approve` is pinned to the commit the person
+ * looked at, so a later commit is not covered by it. `request_changes` carries what to change.
+ */
+export const decision = pgTable('decision', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  kind: text('kind', { enum: ['approve', 'request_changes', 'retry'] }).notNull(),
+  /** The head commit when the person decided. */
+  sha: text('sha'),
+  note: text('note').notNull().default(''),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })

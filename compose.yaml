@@ -1,6 +1,7 @@
 # Local Postgres for development and the integration suite.
 #   docker compose up -d
 #   DATABASE_URL=postgres://factory:factory@localhost:54329/factory pnpm test:integration
+# The suites use `factory_test` on the same server (created for you), never the factory's own database.
 services:
   postgres:
     image: postgres:17-alpine

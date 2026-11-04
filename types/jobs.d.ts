@@ -8,7 +8,7 @@
 declare module 'theokit/server/jobs' {
   interface JobRegistry {
     /** Runs one task end to end: sandbox, agent, push of `factory/<issue>`. */
-    'run-task': { taskId: number }
+    'run-task': { taskId: number; decisionId?: number }
     /** Continues a task whose question was answered, from the snapshot taken when it was asked. */
     'resume-task': { taskId: number; questionId: number }
   }

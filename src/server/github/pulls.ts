@@ -29,6 +29,8 @@ export type GithubApi = {
     token: string,
     pull: { head: string; title: string; body: string; draft?: boolean },
   ): Promise<PullRequest>
+  /** Deletes a branch, which also closes a pull request that was open from it. A missing branch is fine. */
+  deleteBranch(repo: string, token: string, branch: string): Promise<void>
   /** Posts a comment and returns its id. */
   commentOnIssue(repo: string, token: string, issueNumber: number, body: string): Promise<string>
   /** The comments on an issue made since a time, oldest first. */
@@ -114,6 +116,12 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
         )
       ).json()) as { number: number; html_url: string }
       return { number: created.number, url: created.html_url }
+    },
+
+    async deleteBranch(repo, token, branch) {
+      const response = await call(repo, token, `/git/refs/heads/${branch}`, { method: 'DELETE' })
+      // 422 is what GitHub answers for a ref that does not exist.
+      await ensure(response, `deleting ${branch} on ${repo}`, [204, 404, 422])
     },
 
     async commentOnIssue(repo, token, issueNumber, body) {

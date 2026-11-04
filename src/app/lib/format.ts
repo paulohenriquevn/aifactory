@@ -1,0 +1,72 @@
+import type { Stage, TimelineEvent } from '../../shared/panel'
+
+export const money = (usd: number) => (usd < 0.005 ? '$0.00' : `$${usd.toFixed(2)}`)
+
+export const shortSha = (sha: string | null | undefined) => (sha ? sha.slice(0, 7) : '')
+
+export function ago(iso: string, now = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`
+  return `${Math.floor(seconds / 86_400)}d ago`
+}
+
+const LABELS: Record<Stage, string> = {
+  intake: 'queued',
+  sandbox: 'starting sandbox',
+  build: 'building',
+  push: 'pushing',
+  verify: 'running checks',
+  review: 'in review',
+  waiting: 'waiting for you',
+  pr: 'opening pull request',
+  done: 'pull request open',
+  handoff: 'handed to a person',
+  failed: 'failed',
+}
+
+export const stageLabel = (stage: Stage) => LABELS[stage]
+
+/** One line about what happened at a stage, from what the factory recorded. */
+export function describeEvent(event: TimelineEvent): string {
+  const d = (event.detail ?? {}) as Record<string, unknown>
+  const text = (value: unknown) => (value === undefined || value === null ? '' : String(value))
+  switch (event.stage) {
+    case 'intake':
+      return d.decision
+        ? `a person ${text(d.decision).replace('_', ' ')}${d.note ? `: ${text(d.note)}` : ''}`
+        : ''
+    case 'sandbox':
+      return text(d.provider)
+    case 'build':
+      return [
+        text(d.harness),
+        d.attempt ? `attempt ${text(d.attempt)}` : '',
+        d.resumed ? 'resumed after an answer' : '',
+        d.rework ? 'rework' : '',
+      ]
+        .filter(Boolean)
+        .join(', ')
+    case 'push':
+      return text(d.branch)
+    case 'verify':
+      return [shortSha(d.sha as string), d.attempt ? `attempt ${text(d.attempt)}` : '']
+        .filter(Boolean)
+        .join(', ')
+    case 'review':
+      return [text(d.reviewer), shortSha(d.sha as string)].filter(Boolean).join(', ')
+    case 'waiting':
+      return text(d.question)
+    case 'done':
+      return text(d.pullRequestUrl)
+    case 'handoff':
+      return text(d.reason)
+    case 'failed':
+      return d.quota
+        ? `out of quota${d.resetsAt ? `, resets ${text(d.resetsAt)}` : ''}`
+        : `${text(d.failedAt)}: ${text(d.error)}`
+    default:
+      return ''
+  }
+}

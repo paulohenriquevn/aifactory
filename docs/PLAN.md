@@ -67,7 +67,7 @@ local inspecionado em 2026-11-03.
 | M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                            | Em andamento |
 | M4a   | Review independente + rodadas                                  | Checks vermelhos ou review que pede mudanças devolvem o trabalho à mesma sessão do agente; após três tentativas, PR em rascunho e comentário na issue; um PR só abre com evidência verde e aprovação | Concluído    |
 | M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Concluído    |
-| M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel                                                                                     | Não iniciado |
+| M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel (local, com um dono)                                                                | Concluído    |
 | M6    | Merge + vigia                                                  | `trial` registra “would merge” sem executar; `auto` faz merge preso ao SHA; main vermelha gera PR de revert                                                                                          | Não iniciado |
 | M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Não iniciado |
 
@@ -273,6 +273,19 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   real, Claude real, resposta de um comentário real e o cron real), a task perguntou em 24
   segundos, e depois da resposta terminou em 77 segundos com o PR #15, por US$ 0,18 (chave de API,
   revisão incluída).
+- M5: um painel local (React, no próprio servidor) com quadro por situação, caixa de entrada,
+  detalhe da task (linha do tempo, evidência, reviews, perguntas, decisões) e atualização por SSE a
+  cada mudança de estágio, com o custo crescendo enquanto o agente trabalha. As ações são aprovar (preso
+  ao commit), pedir mudanças (nova execução a partir da branch, com o texto no prompt) e tentar de novo
+  (apaga a branch e recomeça). O dono entra com um token e recebe um cookie de sessão criptografado, com
+  limite de tentativas; as rotas `/api/panel/*` recusam todo o resto, e o servidor escuta só em
+  `127.0.0.1`, enquanto o túnel só expõe o webhook e o health check. Pelas rotas reais, com o Claude
+  real: uma issue virou PR em 44 segundos, a aprovação foi gravada para aquele commit, "tentar de novo"
+  numa task concluída foi recusado (409), e o pedido de mudança gerou um segundo commit por cima do
+  primeiro, com checks e review de novo, e a aprovação antiga deixou de valer para o commit novo. Um
+  pedido que não exigia mudança fez a task voltar a `done` com a resposta do agente na issue, em vez de
+  falhar. Os testes que escrevem no banco passaram a usar `<nome>_test`, porque apagavam as tasks
+  reais. O Tailwind só funciona com `@theokit/ui` instalado, que agora é dependência.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

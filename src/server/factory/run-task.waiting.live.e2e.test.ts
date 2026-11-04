@@ -6,7 +6,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { getStorageManager } from 'theokit/server/storage'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { getDb, getPool, readDatabaseUrl } from '../db'
+import { getDb, getPool } from '../db'
 import { storageFromEnv } from '../db/config'
 import { ingress, question, stageEvent, task } from '../db/schema'
 import { createGithubApp } from '../github/app'
