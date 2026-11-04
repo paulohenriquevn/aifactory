@@ -66,3 +66,26 @@ describe('classify', () => {
     expect(classify(checks([]))).toEqual({ state: 'none', failing: [] })
   })
 })
+
+describe('classify, at its edges', () => {
+  it('does not call a commit broken for a run that has not finished, whatever it says', () => {
+    expect(classify(checks([run('ci', 'in_progress', 'failure')])).state).toBe('pending')
+    expect(classify(checks([run('ci', 'queued', 'failure')])).failing).toEqual([])
+  })
+
+  it('does not call a finished run with no conclusion broken', () => {
+    expect(classify(checks([run('ci', 'completed', null)]))).toEqual({
+      state: 'green',
+      failing: [],
+    })
+  })
+
+  it('reports nothing failing while it only waits', () => {
+    expect(classify(checks([run('ci', 'queued', null)]))).toEqual({ state: 'pending', failing: [] })
+  })
+
+  it('waits an hour before giving up on checks that never report', async () => {
+    const { WATCH_WINDOW_MS } = await import('./watch')
+    expect(WATCH_WINDOW_MS).toBe(3_600_000)
+  })
+})

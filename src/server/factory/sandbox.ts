@@ -35,6 +35,8 @@ export interface IsolatedSandboxProvider {
   restore?(snapshotId: string, spec: SandboxSpec): Promise<IsolatedSandbox>
   /** Frees a snapshot, which costs storage until it is deleted or expires. */
   deleteSnapshot?(snapshotId: string): Promise<void>
+  /** The snapshots that still exist, so the supervisor can find ones nothing needs. */
+  listSnapshots?(): Promise<{ id: string; createdAt: Date; sizeBytes: number }[]>
 }
 
 /** Thrown when a run is asked for without the isolation the factory requires. */

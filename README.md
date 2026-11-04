@@ -6,7 +6,7 @@ suporte a vários projetos.
 
 Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7, e
 [como a fábrica funciona](docs/como-funciona.md) descreve o fluxo, o isolamento, a evidência e o
-uso do Claude Code e do Codex. Os marcos M0 a M6 estão concluídos: uma issue com a label `factory`
+uso do Claude Code e do Codex. Os marcos M0 a M7 estão concluídos: uma issue com a label `factory`
 chega a um pull request, aberto só com os checks verdes no commit enviado e a aprovação de um
 revisor independente, com até três tentativas de retrabalho na mesma sessão do agente. O Claude Code
 funciona por chave de API ou por assinatura. O Codex está implementado e verificado até a chamada ao
@@ -16,7 +16,9 @@ O painel local (quadro, caixa de entrada, detalhe, aprovar, pedir mudanças e te
 tudo ao vivo. A fábrica entrega por pré-release (uma tag marcada como pré-release, que ela gera sempre), e a
 release, o merge e a versão final, é feita por um humano pelo painel ou por um agente, conforme
 `FACTORY_RELEASE_MODE`. Depois de um release, um vigia olha os checks do merge na `main` e, se ficarem
-vermelhos, abre um PR de revert que a fábrica nunca mergeia.
+vermelhos, abre um PR de revert que a fábrica nunca mergeia. A página Health do painel mostra o custo
+por execução e o que o supervisor achou de errado (`stalled`, `orphaned`), e o CI cobra CRAP, duplicação
+e mutação.
 
 ## Rodando localmente
 
@@ -98,6 +100,7 @@ pnpm format:check
 pnpm test               # unidade
 pnpm test:integration   # exige Postgres e DATABASE_URL exportada
 pnpm test:e2e           # GitHub, Vercel Sandbox e Postgres reais; exige o .env.local
+pnpm quality            # cobertura, CRAP, duplicação e mutação (os gates do job `quality` do CI)
 FACTORY_LIVE=1 pnpm test:e2e -t "real agent"   # com o Claude Code de verdade; custa centavos
 pnpm db:generate        # drizzle-kit: gera migrations a partir do schema
 pnpm db:migrate
@@ -118,7 +121,7 @@ src/server/
   factory/            execução de uma task: sandbox isolado, agente, push de factory/<n>, estágios
   github/             autenticação do GitHub App e leitura de issues
   panel/              consultas, ações, sessão e eventos do painel
-  crons/              poll-answers (respostas) e watch-main (vigia da main)
+  crons/              poll-answers (respostas), watch-main (vigia da main) e supervise (saúde)
 src/shared/           contratos que o servidor e a interface leem
 src/app/              a interface do painel (React)
   routes/             rotas HTTP (health, ready, webhooks/github)

@@ -98,3 +98,37 @@ describe('pickAnswer', () => {
     expect(answer).toEqual({ text: 'B\n\nand keep the old name\n\nagreed', by: 'paulo, ana' })
   })
 })
+
+describe('the question protocol, at its edges', () => {
+  it('reads a question that follows the colon with no space, whole', () => {
+    expect(parseQuestion('QUESTION:x y')).toBe('x y')
+    expect(parseQuestion('QUESTION:\tA or B?')).toBe('A or B?')
+  })
+})
+
+describe('the answer, at its edges', () => {
+  const at = new Date('2026-11-04T12:00:00Z')
+  const c = (over: Partial<IssueComment>): IssueComment => ({
+    id: '11',
+    body: 'B',
+    author: 'paulo',
+    authorType: 'User',
+    association: 'OWNER',
+    createdAt: new Date('2026-11-04T12:05:00Z'),
+    ...over,
+  })
+
+  it('does not take a comment written at the very moment of the question', () => {
+    expect(pickAnswer([c({ createdAt: at })], { commentId: '10', at })).toBeUndefined()
+    expect(
+      pickAnswer([c({ createdAt: new Date(at.getTime() + 1) })], { commentId: '10', at }),
+    ).toBeDefined()
+  })
+
+  it('trims what people wrote and keeps no more than four thousand characters', () => {
+    expect(pickAnswer([c({ body: '  \n B \n ' })], { commentId: '10', at })?.text).toBe('B')
+    expect(
+      pickAnswer([c({ body: 'x'.repeat(5_000) })], { commentId: '10', at })?.text,
+    ).toHaveLength(4_000)
+  })
+})

@@ -3,9 +3,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { InboxItem, TaskCard, TaskDetail, WatchView } from '../shared/panel'
+import type {
+  FindingView,
+  HealthReport,
+  InboxItem,
+  TaskCard,
+  TaskDetail,
+  WatchView,
+} from '../shared/panel'
 
 import { TaskActions } from './components/TaskActions'
+import HealthPage from './health/page'
 import InboxPage from './inbox/page'
 import { describeEvent, shortSha } from './lib/format'
 import LoginPage from './login/page'
@@ -81,6 +89,7 @@ const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
   decisions: [],
   deliveries: [],
   watches: [],
+  runs: [],
   ...over,
 })
 
@@ -445,6 +454,199 @@ describe('the default branch after a release', () => {
       </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByText('The default branch is red')).toBeDefined())
+  })
+})
+
+const report = (over: Partial<HealthReport> = {}): HealthReport => ({
+  cost: {
+    last24HoursUsd: 0.42,
+    last7DaysUsd: 1.5,
+    totalUsd: 3.2,
+    tasks: 4,
+    avgPerTaskUsd: 0.8,
+    groups: [
+      {
+        harness: 'claude-code',
+        role: 'builder',
+        runs: 5,
+        reportedRuns: 5,
+        costUsd: 2.1,
+        avgDurationMs: 31_000,
+        failed: 1,
+        quota: 0,
+      },
+      {
+        harness: 'codex',
+        role: 'reviewer',
+        runs: 3,
+        reportedRuns: 0,
+        costUsd: 0,
+        avgDurationMs: 12_000,
+        failed: 0,
+        quota: 2,
+      },
+    ],
+  },
+  findings: [],
+  ...over,
+})
+
+const found = (over: Partial<FindingView>): FindingView => ({
+  id: 1,
+  kind: 'stalled',
+  subject: 'run',
+  taskId: 5,
+  taskTitle: 'Add truncate',
+  ref: null,
+  detail: 'in build and silent for 50 minutes',
+  firstSeenAt: '2026-11-04T10:00:00Z',
+  lastSeenAt: '2026-11-04T10:50:00Z',
+  ...over,
+})
+
+describe('health', () => {
+  it('shows what the factory costs, per agent and role, and says when an agent reports no cost', async () => {
+    serve({ 'GET /api/panel/health': report() })
+    render(
+      <MemoryRouter>
+        <HealthPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(screen.getByText('$0.42')).toBeDefined())
+    expect(screen.getByText('$3.20')).toBeDefined()
+    expect(screen.getByText('Per task (4)')).toBeDefined()
+    expect(screen.getByText('claude-code')).toBeDefined()
+    expect(screen.getByText('$2.10')).toBeDefined()
+    expect(screen.getByText('31.0 s')).toBeDefined()
+    expect(screen.getByText('not reported')).toBeDefined()
+    expect(screen.getByText('Nothing is wrong with the factory right now.')).toBeDefined()
+  })
+
+  it('shows a finding with its task and detail, and resolves it with the action for its kind', async () => {
+    const calls = serve({
+      'GET /api/panel/health': report({ findings: [found({})] }),
+      'POST /api/panel/findings/1/resolve': { findingId: 1 },
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(
+      <MemoryRouter>
+        <HealthPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(screen.getByText('A run stopped moving')).toBeDefined())
+    expect(screen.getByText('in build and silent for 50 minutes')).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Add truncate' }).getAttribute('href')).toBe('/tasks/5')
+    fireEvent.click(screen.getByRole('button', { name: 'Start again' }))
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true))
+    expect(calls.find((c) => c.method === 'POST')).toMatchObject({
+      url: '/api/panel/findings/1/resolve',
+      body: { action: 'retry' },
+      csrf: '1',
+    })
+  })
+
+  it('does not act when the person declines the confirmation', async () => {
+    const calls = serve({
+      'GET /api/panel/health': report({
+        findings: [
+          found({
+            id: 2,
+            kind: 'orphaned',
+            subject: 'snapshot',
+            taskId: null,
+            taskTitle: null,
+            ref: 'snap-1',
+            detail: 'a snapshot of 823 MB',
+          }),
+        ],
+      }),
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(
+      <MemoryRouter>
+        <HealthPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('A snapshot nothing needs')).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: 'Delete the snapshot' }))
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([])
+  })
+
+  it('offers each kind of finding its own action, and shows a refusal', async () => {
+    serve({
+      'GET /api/panel/health': report({
+        findings: [
+          found({
+            id: 3,
+            kind: 'orphaned',
+            subject: 'answer_resume',
+            ref: '4',
+            detail: 'answered long ago',
+          }),
+          found({ id: 4, kind: 'orphaned', subject: 'revert', detail: 'never confirmed' }),
+          found({ id: 5, kind: 'orphaned', subject: 'queued_run', detail: 'no job' }),
+        ],
+      }),
+      'POST /api/panel/findings/3/resolve': () =>
+        new Response(
+          JSON.stringify({ error: 'refused', message: 'this question has nothing to resume' }),
+          { status: 409 },
+        ),
+    })
+    render(
+      <MemoryRouter>
+        <HealthPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Resume again' })).toBeDefined())
+    expect(screen.getByRole('button', { name: 'Show it as red' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Start again' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Resume again' }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toBe('this question has nothing to resume'),
+    )
+  })
+
+  it('shows the executions of a task, and a cost that was not reported as such', async () => {
+    serve({
+      'GET /api/panel/tasks/5': detail({
+        runs: [
+          {
+            id: 1,
+            role: 'builder',
+            harness: 'claude-code',
+            attempt: 1,
+            costUsd: 0.12,
+            durationMs: 31_500,
+            ok: true,
+            quota: false,
+            at: '2026-11-04T10:00:00Z',
+          },
+          {
+            id: 2,
+            role: 'reviewer',
+            harness: 'codex',
+            attempt: 1,
+            costUsd: null,
+            durationMs: 9_000,
+            ok: false,
+            quota: true,
+            at: '2026-11-04T10:01:00Z',
+          },
+        ],
+      }),
+    })
+    renderTask()
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Executions' })).toBeDefined())
+    expect(screen.getByText('$0.12')).toBeDefined()
+    expect(screen.getByText('31.5 s')).toBeDefined()
+    expect(screen.getByText('not reported')).toBeDefined()
+    expect(screen.getByText('out of quota')).toBeDefined()
+    expect(screen.getByText('finished')).toBeDefined()
   })
 })
 

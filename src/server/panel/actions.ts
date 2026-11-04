@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { decision, stageEvent, task, watch } from '../db/schema'
+import { decision, finding, question, stageEvent, task, watch } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import { release as promote, ReleaseRefused } from '../factory/deliver'
 import type { GithubApi } from '../github/pulls'
@@ -19,6 +19,10 @@ export type ActionDeps = {
   db: Database
   github: GithubApp
   api: GithubApi
+  /** Queues `resume-task` for a question again, when the first job was lost. */
+  enqueueResume: (input: { taskId: number; questionId: number }, key: string) => Promise<void>
+  /** Frees a snapshot at the sandbox provider. */
+  deleteSnapshot: (snapshotId: string) => Promise<void>
   /** Queues the run in the transaction that records the decision. */
   inTransaction: <T>(
     work: (
@@ -29,6 +33,9 @@ export type ActionDeps = {
 }
 
 const NOTE_MAX = 4_000
+
+/** The stages a run is in while it works, or waits to be picked up. */
+const STUCK_STAGES = ['intake', 'sandbox', 'build', 'push', 'verify', 'review', 'pr']
 
 /**
  * Moves a task from one of `from` to `intake` and records why, in one transaction with the decision
@@ -114,14 +121,22 @@ export async function requestChanges(deps: ActionDeps, taskId: number, note: str
  * Starts a failed or handed-over task again from the beginning. Its branch is deleted first (which
  * also closes its pull request), so the new run does not collide with the old one.
  */
-export async function retry(deps: ActionDeps, taskId: number) {
+export async function retry(
+  deps: ActionDeps,
+  taskId: number,
+  options: { fromFinding?: boolean } = {},
+) {
   const row = await load(deps.db, taskId)
-  if (!['failed', 'handoff'].includes(row.stage)) {
+  // A run the supervisor found stalled or lost is in a working stage, which retry otherwise refuses.
+  const allowed = options.fromFinding
+    ? [...STUCK_STAGES, 'failed', 'handoff']
+    : ['failed', 'handoff']
+  if (!allowed.includes(row.stage)) {
     throw new ActionRefused('only a failed or handed-over task can be retried')
   }
   const { token } = await deps.github.installationToken(row.repository)
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
-  const decisionId = await requeue(deps, taskId, ['failed', 'handoff'], 'retry', '', row.headSha)
+  const decisionId = await requeue(deps, taskId, allowed, 'retry', '', row.headSha)
   return { decisionId }
 }
 
@@ -153,4 +168,61 @@ export async function acknowledgeWatch(deps: ActionDeps, watchId: number) {
   if (done.length === 0)
     throw new ActionRefused('there is no red default branch waiting for you here')
   return { watchId }
+}
+
+/** What a person can do about a supervisor finding, and which findings each one is for. */
+export type FindingAction = 'retry' | 'resume' | 'delete_snapshot' | 'mark_revert_unknown'
+
+const ALLOWED: Record<FindingAction, string[]> = {
+  retry: ['run', 'queued_run'],
+  resume: ['answer_resume'],
+  delete_snapshot: ['snapshot'],
+  mark_revert_unknown: ['revert'],
+}
+
+/**
+ * Resolves a finding the supervisor opened. The action must be one the finding's subject allows, and
+ * the finding must still be open, so a stale page cannot, say, delete a snapshot nobody flagged. The
+ * supervisor closes the finding on its next pass; it is closed here too so the panel is not stale.
+ */
+export async function resolveFinding(deps: ActionDeps, findingId: number, action: FindingAction) {
+  const [found] = await deps.db.select().from(finding).where(eq(finding.id, findingId))
+  if (!found || found.resolvedAt) throw new ActionRefused('this finding is not open')
+  if (!ALLOWED[action].includes(found.subject)) {
+    throw new ActionRefused(`${action} is not something to do about a ${found.subject} finding`)
+  }
+
+  if (action === 'retry') {
+    if (found.taskId === null) throw new ActionRefused('this finding has no task')
+    await retry(deps, found.taskId, { fromFinding: true })
+  } else if (action === 'resume') {
+    const [asked] = await deps.db
+      .select()
+      .from(question)
+      .where(eq(question.id, Number(found.ref)))
+    if (!asked?.answer || asked.resumedAt)
+      throw new ActionRefused('this question has nothing to resume')
+    await deps.enqueueResume(
+      { taskId: asked.taskId, questionId: asked.id },
+      `resume-${asked.id}-again-${Date.now()}`,
+    )
+  } else if (action === 'delete_snapshot') {
+    if (!found.ref) throw new ActionRefused('this finding names no snapshot')
+    await deps.deleteSnapshot(found.ref)
+  } else {
+    // The revert may or may not have been opened. Say so, in the place a person reads it.
+    const done = await deps.db
+      .update(watch)
+      .set({
+        status: 'red',
+        endedAt: new Date(),
+        detail:
+          'the revert was not confirmed opened: check the repository for a revert pull request',
+      })
+      .where(and(eq(watch.id, Number(found.ref)), eq(watch.status, 'reverting')))
+      .returning({ id: watch.id })
+    if (done.length === 0) throw new ActionRefused('this revert is no longer stuck')
+  }
+  await deps.db.update(finding).set({ resolvedAt: new Date() }).where(eq(finding.id, findingId))
+  return { findingId }
 }

@@ -127,6 +127,44 @@ export default function TaskPage() {
         </ol>
       </section>
 
+      {detail.runs.length > 0 ? (
+        <section aria-label="Executions">
+          <h2 className="mb-2 text-sm font-semibold">Executions</h2>
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs text-slate-500">
+              <tr>
+                <th className="py-1 pr-3">Role</th>
+                <th className="py-1 pr-3">Agent</th>
+                <th className="py-1 pr-3">Attempt</th>
+                <th className="py-1 pr-3">Cost</th>
+                <th className="py-1 pr-3">Time</th>
+                <th className="py-1 pr-3">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.runs.map((r) => (
+                <tr key={r.id} className="border-t border-slate-200">
+                  <td className="py-1 pr-3">{r.role}</td>
+                  <td className="py-1 pr-3">{r.harness}</td>
+                  <td className="py-1 pr-3">{r.attempt}</td>
+                  <td className="py-1 pr-3">
+                    {r.costUsd === null ? (
+                      <span className="text-slate-500">not reported</span>
+                    ) : (
+                      money(r.costUsd)
+                    )}
+                  </td>
+                  <td className="py-1 pr-3">{(r.durationMs / 1000).toFixed(1)} s</td>
+                  <td className="py-1 pr-3">
+                    {r.quota ? 'out of quota' : r.ok ? 'finished' : 'failed'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
       <section aria-label="Evidence">
         <h2 className="mb-2 text-sm font-semibold">Evidence</h2>
         {detail.evidence.length === 0 ? (

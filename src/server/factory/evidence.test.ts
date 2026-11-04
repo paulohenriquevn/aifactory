@@ -95,3 +95,40 @@ describe('runChecks', () => {
     expect(result.output.endsWith('END')).toBe(true)
   })
 })
+
+describe('what the checks default to and how they are timed', () => {
+  it('requires `npm test` unless told otherwise', async () => {
+    const { DEFAULT_CHECKS } = await import('./evidence')
+    expect(DEFAULT_CHECKS).toEqual([{ name: 'test', command: 'npm test' }])
+  })
+
+  it('gives each check the time it was allowed, and records how long it really took', async () => {
+    const seen: unknown[] = []
+    const backend = new FakeBackend(() => ({}))
+    backend.execute = (async (_command: string, opts?: unknown) => {
+      seen.push(opts)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    }) as never
+
+    const [result] = await runChecks(backend, '/r', [{ name: 'test', command: 'npm test' }], 1_234)
+
+    expect(seen).toEqual([{ timeoutMs: 1_234 }])
+    expect(result.timedOut).toBe(false) // the backend did not say, and silence is not a timeout
+    expect(result.durationMs).toBeGreaterThanOrEqual(0)
+    expect(result.durationMs).toBeLessThan(5_000)
+  })
+
+  it('says why nothing was verified, and cuts the commit to seven characters in what it reports', () => {
+    expect(gate({ headSha: 'abc', required: [], evidence: [] })).toEqual({
+      open: false,
+      reasons: ['no checks are required, so nothing was verified'],
+    })
+    const long = 'abcdef1234567890'
+    expect(
+      gate({ headSha: long, required: ['a', 'b'], evidence: [row('b', long, false)] }),
+    ).toEqual({
+      open: false,
+      reasons: ['no evidence for "a" at abcdef1', '"b" failed at abcdef1'],
+    })
+  })
+})

@@ -217,3 +217,47 @@ export const watch = pgTable('watch', {
   /** When a person said they dealt with a red main, so it leaves the inbox. */
   acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
 })
+
+/**
+ * One execution of an agent: a build pass, a rework, a pass that continued after an answer, or a
+ * review. It is what a task's cost is made of, so a cost can be said per execution, per agent and per
+ * role. `costUsd` is empty for an agent that does not report one.
+ */
+export const agentRun = pgTable('agent_run', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  role: text('role', { enum: ['builder', 'reviewer'] }).notNull(),
+  harness: text('harness').notNull(),
+  attempt: integer('attempt').notNull(),
+  costUsd: real('cost_usd'),
+  durationMs: integer('duration_ms').notNull(),
+  ok: boolean('ok').notNull(),
+  /** The agent stopped because its account's quota ran out. */
+  quota: boolean('quota').notNull().default(false),
+  sessionId: text('session_id'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * What the supervisor found wrong with the factory itself. `stalled` is work that stopped moving.
+ * `orphaned` is something that waits for a thing that is gone: a job nobody queued, a resume that never
+ * ran, a snapshot no question needs. A finding stays open while it is true and resolves when it is not.
+ */
+export const finding = pgTable('finding', {
+  id: serial('id').primaryKey(),
+  /** Identifies the problem, so the same one is not reported twice. */
+  key: text('key').notNull().unique(),
+  kind: text('kind', { enum: ['stalled', 'orphaned'] }).notNull(),
+  subject: text('subject', {
+    enum: ['run', 'queued_run', 'answer_resume', 'snapshot', 'revert'],
+  }).notNull(),
+  taskId: integer('task_id').references(() => task.id),
+  /** What the finding points at when it is not a task: a snapshot id, a question or a watch. */
+  ref: text('ref'),
+  detail: text('detail').notNull(),
+  firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+})

@@ -67,6 +67,56 @@ export type WatchView = {
   acknowledged: boolean
 }
 
+export type RunView = {
+  id: number
+  role: 'builder' | 'reviewer'
+  harness: string
+  attempt: number
+  /** Empty for an agent that does not report a cost. */
+  costUsd: number | null
+  durationMs: number
+  ok: boolean
+  quota: boolean
+  at: string
+}
+
+export type FindingView = {
+  id: number
+  kind: 'stalled' | 'orphaned'
+  subject: 'run' | 'queued_run' | 'answer_resume' | 'snapshot' | 'revert'
+  taskId: number | null
+  taskTitle: string | null
+  ref: string | null
+  detail: string
+  firstSeenAt: string
+  lastSeenAt: string
+}
+
+export type CostGroup = {
+  harness: string
+  role: 'builder' | 'reviewer'
+  runs: number
+  /** How many of them reported a cost, since some agents report none. */
+  reportedRuns: number
+  costUsd: number
+  avgDurationMs: number
+  failed: number
+  quota: number
+}
+
+export type HealthReport = {
+  cost: {
+    last24HoursUsd: number
+    last7DaysUsd: number
+    totalUsd: number
+    /** Tasks that spent anything, and what one costs on average. */
+    tasks: number
+    avgPerTaskUsd: number
+    groups: CostGroup[]
+  }
+  findings: FindingView[]
+}
+
 export type TaskCard = {
   id: number
   repository: string
@@ -148,6 +198,7 @@ export type TaskDetail = {
   decisions: DecisionView[]
   deliveries: DeliveryView[]
   watches: WatchView[]
+  runs: RunView[]
 }
 
 /** What the inbox lists: a task that waits for a person, and why. */

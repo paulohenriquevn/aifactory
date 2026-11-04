@@ -75,7 +75,7 @@ local inspecionado em 2026-11-03.
 | M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel (local, com um dono)                                                                | Concluído    |
 | M6a   | Pré-release e release                                          | A fábrica gera uma pré-release para todo commit com checks verdes que chegou a um PR; um humano (painel) ou um agente (modo `auto`) promove a release, com o merge preso ao SHA entregue             | Concluído    |
 | M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Concluído    |
-| M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Não iniciado |
+| M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Concluído    |
 
 As aprovações de ferramentas com efeitos externos seguem a convenção do
 `AGENTS.md`. A interação com o modo `auto` ficou definida pelo conceito de pré-release: o que a
@@ -319,6 +319,28 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   de entrada avisa que não há revert. A pessoa dá o caso por tratado pelo painel. Pelo GitHub real: o
   release de uma task, um check run falho no commit de merge, e 25 segundos depois o PR de revert aberto
   pelo bot, com a `main` ainda no commit do release.
+- M7, saúde: cada execução de um agente (build, retrabalho, retomada depois de uma resposta, review)
+  vira uma linha em `agent_run`, com o agente, o papel, a tentativa, o custo, o tempo e o resultado, e
+  uma execução que não voltou ou que bateu na cota fica registrada como tal. A página Health do painel
+  mostra o custo nas últimas 24 horas, nos últimos 7 dias e no total, por agente e papel, e conta um
+  agente que não informa custo (o Codex) como execuções, não como zero dólar. O supervisor (cron a cada
+  5 minutos) abre achados tipados: `stalled` para uma run em estágio de trabalho sem evento há mais de
+  45 minutos, e `orphaned` para uma task enfileirada sem job para rodá-la, uma resposta que ninguém
+  retomou, um revert que nunca terminou de abrir e um snapshot que nenhuma pergunta espera. Ele só
+  reporta; uma pessoa resolve cada achado pelo painel (começar de novo, retomar de novo, apagar o
+  snapshot, mostrar o revert como vermelho), e uma checagem que não pôde rodar não resolve achados dela.
+  Ao vivo: uma task parada e uma enfileirada sem job foram achadas no primeiro ciclo, um snapshot órfão
+  de verdade na Vercel no ciclo seguinte (depois dos 5 minutos de tolerância), e os três foram resolvidos
+  pelo painel, com o snapshot apagado no provedor.
+- M7, qualidade: três gates no CI, num job `quality` ao lado do `check`. CRAP (complexidade ao
+  quadrado vezes a parte não coberta ao cubo, mais a complexidade) por função, a partir da cobertura real
+  e da complexidade ciclomática pela API do TypeScript: nenhuma função nova passa de 30, e as que já
+  passam só podem diminuir. Hoje há uma, `execute` do `runTask`, com complexidade 66, registrada como
+  dívida em `quality/crap-baseline.json`. Duplicação abaixo de 1% (hoje 0,15%, com o `jscpd`). Mutação com o
+  Stryker sobre a lógica de decisão pura (portão de evidência, veredito do review, guardas do diff,
+  classificação da `main`, resposta ao agente, versões, notas, formatação do painel), com piso de 90: a
+  nota foi de 75,9 para 97,2 depois de escrever os testes que os sobreviventes pediam. Cada gate foi visto
+  falhando de propósito (uma função complexa sem teste, um limite apertado e um piso alto).
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

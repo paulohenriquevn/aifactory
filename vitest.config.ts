@@ -2,11 +2,19 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    // What the quality gates read: `pnpm coverage` writes coverage/coverage-final.json.
+    coverage: {
+      provider: 'v8',
+      reporter: ['json', 'text-summary'],
+      reportsDirectory: 'coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/*.d.ts', 'src/test/**', 'src/**/fake-sandbox.ts'],
+    },
     projects: [
       {
         test: {
           name: 'unit',
-          include: ['src/**/*.test.{ts,tsx}'],
+          include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
           exclude: ['src/**/*.integration.test.ts', 'src/**/*.e2e.test.ts'],
         },
       },

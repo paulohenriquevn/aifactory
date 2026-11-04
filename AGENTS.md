@@ -13,15 +13,16 @@ it is the right place for what someone needs to know before changing code here.
 
 ## Commands
 
-| What                 | Command                                 |
-| -------------------- | --------------------------------------- |
-| Run in development   | `npm run dev`                           |
-| Build for production | `npm run build`                         |
-| Serve the build      | `npm start`                             |
-| Tests (unit)         | `npm test`                              |
-| Tests (Postgres)     | `npm run test:integration`              |
-| Types                | `npm run typecheck`                     |
-| Lint / format        | `npm run lint` · `npm run format:check` |
+| What                 | Command                                                   |
+| -------------------- | --------------------------------------------------------- |
+| Run in development   | `npm run dev`                                             |
+| Build for production | `npm run build`                                           |
+| Serve the build      | `npm start`                                               |
+| Tests (unit)         | `npm test`                                                |
+| Tests (Postgres)     | `npm run test:integration`                                |
+| Types                | `npm run typecheck`                                       |
+| Lint / format        | `npm run lint` · `npm run format:check`                   |
+| Quality gates        | `npm run quality` (coverage, CRAP, duplication, mutation) |
 
 The integration suite needs Postgres (`docker compose up -d`) and `DATABASE_URL` exported; it fails
 without it on purpose. It never touches that database: a setup file points the suites at
@@ -38,7 +39,7 @@ src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   panel/            what the panel shows and does: queries, actions, owner session, event stream
-  crons/            defineCron files (`poll-answers`, `watch-main`)
+  crons/            defineCron files (`poll-answers`, `watch-main`, `supervise`)
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
   factory/          one task end to end: sandbox, agent, push, stage history
@@ -82,6 +83,9 @@ reads that file, not a convention.
 - **The factory opens a revert and never merges it.** `watch-main` may open a pull request that
   reverts a release when its merge commit goes red. Nothing in `factory/watch.ts` calls a merge, and a
   test fails if it does.
+- **New code stays under the quality gates.** No new function over CRAP 30 (the known one is in
+  `quality/crap-baseline.json` and may only shrink), duplication under 1%, and a mutation score of 90 on the
+  decision logic. A gate that fails is fixed with a test or a smaller function, not by raising the line.
 - **Commits carry no co-author trailer.**
 - **Validate at the boundary.** A route validates input with Zod once, then trusts it.
 - **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`

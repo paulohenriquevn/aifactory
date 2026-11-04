@@ -66,3 +66,42 @@ describe('preReleaseNotes', () => {
     expect(body).not.toContain('Pull request:')
   })
 })
+
+describe('versions and notes, at their edges', () => {
+  it('reads every digit of a version, and nothing that merely contains one', () => {
+    expect(nextVersion('v10.20.30', 'patch')).toBe('v10.20.31')
+    expect(nextVersion('v10.20.30', 'minor')).toBe('v10.21.0')
+    expect(nextVersion('v10.20.30', 'major')).toBe('v11.0.0')
+    for (const bad of ['v1.2.3-rc1', 'xv1.2.3', 'v1.2.3.4', 'v1.2.3 ']) {
+      expect(() => nextVersion(bad, 'patch')).toThrow(/not a version/)
+    }
+  })
+
+  const notes = {
+    issueNumber: 7,
+    title: 'T',
+    sha: 'abcdef1234567890',
+    pullRequestUrl: 'https://github.com/o/r/pull/9',
+    checks: [],
+    review: undefined,
+    attempts: 1,
+    costUsd: 0,
+    agentSummary: '',
+  }
+
+  it('puts the pull request on its own line, followed by a blank one', () => {
+    const lines = preReleaseNotes(notes).body.split('\n')
+    const at = lines.indexOf('Pull request: https://github.com/o/r/pull/9')
+    expect(at).toBeGreaterThan(0)
+    expect(lines[at + 1]).toBe('')
+  })
+
+  it('keeps no more than three thousand characters of what the agent said', () => {
+    const { body } = preReleaseNotes({
+      ...notes,
+      agentSummary: `${'a'.repeat(3_000)}${'Z'.repeat(2_000)}`,
+    })
+    expect(body).toContain('a'.repeat(3_000))
+    expect(body).not.toContain('Z')
+  })
+})

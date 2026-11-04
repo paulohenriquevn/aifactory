@@ -3,6 +3,7 @@ import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm'
 
 import type { Database } from '../db'
 import {
+  agentRun,
   decision,
   evidence,
   question as questionTable,
@@ -254,9 +255,41 @@ async function execute(
     let sessionId: string | undefined = resuming?.sessionId
 
     /** Runs the agent, books its cost and session, and turns a quota stop or a failure into an error. */
-    const settle = async (result: HarnessResult, who: CodingHarness): Promise<HarnessResult> => {
+    const settle = async (
+      who: CodingHarness,
+      role: 'builder' | 'reviewer',
+      attempt: number,
+      call: () => Promise<HarnessResult>,
+    ): Promise<HarnessResult> => {
+      const started = Date.now()
+      let result: HarnessResult
+      try {
+        result = await call()
+      } catch (error) {
+        // The agent did not come back (the sandbox died, say). It still ran, and that is on record.
+        await db.insert(agentRun).values({
+          taskId,
+          role,
+          harness: who.name,
+          attempt,
+          durationMs: Date.now() - started,
+          ok: false,
+        })
+        throw error
+      }
       cost += result.costUsd ?? 0
       await db.update(task).set({ costUsd: cost }).where(eq(task.id, taskId))
+      await db.insert(agentRun).values({
+        taskId,
+        role,
+        harness: who.name,
+        attempt,
+        costUsd: result.costUsd ?? null,
+        durationMs: Date.now() - started,
+        ok: result.ok,
+        quota: result.quota !== undefined,
+        sessionId: result.sessionId ?? null,
+      })
       if (result.quota) {
         throw new QuotaStop(
           `the ${who.name} quota ran out${result.quota.resetsAt ? `, resets ${result.quota.resetsAt}` : ''}: ${result.quota.message}`,
@@ -373,8 +406,8 @@ async function execute(
         attempt: resuming.attempt,
         resumed: true,
       })
-      first = await settle(
-        await builder.resume(backend, resuming.sessionId, {
+      first = await settle(builder, 'builder', resuming.attempt, () =>
+        builder.resume!(backend, resuming.sessionId, {
           cwd: repoDir,
           timeoutMs: timeouts.agentMs,
           prompt: answerPrompt(
@@ -383,12 +416,11 @@ async function execute(
             resuming.answeredBy ?? 'a person',
           ),
         }),
-        builder,
       )
     } else {
       await enterStage(db, taskId, 'build', { harness: builder.name, attempt: 1 })
-      first = await settle(
-        await builder.run(backend, {
+      first = await settle(builder, 'builder', 1, () =>
+        builder.run(backend, {
           cwd: repoDir,
           timeoutMs: timeouts.agentMs,
           prompt: buildPrompt({
@@ -400,7 +432,6 @@ async function execute(
             feedback: continuation?.feedback,
           }),
         }),
-        builder,
       )
     }
     if (!first.ok) throw new StageFailure(`the agent did not finish: ${first.summary}`)
@@ -460,13 +491,12 @@ async function execute(
     const rework = async (attempt: number, findings: Finding[], failed: CheckResult[]) => {
       current = 'build'
       await enterStage(db, taskId, 'build', { harness: builder.name, attempt, rework: true })
-      const result = await settle(
-        await builder.resume!(backend, sessionId!, {
+      const result = await settle(builder, 'builder', attempt, () =>
+        builder.resume!(backend, sessionId!, {
           cwd: repoDir,
           timeoutMs: timeouts.agentMs,
           prompt: reworkPrompt({ findings, failedChecks: failed }),
         }),
-        builder,
       )
       if (!result.ok)
         throw new StageFailure(`the agent did not finish the rework: ${result.summary}`)
@@ -495,8 +525,8 @@ async function execute(
         baseTestScript: await showScript(baseSha),
         headTestScript: await showScript('HEAD'),
       })
-      const result = await settle(
-        await reviewer.run(backend, {
+      const result = await settle(reviewer, 'reviewer', attempt, () =>
+        reviewer.run(backend, {
           cwd: repoDir,
           timeoutMs: timeouts.reviewMs ?? 10 * 60_000,
           prompt: reviewPrompt({
@@ -508,7 +538,6 @@ async function execute(
             baseSha,
           }),
         }),
-        reviewer,
       )
       // The reviewer reads and does not write. If it wrote anyway, none of it counts.
       await must(backend, `git -C ${repoDir} reset --hard ${sha}`)

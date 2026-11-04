@@ -6,8 +6,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import {
+  agentRun,
   decision,
   delivery,
+  finding,
   evidence,
   ingress,
   question,
@@ -23,12 +25,14 @@ import {
   ActionRefused,
   approve,
   acknowledgeWatch,
+  resolveFinding,
+  type FindingAction,
   releaseTask,
   requestChanges,
   retry,
   type ActionDeps,
 } from './actions'
-import { inbox, listTasks, taskDetail } from './queries'
+import { health, inbox, listTasks, taskDetail } from './queries'
 import { stageStream } from './stream'
 
 beforeAll(async () => {
@@ -37,7 +41,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table finding, agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -230,6 +234,8 @@ describe('inbox', () => {
 
 describe('actions', () => {
   const queued: { input: object; key: string }[] = []
+  const resumed: { input: object; key: string }[] = []
+  const snapshotsDeleted: string[] = []
   const deleted: string[] = []
   const api = {
     deleteBranch: async (_repo: string, _token: string, branch: string) =>
@@ -239,6 +245,8 @@ describe('actions', () => {
     db: getDb(),
     github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
     api,
+    enqueueResume: async (input, key) => void resumed.push({ input, key }),
+    deleteSnapshot: async (id) => void snapshotsDeleted.push(id),
     inTransaction: (work) =>
       getDb().transaction((tx) =>
         work(tx as never, async (input, key) => void queued.push({ input, key })),
@@ -247,6 +255,8 @@ describe('actions', () => {
   beforeEach(() => {
     queued.length = 0
     deleted.length = 0
+    resumed.length = 0
+    snapshotsDeleted.length = 0
   })
 
   it('approves the commit the pull request is at, and only a task that has one', async () => {
@@ -395,6 +405,8 @@ describe('deliveries on the panel', () => {
       github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
       api: {} as never,
       inTransaction: async () => undefined as never,
+      enqueueResume: async () => {},
+      deleteSnapshot: async () => {},
     } as ActionDeps
     await expect(releaseTask(deps, id, 'patch')).rejects.toThrow(ActionRefused)
     await expect(releaseTask(deps, id, 'patch')).rejects.toThrow(/only a finished task/)
@@ -409,6 +421,8 @@ describe('a red default branch on the panel', () => {
       github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
       api: {} as never,
       inTransaction: async () => undefined as never,
+      enqueueResume: async () => {},
+      deleteSnapshot: async () => {},
     }) as ActionDeps
 
   async function red(over: Partial<typeof watch.$inferInsert> = {}) {
@@ -474,5 +488,281 @@ describe('a red default branch on the panel', () => {
     }
     await expect(acknowledgeWatch(noDeps(), 999)).rejects.toThrow(ActionRefused)
     expect(await inbox(getDb())).toEqual([])
+  })
+})
+
+describe('health', () => {
+  const NOW = new Date('2026-11-04T12:00:00Z')
+  const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000)
+
+  async function run(taskId: number, over: Partial<typeof agentRun.$inferInsert> = {}) {
+    await getDb()
+      .insert(agentRun)
+      .values({
+        taskId,
+        role: 'builder',
+        harness: 'claude-code',
+        attempt: 1,
+        costUsd: 0.1,
+        durationMs: 1000,
+        ok: true,
+        at: hoursAgo(1),
+        ...over,
+      })
+  }
+
+  it('tells the cost over time and per agent and role, counting an agent with no cost as runs', async () => {
+    const id = await seed('done', { costUsd: 0.5 })
+    await run(id, { costUsd: 0.2, at: hoursAgo(2) })
+    await run(id, { role: 'reviewer', costUsd: 0.05, at: hoursAgo(3), durationMs: 3000 })
+    await run(id, { costUsd: 0.4, at: hoursAgo(24 * 3) })
+    await run(id, { costUsd: 1, at: hoursAgo(24 * 20) })
+    await run(id, { harness: 'codex', costUsd: null, ok: false, quota: true, at: hoursAgo(1) })
+    await run(id, { harness: 'codex', costUsd: null, ok: true, at: hoursAgo(1) })
+
+    const report = await health(getDb(), NOW)
+
+    expect(report.cost.last24HoursUsd).toBeCloseTo(0.25)
+    expect(report.cost.last7DaysUsd).toBeCloseTo(0.65)
+    expect(report.cost.totalUsd).toBeCloseTo(1.65)
+    expect(report.cost.groups).toEqual([
+      {
+        harness: 'claude-code',
+        role: 'builder',
+        runs: 3,
+        reportedRuns: 3,
+        costUsd: expect.closeTo(1.6),
+        avgDurationMs: 1000,
+        failed: 0,
+        quota: 0,
+      },
+      {
+        harness: 'claude-code',
+        role: 'reviewer',
+        runs: 1,
+        reportedRuns: 1,
+        costUsd: expect.closeTo(0.05),
+        avgDurationMs: 3000,
+        failed: 0,
+        quota: 0,
+      },
+      {
+        harness: 'codex',
+        role: 'builder',
+        runs: 2,
+        reportedRuns: 0,
+        costUsd: 0,
+        avgDurationMs: 1000,
+        failed: 0,
+        quota: 1,
+      },
+    ])
+  })
+
+  it('averages what a task costs over the tasks that cost anything', async () => {
+    await seed('done', { costUsd: 0.3 })
+    await seed('done', { costUsd: 0.1 })
+    await seed('intake', { costUsd: 0 })
+    const { cost } = await health(getDb(), NOW)
+    expect(cost.tasks).toBe(2)
+    expect(cost.avgPerTaskUsd).toBeCloseTo(0.2)
+  })
+
+  it('is all zeros, not an error, when nothing has run', async () => {
+    const { cost, findings } = await health(getDb(), NOW)
+    expect(cost).toEqual({
+      last24HoursUsd: 0,
+      last7DaysUsd: 0,
+      totalUsd: 0,
+      tasks: 0,
+      avgPerTaskUsd: 0,
+      groups: [],
+    })
+    expect(findings).toEqual([])
+  })
+
+  it('lists the open findings, oldest first, with the task they are about, and not the resolved ones', async () => {
+    const id = await seed('build', { issueTitle: 'Stuck one' as never })
+    const add = (key: string, over: Partial<typeof finding.$inferInsert>) =>
+      getDb()
+        .insert(finding)
+        .values({ key, kind: 'stalled', subject: 'run', detail: key, taskId: id, ...over })
+    await add('b', { firstSeenAt: hoursAgo(1) })
+    await add('a', { firstSeenAt: hoursAgo(5) })
+    await add('gone', { resolvedAt: hoursAgo(1) })
+    await add('snap', { kind: 'orphaned', subject: 'snapshot', taskId: null, ref: 'snap-1' })
+
+    const { findings } = await health(getDb(), NOW)
+
+    expect(findings.map((f) => f.detail)).toEqual(['a', 'b', 'snap'])
+    expect(findings.find((f) => f.detail === 'a')?.taskTitle).toBeTruthy()
+    expect(findings.find((f) => f.detail === 'snap')).toMatchObject({
+      taskId: null,
+      taskTitle: null,
+      ref: 'snap-1',
+    })
+  })
+
+  it('shows the executions of a task on its detail', async () => {
+    const id = await seed('done')
+    await run(id)
+    await run(id, { role: 'reviewer', harness: 'codex', costUsd: null })
+    expect(
+      (await taskDetail(getDb(), id))!.runs.map((r) => [r.role, r.harness, r.costUsd]),
+    ).toEqual([
+      ['builder', 'claude-code', 0.1],
+      ['reviewer', 'codex', null],
+    ])
+  })
+})
+
+describe('resolving a finding', () => {
+  const resumed: { input: object; key: string }[] = []
+  const snapshotsDeleted: string[] = []
+  const queued: object[] = []
+  const deleted: string[] = []
+  const deps = (): ActionDeps => ({
+    db: getDb(),
+    github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
+    api: {
+      deleteBranch: async (_r: string, _t: string, b: string) => void deleted.push(b),
+    } as never,
+    enqueueResume: async (input, key) => void resumed.push({ input, key }),
+    deleteSnapshot: async (id) => void snapshotsDeleted.push(id),
+    inTransaction: (work) =>
+      getDb().transaction((tx) => work(tx as never, async (input) => void queued.push(input))),
+  })
+  beforeEach(() => {
+    resumed.length = 0
+    snapshotsDeleted.length = 0
+    queued.length = 0
+    deleted.length = 0
+  })
+
+  const open = async (over: Partial<typeof finding.$inferInsert>) => {
+    const [f] = await getDb()
+      .insert(finding)
+      .values({ key: `k-${Math.random()}`, kind: 'stalled', subject: 'run', detail: 'd', ...over })
+      .returning({ id: finding.id })
+    return f.id
+  }
+  const isOpen = async (id: number) =>
+    (await getDb().select().from(finding).where(eq(finding.id, id)))[0].resolvedAt === null
+
+  it('retries a task whose run stalled, though it is in a working stage, and closes the finding', async () => {
+    const taskId = await seed('build', { issueNumber: 31 })
+    const id = await open({ taskId, subject: 'run' })
+
+    await resolveFinding(deps(), id, 'retry')
+
+    expect((await getDb().select().from(task).where(eq(task.id, taskId)))[0].stage).toBe('intake')
+    expect(deleted).toEqual(['factory/31'])
+    expect(queued).toHaveLength(1)
+    expect(await isOpen(id)).toBe(false)
+  })
+
+  it('does not retry a working task on a plain retry, only when a finding says it is stuck', async () => {
+    const taskId = await seed('build')
+    await expect(retry(deps(), taskId)).rejects.toThrow(ActionRefused)
+  })
+
+  it('queues the resume again for an answer whose job was lost', async () => {
+    const taskId = await seed('waiting')
+    const [q] = await getDb()
+      .insert(question)
+      .values({
+        taskId,
+        body: 'q',
+        commentId: '1',
+        snapshotId: 's',
+        sessionId: 'x',
+        harness: 'h',
+        repoDir: '/r',
+        baseSha: 'b',
+        attempt: 1,
+        costUsd: 0,
+        answer: 'B',
+        answeredBy: 'paulo',
+      })
+      .returning({ id: question.id })
+    const id = await open({ taskId, kind: 'orphaned', subject: 'answer_resume', ref: String(q.id) })
+
+    await resolveFinding(deps(), id, 'resume')
+
+    expect(resumed).toHaveLength(1)
+    expect(resumed[0].input).toEqual({ taskId, questionId: q.id })
+    expect(resumed[0].key).toMatch(new RegExp(`^resume-${q.id}-again-`))
+    expect(await isOpen(id)).toBe(false)
+  })
+
+  it('deletes the snapshot a finding names, and no other', async () => {
+    const id = await open({ kind: 'orphaned', subject: 'snapshot', ref: 'snap-orphan' })
+    await resolveFinding(deps(), id, 'delete_snapshot')
+    expect(snapshotsDeleted).toEqual(['snap-orphan'])
+    expect(await isOpen(id)).toBe(false)
+  })
+
+  it('turns a stuck revert into a red one that says to look at the repository', async () => {
+    const taskId = await seed('released')
+    const [w] = await getDb()
+      .insert(watch)
+      .values({
+        taskId,
+        repository: 'paulo/app',
+        sha: 'm',
+        pullRequestNumber: 1,
+        status: 'reverting',
+      })
+      .returning({ id: watch.id })
+    const id = await open({ taskId, kind: 'orphaned', subject: 'revert', ref: String(w.id) })
+
+    await resolveFinding(deps(), id, 'mark_revert_unknown')
+
+    const [stored] = await getDb().select().from(watch).where(eq(watch.id, w.id))
+    expect(stored.status).toBe('red')
+    expect(stored.detail).toContain('check the repository for a revert pull request')
+    const items = await inbox(getDb())
+    expect(items[0].kind).toBe('main_red')
+  })
+
+  it('refuses an action the finding does not allow, a finding that is closed, and one that is not there', async () => {
+    const snap = await open({ kind: 'orphaned', subject: 'snapshot', ref: 'snap-1' })
+    for (const action of ['retry', 'resume', 'mark_revert_unknown'] as FindingAction[]) {
+      await expect(resolveFinding(deps(), snap, action)).rejects.toThrow(
+        /is not something to do about a snapshot/,
+      )
+    }
+    const closed = await open({
+      kind: 'orphaned',
+      subject: 'snapshot',
+      ref: 's',
+      resolvedAt: new Date(),
+    })
+    await expect(resolveFinding(deps(), closed, 'delete_snapshot')).rejects.toThrow(/not open/)
+    await expect(resolveFinding(deps(), 999, 'retry')).rejects.toThrow(ActionRefused)
+    expect(snapshotsDeleted).toEqual([])
+    expect(await isOpen(snap)).toBe(true)
+  })
+
+  it('refuses to resume a question that has no answer or was already resumed', async () => {
+    const taskId = await seed('waiting')
+    const [q] = await getDb()
+      .insert(question)
+      .values({
+        taskId,
+        body: 'q',
+        commentId: '1',
+        snapshotId: 's',
+        sessionId: 'x',
+        harness: 'h',
+        repoDir: '/r',
+        baseSha: 'b',
+        attempt: 1,
+        costUsd: 0,
+      })
+      .returning({ id: question.id })
+    const id = await open({ taskId, kind: 'orphaned', subject: 'answer_resume', ref: String(q.id) })
+    await expect(resolveFinding(deps(), id, 'resume')).rejects.toThrow(/nothing to resume/)
+    expect(resumed).toEqual([])
   })
 })

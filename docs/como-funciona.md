@@ -272,6 +272,50 @@ No painel, a task liberada ganha a seção "Default branch after the release", c
 do revert e o botão "I dealt with it", que tira o caso da caixa de entrada sem mexer em nada no GitHub. Uma
 `main` vermelha aparece na caixa de entrada e no cartão da task.
 
+## Saúde da própria fábrica
+
+**Custo por execução.** Toda execução de um agente (um build, um retrabalho, uma retomada depois de uma
+resposta, um review) é uma linha com o agente, o papel, a tentativa, o custo, o tempo e o resultado. Uma
+execução que não voltou (o sandbox morreu) ou que bateu na cota fica registrada como tal, e um agente
+que não informa custo (o Codex) fica com o custo vazio, não zero. O detalhe de cada task mostra as suas
+execuções, e a página Health mostra o custo nas últimas 24 horas, nos últimos 7 dias e no total, e por
+agente e papel, com o tempo médio e quantas falharam ou bateram na cota.
+
+**O supervisor.** Um cron confere a fábrica a cada 5 minutos e abre achados tipados. Ele só reporta; uma
+pessoa resolve cada um pelo painel.
+
+| Achado                   | O que é                                                                                  | O que o painel oferece |
+| ------------------------ | ---------------------------------------------------------------------------------------- | ---------------------- |
+| `stalled` run            | Uma task num estágio de trabalho sem evento há mais de 45 minutos, mais que qualquer run | Começar de novo        |
+| `orphaned` queued_run    | Uma task na fila e nenhum job para rodá-la (ou o job falhou)                             | Começar de novo        |
+| `orphaned` answer_resume | Uma pergunta respondida há mais de 10 minutos e nenhum job para retomá-la                | Retomar de novo        |
+| `orphaned` revert        | A `main` ficou vermelha e o revert nunca foi confirmado aberto                           | Mostrar como vermelha  |
+| `orphaned` snapshot      | Um snapshot que nenhuma pergunta em espera usa (só custa armazenamento)                  | Apagar o snapshot      |
+
+Um achado fica aberto enquanto for verdade e se resolve sozinho quando deixa de ser, ou quando uma pessoa
+age. Se voltar, recomeça com um novo "visto pela primeira vez". Uma checagem que não pôde rodar (a lista de
+snapshots do provedor, a tabela de jobs) não resolve os achados dela: não ver um problema não é o problema
+ter sumido. "Começar de novo" apaga a branch e recomeça do zero, e o painel pede confirmação, porque uma run
+que parecia parada pode, raramente, ainda estar viva.
+
+## Qualidade do código
+
+Três gates rodam no job `quality` do CI, ao lado do `check`. Localmente: `pnpm quality`, ou cada um
+(`pnpm coverage`, `pnpm crap`, `pnpm dup`, `pnpm mutation`).
+
+- **CRAP.** Para cada função, `complexidade² × (1 − cobertura)³ + complexidade`: uma função complicada que
+  os testes não alcançam é o código mais arriscado, e um número diz o quanto. A complexidade é a ciclomática
+  (ramos, laços, `catch`, ternários, `&&`, `||`, `??`), pela API do TypeScript, e a cobertura é a real, de
+  `pnpm coverage`. Nenhuma função nova pode passar de 30, e as que já passam estão em
+  `quality/crap-baseline.json` e só podem diminuir. A dívida de hoje é uma função, `execute` do `runTask`, com
+  complexidade 66. Quando uma melhorar, `node scripts/crap.mjs --update` trava o ganho.
+- **Duplicação.** Menos de 1% de código copiado (`jscpd`; hoje 0,15%). Os testes ficam de fora, porque
+  repetem por natureza.
+- **Mutação.** O Stryker muda a lógica de decisão (o portão de evidência, o veredito do review, as guardas do
+  diff, a classificação da `main`, a leitura da resposta, as versões, as notas e a formatação do painel) e
+  confere se algum teste falha. A nota mínima é 90; hoje é 97. Textos (literais de string) ficam de fora, para
+  o gate cobrar lógica e não redação. Só os testes de unidade desses módulos rodam por mutante, sem banco.
+
 ## O painel
 
 Uma interface local para ver e conduzir a fábrica. Abre em `http://localhost:3000` e mostra, ao vivo:
@@ -508,6 +552,8 @@ responde `/api/health` mesmo sem as credenciais.
 - O vigia só olha o commit de merge de cada release, não a `main` inteira.
 - O painel é local e tem um dono só, com um token.
 - A resposta é lida por sondagem a cada minuto, não por evento.
+- O supervisor só reporta; não corrige nada sozinho.
+- A dívida de CRAP é uma função, `execute`, e vale quebrá-la quando houver ocasião.
 - Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.
 - O Codex ainda não completou uma issue do início ao fim, por causa da cota da conta usada.
 - A sessão do Vercel Sandbox no plano Hobby termina em 45 minutos.

@@ -54,3 +54,6 @@ pnpm-debug.log*
 *.swo
 .vercel
 .env*
+coverage/
+.stryker-tmp/
+reports/

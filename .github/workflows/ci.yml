@@ -48,3 +48,43 @@ jobs:
       - run: pnpm test
       - run: pnpm test:integration
       - run: pnpm build
+
+  # The gates that say how good the tests and the code are, not only whether they pass. They run
+  # beside `check` so a slow mutation run does not hold the fast feedback back.
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: factory
+          POSTGRES_PASSWORD: factory
+          POSTGRES_DB: factory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U factory"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgres://factory:factory@localhost:5432/factory
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Unit and integration tests with coverage: the input of the CRAP gate.
+      - run: pnpm coverage
+      # No new function over CRAP 30, and none of the known ones may get worse.
+      - run: pnpm crap
+      # Copy and paste under 1% of the code.
+      - run: pnpm dup
+      # The tests must catch changes to the logic: mutation score of the decision code at 90 or more.
+      - run: pnpm mutation

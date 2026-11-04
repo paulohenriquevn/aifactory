@@ -107,6 +107,12 @@ export function vercelSandboxProvider(): IsolatedSandboxProvider {
         }),
       )
     },
+    async listSnapshots() {
+      const all = await (await Snapshot.list({ ...vercelCredentials() })).toArray()
+      return all
+        .filter((s) => s.status !== 'deleted')
+        .map((s) => ({ id: s.id, createdAt: new Date(s.createdAt), sizeBytes: s.sizeBytes }))
+    },
     async deleteSnapshot(snapshotId) {
       await (await Snapshot.get({ snapshotId, ...vercelCredentials() })).delete()
     },

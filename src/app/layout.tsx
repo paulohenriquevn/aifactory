@@ -3,7 +3,7 @@ import './globals.css'
 import { useEffect } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 
-import type { InboxItem } from '../shared/panel'
+import type { HealthReport, InboxItem } from '../shared/panel'
 
 import { post } from './lib/api'
 import { useResource } from './lib/live'
@@ -18,12 +18,14 @@ export default function RootLayout() {
   const onLogin = location.pathname === '/login'
   const me = useResource<{ owner: boolean }>('/api/panel/me', { everyMs: 60_000 })
   const inbox = useResource<{ items: InboxItem[] }>('/api/panel/inbox')
+  const health = useResource<HealthReport>('/api/panel/health', { everyMs: 60_000 })
 
   useEffect(() => {
     if (me.data && !me.data.owner && !onLogin) void navigate('/login', { replace: true })
   }, [me.data, onLogin, navigate])
 
   const waiting = inbox.data?.items.length ?? 0
+  const wrong = health.data?.findings.length ?? 0
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -38,6 +40,9 @@ export default function RootLayout() {
                 </NavLink>
                 <NavLink to="/inbox" className={link}>
                   Inbox{waiting > 0 ? ` (${waiting})` : ''}
+                </NavLink>
+                <NavLink to="/health" className={link}>
+                  Health{wrong > 0 ? ` (${wrong})` : ''}
                 </NavLink>
               </nav>
               <button

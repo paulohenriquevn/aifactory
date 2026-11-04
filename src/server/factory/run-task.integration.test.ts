@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import {
+  agentRun,
   decision,
   delivery,
   evidence,
@@ -40,7 +41,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -1248,7 +1249,7 @@ describe('runTask waiting for an answer', () => {
 
     const sandbox = new FakeSandbox(changed())
     await getPool().query(
-      'truncate table watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+      'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
     )
     const id2 = await seedTask()
     const b = await runTask(
@@ -1440,7 +1441,7 @@ describe('release', () => {
   const dependencies = () => ({ db: getDb(), github, api: githubApi })
   const reset = async () => {
     await getPool().query(
-      'truncate table watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+      'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
     )
     dirty = true
   }
@@ -1476,6 +1477,16 @@ describe('release', () => {
       actor: 'human',
     })
     expect(await stagesOf(id)).toContain('released')
+    // The merge is on the default branch now, so its checks are watched from here on.
+    expect(await getDb().select().from(watch).where(eq(watch.taskId, id))).toMatchObject([
+      {
+        sha: 'merge0001',
+        pullRequestNumber: 12,
+        tag: 'v1.3.0',
+        status: 'watching',
+        repository: 'paulo/app',
+      },
+    ])
   })
 
   it('starts at v0.1.0 when the repository has no release yet', async () => {
@@ -1574,5 +1585,96 @@ describe('release', () => {
       await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'released'))
     )[0]
     expect(released.detail).toMatchObject({ mergeSha: 'merge0001' })
+  })
+})
+
+const runsOf = async (taskId: number) =>
+  getDb().select().from(agentRun).where(eq(agentRun.taskId, taskId)).orderBy(agentRun.id)
+
+describe('the cost of each execution', () => {
+  it('records the builder and the reviewer as two executions, with their cost, time and outcome', async () => {
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    const runs = await runsOf(id)
+    expect(runs.map((r) => [r.role, r.harness, r.attempt, r.ok, r.quota])).toEqual([
+      ['builder', 'fake-agent', 1, true, false],
+      ['reviewer', 'fake-reviewer', 1, true, false],
+    ])
+    expect(runs[0].costUsd).toBeCloseTo(0.12)
+    expect(runs[1].costUsd).toBeCloseTo(0.01)
+    for (const r of runs) expect(r.durationMs).toBeGreaterThanOrEqual(0)
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row.costUsd).toBeCloseTo(runs.reduce((sum, r) => sum + (r.costUsd ?? 0), 0))
+  })
+
+  it('records every attempt, the rework and the second review included', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const reviewer = reviewerSaying(verdictJson('changes', [finding]), verdictJson('approve'))
+
+    await runTask(deps(new FakeSandbox(changed()), { harness: builder, reviewer }), id)
+
+    expect((await runsOf(id)).map((r) => [r.role, r.attempt])).toEqual([
+      ['builder', 1],
+      ['reviewer', 1],
+      ['builder', 2],
+      ['reviewer', 2],
+    ])
+    expect((await runsOf(id))[2].sessionId).toBe('sess-1')
+  })
+
+  it('records an agent that did not come back, with no cost', async () => {
+    const id = await seedTask()
+    const crashing: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async () => {
+        throw new Error('the sandbox died')
+      },
+    }
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { harness: crashing }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'build' })
+    expect(await runsOf(id)).toMatchObject([
+      { role: 'builder', ok: false, costUsd: null, quota: false },
+    ])
+  })
+
+  it('records a quota stop as one, and not as a plain failure', async () => {
+    const id = await seedTask()
+    const limited: CodingHarness = {
+      name: 'codex',
+      egress: agentEgress,
+      run: async () => ({
+        ok: false,
+        summary: 'limit',
+        quota: { message: 'usage limit', resetsAt: 'tomorrow' },
+      }),
+    }
+
+    await runTask(deps(new FakeSandbox(changed()), { harness: limited }), id)
+
+    expect(await runsOf(id)).toMatchObject([
+      { harness: 'codex', ok: false, quota: true, costUsd: null },
+    ])
+  })
+
+  it('leaves the cost empty for an agent that reports none, instead of writing zero', async () => {
+    const id = await seedTask()
+    const silent: CodingHarness = {
+      name: 'codex',
+      egress: agentEgress,
+      run: async () => {
+        dirty = true
+        return { ok: true, summary: 'done' }
+      },
+    }
+
+    await runTask(deps(new FakeSandbox(changed()), { harness: silent }), id)
+
+    expect((await runsOf(id))[0]).toMatchObject({ harness: 'codex', costUsd: null })
   })
 })

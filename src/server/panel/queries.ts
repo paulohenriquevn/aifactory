@@ -1,10 +1,12 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
 import {
+  agentRun,
   decision,
   delivery,
   evidence,
+  finding,
   question,
   review,
   stageEvent,
@@ -15,7 +17,11 @@ import {
   columnOf,
   type DecisionView,
   type DeliveryView,
+  type CostGroup,
   type EvidenceView,
+  type FindingView,
+  type HealthReport,
+  type RunView,
   type InboxItem,
   type QuestionView,
   type ReviewView,
@@ -103,15 +109,17 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
   const [row] = await db.select().from(task).where(eq(task.id, id))
   if (!row) return undefined
   const [card] = await cards(db, [row])
-  const [events, checks, reviews, questions, decisions, deliveries, watches] = await Promise.all([
-    db.select().from(stageEvent).where(eq(stageEvent.taskId, id)).orderBy(asc(stageEvent.id)),
-    db.select().from(evidence).where(eq(evidence.taskId, id)).orderBy(asc(evidence.id)),
-    db.select().from(review).where(eq(review.taskId, id)).orderBy(asc(review.id)),
-    db.select().from(question).where(eq(question.taskId, id)).orderBy(asc(question.id)),
-    db.select().from(decision).where(eq(decision.taskId, id)).orderBy(asc(decision.id)),
-    db.select().from(delivery).where(eq(delivery.taskId, id)).orderBy(asc(delivery.id)),
-    db.select().from(watch).where(eq(watch.taskId, id)).orderBy(asc(watch.id)),
-  ])
+  const [events, checks, reviews, questions, decisions, deliveries, watches, runs] =
+    await Promise.all([
+      db.select().from(stageEvent).where(eq(stageEvent.taskId, id)).orderBy(asc(stageEvent.id)),
+      db.select().from(evidence).where(eq(evidence.taskId, id)).orderBy(asc(evidence.id)),
+      db.select().from(review).where(eq(review.taskId, id)).orderBy(asc(review.id)),
+      db.select().from(question).where(eq(question.taskId, id)).orderBy(asc(question.id)),
+      db.select().from(decision).where(eq(decision.taskId, id)).orderBy(asc(decision.id)),
+      db.select().from(delivery).where(eq(delivery.taskId, id)).orderBy(asc(delivery.id)),
+      db.select().from(watch).where(eq(watch.taskId, id)).orderBy(asc(watch.id)),
+      db.select().from(agentRun).where(eq(agentRun.taskId, id)).orderBy(asc(agentRun.id)),
+    ])
   return {
     task: card,
     timeline: events.map((e): TimelineEvent => ({
@@ -156,6 +164,17 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
       sha: d.sha,
       note: d.note,
       at: iso(d.at),
+    })),
+    runs: runs.map((r): RunView => ({
+      id: r.id,
+      role: r.role,
+      harness: r.harness,
+      attempt: r.attempt,
+      costUsd: r.costUsd,
+      durationMs: r.durationMs,
+      ok: r.ok,
+      quota: r.quota,
+      at: iso(r.at),
     })),
     watches: watches.map((w): WatchView => ({
       id: w.id,
@@ -256,4 +275,77 @@ export async function inbox(db: Database): Promise<InboxItem[]> {
     }
   }
   return items.sort((a, b) => a.at.localeCompare(b.at))
+}
+
+/**
+ * What the factory costs and what is wrong with it. Cost is told per agent and per role, because a
+ * builder and a reviewer on different agents are two different bills, and an agent that reports no
+ * cost (Codex) is counted as runs, not as zero dollars.
+ */
+export async function health(db: Database, now = new Date()): Promise<HealthReport> {
+  const since = (ms: number) => new Date(now.getTime() - ms)
+  const spent = async (from?: Date) => {
+    const [row] = await db
+      .select({ total: sql<number>`coalesce(sum(${agentRun.costUsd}), 0)` })
+      .from(agentRun)
+      .where(from ? gt(agentRun.at, from) : undefined)
+    return Number(row.total)
+  }
+  const groups = await db
+    .select({
+      harness: agentRun.harness,
+      role: agentRun.role,
+      runs: sql<number>`count(*)`,
+      reportedRuns: sql<number>`count(${agentRun.costUsd})`,
+      costUsd: sql<number>`coalesce(sum(${agentRun.costUsd}), 0)`,
+      avgDurationMs: sql<number>`coalesce(avg(${agentRun.durationMs}), 0)`,
+      failed: sql<number>`count(*) filter (where not ${agentRun.ok} and not ${agentRun.quota})`,
+      quota: sql<number>`count(*) filter (where ${agentRun.quota})`,
+    })
+    .from(agentRun)
+    .groupBy(agentRun.harness, agentRun.role)
+    .orderBy(agentRun.harness, agentRun.role)
+  const [perTask] = await db
+    .select({
+      tasks: sql<number>`count(*) filter (where ${task.costUsd} > 0)`,
+      total: sql<number>`coalesce(sum(${task.costUsd}), 0)`,
+    })
+    .from(task)
+  const tasks = Number(perTask.tasks)
+  const open = await db
+    .select({ f: finding, title: task.issueTitle })
+    .from(finding)
+    .leftJoin(task, eq(task.id, finding.taskId))
+    .where(isNull(finding.resolvedAt))
+    .orderBy(asc(finding.firstSeenAt))
+  return {
+    cost: {
+      last24HoursUsd: await spent(since(24 * 3_600_000)),
+      last7DaysUsd: await spent(since(7 * 24 * 3_600_000)),
+      totalUsd: await spent(),
+      tasks,
+      avgPerTaskUsd: tasks === 0 ? 0 : Number(perTask.total) / tasks,
+      groups: groups.map((g): CostGroup => ({
+        harness: g.harness,
+        role: g.role,
+        runs: Number(g.runs),
+        reportedRuns: Number(g.reportedRuns),
+        costUsd: Number(g.costUsd),
+        avgDurationMs: Math.round(Number(g.avgDurationMs)),
+        failed: Number(g.failed),
+        quota: Number(g.quota),
+      })),
+    },
+    findings: open.map(({ f, title }): FindingView => ({
+      id: f.id,
+      kind: f.kind,
+      subject: f.subject,
+      taskId: f.taskId,
+      taskTitle: title,
+      ref: f.ref,
+      detail: f.detail,
+      firstSeenAt: iso(f.firstSeenAt),
+      lastSeenAt: iso(f.lastSeenAt),
+    })),
+  }
 }
