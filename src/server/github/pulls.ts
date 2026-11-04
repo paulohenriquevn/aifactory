@@ -8,6 +8,17 @@ export type CheckRun = {
   summary: string
 }
 
+export type IssueComment = {
+  id: string
+  body: string
+  author: string
+  /** `User` or `Bot`: a bot's comment is never an answer. */
+  authorType: string
+  /** The author's relation to the repository: `OWNER`, `MEMBER`, `COLLABORATOR`, `NONE`... */
+  association: string
+  createdAt: Date
+}
+
 export type PullRequest = { number: number; url: string }
 
 export type GithubApi = {
@@ -18,7 +29,15 @@ export type GithubApi = {
     token: string,
     pull: { head: string; title: string; body: string; draft?: boolean },
   ): Promise<PullRequest>
-  commentOnIssue(repo: string, token: string, issueNumber: number, body: string): Promise<void>
+  /** Posts a comment and returns its id. */
+  commentOnIssue(repo: string, token: string, issueNumber: number, body: string): Promise<string>
+  /** The comments on an issue made since a time, oldest first. */
+  listIssueComments(
+    repo: string,
+    token: string,
+    issueNumber: number,
+    since: Date,
+  ): Promise<IssueComment[]>
 }
 
 /** Runs on the factory host with an installation token, never in the sandbox. */
@@ -98,7 +117,7 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
     },
 
     async commentOnIssue(repo, token, issueNumber, body) {
-      await ensure(
+      const response = await ensure(
         await call(repo, token, `/issues/${issueNumber}/comments`, {
           method: 'POST',
           body: JSON.stringify({ body }),
@@ -106,6 +125,34 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
         `commenting on ${repo}#${issueNumber}`,
         [201],
       )
+      return String(((await response.json()) as { id: number }).id)
+    },
+
+    async listIssueComments(repo, token, issueNumber, since) {
+      const response = await ensure(
+        await call(
+          repo,
+          token,
+          `/issues/${issueNumber}/comments?per_page=100&since=${encodeURIComponent(since.toISOString())}`,
+        ),
+        `listing comments on ${repo}#${issueNumber}`,
+        [200],
+      )
+      const comments = (await response.json()) as {
+        id: number
+        body?: string
+        user?: { login: string; type: string } | null
+        author_association: string
+        created_at: string
+      }[]
+      return comments.map((c) => ({
+        id: String(c.id),
+        body: c.body ?? '',
+        author: c.user?.login ?? '',
+        authorType: c.user?.type ?? '',
+        association: c.author_association,
+        createdAt: new Date(c.created_at),
+      }))
     },
   }
 }

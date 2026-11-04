@@ -3,6 +3,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   serial,
   text,
   timestamp,
@@ -17,6 +18,7 @@ export const TASK_STAGES = [
   'push',
   'verify',
   'review',
+  'waiting',
   'pr',
   'done',
   'handoff',
@@ -109,4 +111,34 @@ export const review = pgTable('review', {
   summary: text('summary').notNull(),
   findings: jsonb('findings').notNull(),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * A question an agent could not go on without. The sandbox was snapshotted when it was asked, so an
+ * answer resumes the same session, with the same checkout, in a new sandbox. Everything needed to do
+ * that lives here, because by then the process that asked may be gone.
+ */
+export const question = pgTable('question', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  body: text('body').notNull(),
+  /** The comment the factory posted on the issue. */
+  commentId: text('comment_id').notNull(),
+  askedAt: timestamp('asked_at', { withTimezone: true }).notNull().defaultNow(),
+  snapshotId: text('snapshot_id').notNull(),
+  sessionId: text('session_id').notNull(),
+  harness: text('harness').notNull(),
+  repoDir: text('repo_dir').notNull(),
+  baseSha: text('base_sha').notNull(),
+  /** The attempt the question interrupted, so the budget of three carries over. */
+  attempt: integer('attempt').notNull(),
+  /** What the run had spent when it stopped. */
+  costUsd: real('cost_usd').notNull(),
+  answer: text('answer'),
+  answeredBy: text('answered_by'),
+  answeredAt: timestamp('answered_at', { withTimezone: true }),
+  /** Set once, atomically, by the run that takes the answer, so two cannot resume one question. */
+  resumedAt: timestamp('resumed_at', { withTimezone: true }),
 })

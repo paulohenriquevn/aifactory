@@ -22,7 +22,8 @@ issue com a label "factory"
         |
         v
    agente construtor (Claude Code ou Codex) implementa a issue
-        |
+        |-- precisa de uma decisão --> pergunta na issue, snapshot do sandbox, task em waiting
+        |       (uma resposta de quem tem acesso de escrita retoma a mesma sessão, num sandbox restaurado)
         v
    a fábrica faz o commit e o push
         |
@@ -55,6 +56,7 @@ Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `
 | `push`    | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).     |
 | `verify`  | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.     |
 | `review`  | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.      |
+| `waiting` | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.     |
 | `pr`      | Se o portão abriu, cria o check run `aifactory/verify` e o pull request, ou devolve o que já estava aberto. |
 | `done`    | Guarda o SHA, a URL do PR, o número de tentativas e o custo total (construtor mais revisor).                |
 | `handoff` | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.       |
@@ -155,6 +157,48 @@ O retomar usa `claude -p --resume <id>` ou `codex exec resume <id>`, na mesma se
 sandbox. O retrabalho gera um novo commit (`<título>: address feedback (attempt n)`), e os checks
 rodam de novo no SHA novo, com um novo check run. O PR traz o veredito do revisor e os achados que
 restaram.
+
+## Perguntas ao humano (`waiting`)
+
+O agente não deve adivinhar quando falta uma decisão que só uma pessoa pode tomar. O prompt do
+construtor combina um protocolo simples: deixar o repositório como está e terminar a resposta com uma
+linha `QUESTION:` seguida de uma pergunta específica, com as opções que ele vê.
+
+**Perguntar.** A fábrica lê essa linha e, nesta ordem:
+
+1. salva o disco do sandbox num snapshot (o que também para o sandbox);
+2. comenta na issue, como o App, com a pergunta e um marcador escondido
+   (`<!-- aifactory:question -->`) para nunca ler o próprio comentário como resposta;
+3. grava a pergunta em `question`, com o snapshot, o id da sessão do agente, o diretório do
+   checkout, o commit base, o número da tentativa e o custo até ali;
+4. põe a task em `waiting` e termina. Nada fica rodando, e nada se perde se o servidor reiniciar.
+
+Se o provedor de sandbox não sabe salvar o disco, ou o agente não devolveu um id de sessão, a task
+falha dizendo isso, em vez de esperar sem poder retomar. Se o comentário não puder ser postado, o
+snapshot é apagado.
+
+**Receber a resposta.** Um cron (`poll-answers`) roda a cada minuto, lê os comentários novos de cada
+issue em espera e pega o que pessoas **com acesso de escrita** (`OWNER`, `MEMBER`, `COLLABORATOR`)
+escreveram depois da pergunta, em ordem. Não contam: bots, a própria fábrica, um desconhecido, ou
+qualquer coisa de antes da pergunta. Isso importa porque o texto da resposta vira instrução para um
+agente com permissões desligadas, e numa issue pública qualquer pessoa pode comentar. A resposta e
+quem a deu ficam gravadas, e o job `resume-task` entra na fila na mesma transação.
+
+Escolhi sondar em vez de assinar o evento de comentário do GitHub porque isso exige outro evento no
+App, e a sondagem também cobre uma resposta que chegou com o servidor fora do ar.
+
+**Retomar.** `resume-task` pega a resposta uma única vez (duas execuções nunca retomam a mesma
+pergunta), cria um sandbox a partir do snapshot, com as mesmas regras de rede e um token novo do
+GitHub, apaga o snapshot e retoma a sessão do agente com a pergunta, a resposta e quem respondeu. O
+checkout, a branch e a conversa do agente voltam como estavam. Daí em diante é o fluxo normal: commit,
+checks, revisão. Uma pergunta não gasta uma das três tentativas, e uma pergunta feita durante um
+retrabalho volta na mesma tentativa.
+
+**Sem resposta.** Depois de 7 dias, que é quanto o snapshot vive, a task falha com `failedAt: waiting`
+e o snapshot é apagado.
+
+Cada snapshot ocupa cerca de 800 MB, e o plano Hobby da Vercel limita o armazenamento. Muitas
+perguntas abertas ao mesmo tempo esgotam esse limite.
 
 ## Claude Code
 
@@ -345,10 +389,11 @@ responde `/api/health` mesmo sem as credenciais.
 
 ## Limites conhecidos
 
-- Uma task por issue. Repor a label não reexecuta.
+- Uma task por issue. Repor a label não reexecuta, nem depois de uma task que falhou por falta de resposta.
 - Um repositório de cada vez no sentido de operação: não há onboarding de repositórios.
 - O servidor e o túnel rodam como processos da sessão de trabalho, sem supervisor.
-- Não há pergunta ao humano (o `waiting` do M4), painel nem merge. Estão no M4 a M6.
+- Não há painel nem merge. Estão no M5 e no M6.
+- A resposta é lida por sondagem a cada minuto, não por evento.
 - Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.
 - O Codex ainda não completou uma issue do início ao fim, por causa da cota da conta usada.
 - A sessão do Vercel Sandbox no plano Hobby termina em 45 minutos.

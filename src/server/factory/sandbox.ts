@@ -17,11 +17,24 @@ export type SandboxSpec = {
  * A running sandbox: the TheoKit `SandboxBackend` the agent tools and the factory talk to, plus the
  * way to stop it. `SandboxBackend` has no lifecycle and no network policy, so both live here.
  */
-export type IsolatedSandbox = { backend: SandboxBackend; stop(): Promise<void> }
+export type IsolatedSandbox = {
+  backend: SandboxBackend
+  stop(): Promise<void>
+  /**
+   * Saves the disk and stops the sandbox, and returns what `restore` needs. The sandbox is gone
+   * afterwards. A provider that cannot do this leaves it out, and a task that asks a question
+   * then fails instead of waiting.
+   */
+  snapshot?(): Promise<string>
+}
 
 export interface IsolatedSandboxProvider {
   readonly name: string
   create(spec: SandboxSpec): Promise<IsolatedSandbox>
+  /** A new sandbox with the disk of a snapshot, under the same network rules as any other. */
+  restore?(snapshotId: string, spec: SandboxSpec): Promise<IsolatedSandbox>
+  /** Frees a snapshot, which costs storage until it is deleted or expires. */
+  deleteSnapshot?(snapshotId: string): Promise<void>
 }
 
 /** Thrown when a run is asked for without the isolation the factory requires. */
@@ -63,4 +76,17 @@ export async function createIsolatedSandbox(
 ): Promise<IsolatedSandbox> {
   assertIsolated(spec)
   return provider.create(spec)
+}
+
+/** Restores a sandbox from a snapshot, after the same check as a new one. */
+export async function restoreIsolatedSandbox(
+  provider: IsolatedSandboxProvider,
+  snapshotId: string,
+  spec: SandboxSpec,
+): Promise<IsolatedSandbox> {
+  assertIsolated(spec)
+  if (!provider.restore) {
+    throw new IsolationRefused(`${provider.name} cannot restore a snapshot`)
+  }
+  return provider.restore(snapshotId, spec)
 }

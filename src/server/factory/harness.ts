@@ -87,6 +87,7 @@ Rules:
 - Keep the change small and limited to what the issue asks.
 - Do not run git commit, git push or any other git command that writes. The factory commits and pushes.
 - Do not edit anything under .github/.
+- If you cannot go on without a decision only a person can make, do not guess. Leave the repository as it is and end your final message with a line that starts with \`QUESTION:\`, followed by one specific question (offer the options you see).
 - Finish with a short summary of what you changed.
 `
 }

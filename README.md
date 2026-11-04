@@ -6,12 +6,13 @@ suporte a vários projetos.
 
 Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7, e
 [como a fábrica funciona](docs/como-funciona.md) descreve o fluxo, o isolamento, a evidência e o
-uso do Claude Code e do Codex. Os marcos M0 a M4a estão concluídos: uma issue com a label `factory`
+uso do Claude Code e do Codex. Os marcos M0 a M4 estão concluídos: uma issue com a label `factory`
 chega a um pull request, aberto só com os checks verdes no commit enviado e a aprovação de um
 revisor independente, com até três tentativas de retrabalho na mesma sessão do agente. O Claude Code
 funciona por chave de API ou por assinatura. O Codex está implementado e verificado até a chamada ao
-modelo, e falta uma execução que complete, por causa da cota da conta usada. Perguntas ao humano
-(M4b), painel e merge ainda não existem.
+modelo, e falta uma execução que complete, por causa da cota da conta usada. Quando o agente precisa
+de uma decisão, ele pergunta na issue e a task espera a resposta de quem tem acesso de escrita.
+Painel e merge ainda não existem.
 
 ## Rodando localmente
 

@@ -1,5 +1,5 @@
 import { SandboxBackend } from '@theokit/agents/sandbox'
-import { Sandbox, type NetworkPolicy } from '@vercel/sandbox'
+import { Sandbox, Snapshot, type NetworkPolicy } from '@vercel/sandbox'
 
 import type { IsolatedSandbox, IsolatedSandboxProvider, SandboxSpec } from './sandbox'
 
@@ -69,21 +69,46 @@ export function vercelCredentials(env: NodeJS.ProcessEnv = process.env) {
   return token && teamId && projectId ? { token, teamId, projectId } : undefined
 }
 
+/** Vercel keeps a snapshot for at least a day; this is how long an unanswered question waits. */
+export const SNAPSHOT_TTL_MS = 7 * 24 * 3_600_000
+
+const wrap = (sandbox: Sandbox): IsolatedSandbox => ({
+  backend: new VercelBackend(sandbox),
+  stop: async () => void (await sandbox.stop()),
+  snapshot: async () => (await sandbox.snapshot({ expiration: SNAPSHOT_TTL_MS })).snapshotId,
+})
+
 /** Needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`, or else `VERCEL_OIDC_TOKEN`. */
 export function vercelSandboxProvider(): IsolatedSandboxProvider {
   return {
     name: 'vercel-sandbox',
     async create(spec): Promise<IsolatedSandbox> {
-      const sandbox = await Sandbox.create({
-        ...vercelCredentials(),
-        // A persistent sandbox (the SDK default) snapshots its disk, about 1 GB, every time it
-        // stops. Twenty runs filled the Hobby plan's snapshot storage and every create then failed
-        // with 402. A run is disposable; resuming one (M4) takes an explicit snapshot instead.
-        persistent: false,
-        timeout: spec.timeoutMs,
-        networkPolicy: networkPolicyFor(spec),
-      })
-      return { backend: new VercelBackend(sandbox), stop: async () => void (await sandbox.stop()) }
+      return wrap(
+        await Sandbox.create({
+          ...vercelCredentials(),
+          // A persistent sandbox (the SDK default) snapshots its disk, about 1 GB, every time it
+          // stops. Twenty runs filled the Hobby plan's snapshot storage and every create then
+          // failed with 402. A run is disposable; a run that waits for an answer takes an explicit
+          // snapshot instead (`snapshot` above).
+          persistent: false,
+          timeout: spec.timeoutMs,
+          networkPolicy: networkPolicyFor(spec),
+        }),
+      )
+    },
+    async restore(snapshotId, spec): Promise<IsolatedSandbox> {
+      return wrap(
+        await Sandbox.create({
+          ...vercelCredentials(),
+          persistent: false,
+          timeout: spec.timeoutMs,
+          networkPolicy: networkPolicyFor(spec),
+          source: { type: 'snapshot', snapshotId },
+        }),
+      )
+    },
+    async deleteSnapshot(snapshotId) {
+      await (await Snapshot.get({ snapshotId, ...vercelCredentials() })).delete()
     },
   }
 }

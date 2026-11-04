@@ -1,8 +1,8 @@
 import { provisionRepo, type SandboxBackend } from '@theokit/agents/sandbox'
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { evidence, review as reviewTable, task } from '../db/schema'
+import { evidence, question as questionTable, review as reviewTable, task } from '../db/schema'
 import type { FetchLike, GithubApp } from '../github/app'
 import { fetchIssue as defaultFetchIssue, type Issue } from '../github/issues'
 import { createGithubApi, type GithubApi } from '../github/pulls'
@@ -21,11 +21,13 @@ import {
 } from './review'
 import {
   createIsolatedSandbox,
+  restoreIsolatedSandbox,
   type EgressRule,
   type IsolatedSandbox,
   type IsolatedSandboxProvider,
 } from './sandbox'
 import { enterStage } from './stages'
+import { answerPrompt, parseQuestion, questionComment } from './waiting'
 
 type HarnessChoice = CodingHarness | ((labels: string[]) => CodingHarness)
 
@@ -54,6 +56,7 @@ export type RunTaskDeps = {
 export type RunResult =
   | { status: 'done'; branch: string; sha: string; pullRequestUrl: string; summary: string }
   | { status: 'handoff'; branch: string; sha: string; pullRequestUrl: string; reason: string }
+  | { status: 'waiting'; question: string }
   | { status: 'failed'; stage: string; error: string }
 
 const INSTANCE = 'work'
@@ -62,6 +65,13 @@ const COMMIT_MESSAGE = '/tmp/factory-commit-message.txt'
 
 /** Thrown inside a stage so the run can report which stage failed. */
 class StageFailure extends Error {}
+
+/** The agent asked a person something and the run is parked: not a failure, and not done. */
+class Asked extends Error {
+  constructor(readonly result: RunResult) {
+    super('waiting for an answer')
+  }
+}
 
 /** The agent's account is out of quota. It is recorded as such, because waiting fixes it. */
 class QuotaStop extends StageFailure {
@@ -82,11 +92,48 @@ class QuotaStop extends StageFailure {
  * and a comment on the issue hand the work to a person. Each stage is recorded as the run enters
  * it, the sandbox is always stopped, and a failure is recorded as `failed` with its reason.
  */
-export async function runTask(
+export function runTask(
   deps: RunTaskDeps,
   taskId: number,
   /** Aborts when the job's lease expires: the sandbox is stopped so the run does not outlive it. */
   signal?: AbortSignal,
+): Promise<RunResult> {
+  return execute(deps, taskId, signal)
+}
+
+type Parked = typeof questionTable.$inferSelect
+
+/**
+ * Continues a task that was waiting for an answer: a new sandbox from the snapshot taken when the
+ * question was asked, the agent's own session resumed with the answer, and then the same checks,
+ * review and attempts as any run. It takes the answer exactly once, so two workers cannot both
+ * resume one question.
+ */
+export async function resumeTask(
+  deps: RunTaskDeps,
+  taskId: number,
+  signal?: AbortSignal,
+): Promise<RunResult> {
+  const [claimed] = await deps.db
+    .update(questionTable)
+    .set({ resumedAt: new Date() })
+    .where(
+      and(
+        eq(questionTable.taskId, taskId),
+        isNotNull(questionTable.answer),
+        isNull(questionTable.resumedAt),
+      ),
+    )
+    .returning()
+  if (!claimed) throw new Error(`task ${taskId} has no answered question to resume`)
+  return execute(deps, taskId, signal, claimed)
+}
+
+async function execute(
+  deps: RunTaskDeps,
+  taskId: number,
+  signal: AbortSignal | undefined,
+  resuming?: Parked,
 ): Promise<RunResult> {
   const { db } = deps
   const [row] = await db.select().from(task).where(eq(task.id, taskId))
@@ -118,7 +165,7 @@ export async function runTask(
     const agents = reviewer.name === builder.name ? [builder] : [builder, reviewer]
     const agentEgress = mergeEgress(await Promise.all(agents.map((a) => a.egress())))
 
-    sandbox = await createIsolatedSandbox(deps.sandbox, {
+    const spec = {
       timeoutMs: timeouts.sandboxMs,
       egress: [
         {
@@ -130,29 +177,41 @@ export async function runTask(
         ...agentEgress,
         { domain: 'registry.npmjs.org' },
       ],
-    })
+    }
+    sandbox = resuming
+      ? await restoreIsolatedSandbox(deps.sandbox, resuming.snapshotId, spec)
+      : await createIsolatedSandbox(deps.sandbox, spec)
+    // The snapshot did its job; keeping it only costs storage.
+    if (resuming) await deps.sandbox.deleteSnapshot?.(resuming.snapshotId).catch(() => {})
     const { backend } = sandbox
     const running = sandbox
     signal?.addEventListener('abort', () => void running.stop().catch(() => {}), { once: true })
 
     // The SDK's provisioner clones with `--` and the `ext::` transport off. `HEAD` is the
-    // repository's default branch, so the factory does not need to know its name.
-    const { repoDir } = await provisionRepo(backend, {
-      repoUrl: `https://github.com/${row.repository}.git`,
-      ref: 'HEAD',
-      instanceId: INSTANCE,
-    })
+    // repository's default branch, so the factory does not need to know its name. A resumed run
+    // already has its checkout, on its branch, inside the snapshot.
+    const repoDir = resuming
+      ? resuming.repoDir
+      : (
+          await provisionRepo(backend, {
+            repoUrl: `https://github.com/${row.repository}.git`,
+            ref: 'HEAD',
+            instanceId: INSTANCE,
+          })
+        ).repoDir
     const git = `GIT_CONFIG_GLOBAL=${GITCONFIG} git -C ${repoDir}`
-    const baseSha = (await must(backend, `git -C ${repoDir} rev-parse HEAD`)).stdout.trim()
-    await must(backend, `git -C ${repoDir} checkout -b ${branch}`)
+    const baseSha = resuming
+      ? resuming.baseSha
+      : (await must(backend, `git -C ${repoDir} rev-parse HEAD`)).stdout.trim()
+    if (!resuming) await must(backend, `git -C ${repoDir} checkout -b ${branch}`)
     for (const agent of agents) await agent.prepare?.(backend)
 
     const api = deps.githubApi ?? createGithubApi()
     const checks = deps.checks ?? DEFAULT_CHECKS
     const title = `${oneLine(issue.title)} (#${row.issueNumber})`
-    let cost = 0
+    let cost = resuming?.costUsd ?? 0
     let summary = ''
-    let sessionId: string | undefined
+    let sessionId: string | undefined = resuming?.sessionId
 
     /** Runs the agent, books its cost and session, and turns a quota stop or a failure into an error. */
     const settle = (result: HarnessResult, who: CodingHarness): HarnessResult => {
@@ -164,6 +223,49 @@ export async function runTask(
         )
       }
       return result
+    }
+
+    /**
+     * Parks the run. The disk is saved to a snapshot (which stops the sandbox), the question goes to
+     * the issue, and everything a resume needs is stored. Never returns: the run ends here.
+     */
+    const ask = async (text: string, attempt: number): Promise<never> => {
+      if (!running.snapshot || !deps.sandbox.restore) {
+        throw new StageFailure(
+          `the agent asked a question, but ${deps.sandbox.name} cannot save a sandbox to wait: ${text}`,
+        )
+      }
+      if (!sessionId) {
+        throw new StageFailure(`the agent asked a question but gave no session to resume: ${text}`)
+      }
+      current = 'waiting'
+      const snapshotId = await running.snapshot()
+      let commentId: string
+      try {
+        commentId = await api.commentOnIssue(
+          row.repository,
+          token,
+          row.issueNumber,
+          questionComment(taskId, text),
+        )
+      } catch (error) {
+        await deps.sandbox.deleteSnapshot?.(snapshotId).catch(() => {})
+        throw error
+      }
+      await db.insert(questionTable).values({
+        taskId,
+        body: text,
+        commentId,
+        snapshotId,
+        sessionId,
+        harness: builder.name,
+        repoDir,
+        baseSha,
+        attempt,
+        costUsd: cost,
+      })
+      await enterStage(db, taskId, 'waiting', { question: text, commentId, attempt, costUsd: cost })
+      throw new Asked({ status: 'waiting', question: text })
     }
 
     /** Commits whatever the agent left in the checkout and pushes it. Returns the new head. */
@@ -195,28 +297,52 @@ export async function runTask(
     }
 
     current = 'build'
-    await enterStage(db, taskId, 'build', { harness: builder.name, attempt: 1 })
-    const first = settle(
-      await builder.run(backend, {
-        cwd: repoDir,
-        timeoutMs: timeouts.agentMs,
-        prompt: buildPrompt({
-          repo: row.repository,
-          issueNumber: row.issueNumber,
-          title: issue.title,
-          body: issue.body,
-          branch,
+    let first: HarnessResult
+    if (resuming) {
+      if (!builder.resume) throw new StageFailure(`${builder.name} cannot resume a session`)
+      await enterStage(db, taskId, 'build', {
+        harness: builder.name,
+        attempt: resuming.attempt,
+        resumed: true,
+      })
+      first = settle(
+        await builder.resume(backend, resuming.sessionId, {
+          cwd: repoDir,
+          timeoutMs: timeouts.agentMs,
+          prompt: answerPrompt(
+            resuming.body,
+            resuming.answer ?? '',
+            resuming.answeredBy ?? 'a person',
+          ),
         }),
-      }),
-      builder,
-    )
+        builder,
+      )
+    } else {
+      await enterStage(db, taskId, 'build', { harness: builder.name, attempt: 1 })
+      first = settle(
+        await builder.run(backend, {
+          cwd: repoDir,
+          timeoutMs: timeouts.agentMs,
+          prompt: buildPrompt({
+            repo: row.repository,
+            issueNumber: row.issueNumber,
+            title: issue.title,
+            body: issue.body,
+            branch,
+          }),
+        }),
+        builder,
+      )
+    }
     if (!first.ok) throw new StageFailure(`the agent did not finish: ${first.summary}`)
+    const firstQuestion = parseQuestion(first.summary)
+    sessionId = first.sessionId ?? sessionId
+    if (firstQuestion) await ask(firstQuestion, resuming?.attempt ?? 1)
     summary = first.summary
-    sessionId = first.sessionId
-    let sha = await commitAndPush(title, {
+    let sha = await commitAndPush(resuming ? `${title}: continue after an answer` : title, {
       costUsd: first.costUsd,
       agentSummary: first.summary.slice(0, 4_000),
-      sessionId: first.sessionId,
+      sessionId,
     })
 
     /** Sends the work back to the builder's own session with what was wrong, and pushes the fix. */
@@ -233,8 +359,10 @@ export async function runTask(
       )
       if (!result.ok)
         throw new StageFailure(`the agent did not finish the rework: ${result.summary}`)
-      summary = result.summary
       sessionId = result.sessionId ?? sessionId
+      const asked = parseQuestion(result.summary)
+      if (asked) await ask(asked, attempt)
+      summary = result.summary
       return commitAndPush(`${title}: address feedback (attempt ${attempt})`, {
         attempt,
         rework: true,
@@ -297,7 +425,7 @@ export async function runTask(
       return merged
     }
 
-    for (let attempt = 1; ; attempt++) {
+    for (let attempt = resuming?.attempt ?? 1; ; attempt++) {
       const canRework = attempt < MAX_ATTEMPTS && builder.resume !== undefined && !!sessionId
 
       current = 'verify'
@@ -427,6 +555,7 @@ export async function runTask(
       return { status: 'handoff', branch, sha, pullRequestUrl: pull.url, reason }
     }
   } catch (error) {
+    if (error instanceof Asked) return error.result
     const message = signal?.aborted
       ? 'the job lease expired before the run finished'
       : error instanceof Error

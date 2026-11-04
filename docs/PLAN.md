@@ -66,7 +66,7 @@ local inspecionado em 2026-11-03.
 | M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                                                                                   | Concluído    |
 | M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                            | Em andamento |
 | M4a   | Review independente + rodadas                                  | Checks vermelhos ou review que pede mudanças devolvem o trabalho à mesma sessão do agente; após três tentativas, PR em rascunho e comentário na issue; um PR só abre com evidência verde e aprovação | Concluído    |
-| M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Não iniciado |
+| M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Concluído    |
 | M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel                                                                                     | Não iniciado |
 | M6    | Merge + vigia                                                  | `trial` registra “would merge” sem executar; `auto` faz merge preso ao SHA; main vermelha gera PR de revert                                                                                          | Não iniciado |
 | M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Não iniciado |
@@ -257,6 +257,18 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   específico, o Claude real retomou a mesma sessão, acrescentou o teste, houve o segundo commit, o
   segundo review aprovou e o PR #10 abriu. Falta rodar o revisor em outro agente (Codex), por causa
   da cota da conta.
+- M4b: o agente que não pode seguir sem uma decisão termina a resposta com `QUESTION:`. A fábrica salva
+  o disco do sandbox num snapshot, comenta a pergunta na issue, grava tudo o que uma retomada precisa
+  em `question` e põe a task em `waiting`. Um cron (`poll-answers`, a cada minuto) lê os comentários
+  novos, aceita só os de quem tem acesso de escrita (`OWNER`, `MEMBER`, `COLLABORATOR`) e enfileira
+  `resume-task` na mesma transação que grava a resposta. A retomada restaura o snapshot, apaga-o e
+  retoma a mesma sessão do agente com a resposta. Contra os serviços reais, o Claude Code recebeu uma
+  issue que mandava perguntar antes de escrever, fez uma pergunta com quatro opções, o snapshot e a
+  restauração rodaram na Vercel, a resposta veio de um comentário real do dono do repositório, e a
+  mesma sessão implementou o pedido e abriu o PR #12. Um snapshot custa cerca de 800 MB, restaurá-lo
+  levou menos de um segundo, e nenhum sobrou depois. O cron enfileira por um backend de jobs
+  compartilhado, porque job e cron não têm `ctx.queue`
+  ([usetheokit/theokit#1150](https://github.com/usetheokit/theokit/issues/1150)).
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

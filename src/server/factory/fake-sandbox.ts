@@ -28,6 +28,9 @@ export class FakeSandbox implements IsolatedSandboxProvider {
   readonly name = 'fake'
   specs: SandboxSpec[] = []
   stopped = 0
+  snapshots: string[] = []
+  restored: string[] = []
+  deleted: string[] = []
   readonly backend: FakeBackend
 
   constructor(answer: (command: string) => Reply | undefined = () => ({})) {
@@ -41,6 +44,20 @@ export class FakeSandbox implements IsolatedSandboxProvider {
       stop: async () => {
         this.stopped += 1
       },
+      snapshot: async () => {
+        const id = `snap-${this.snapshots.length + 1}`
+        this.snapshots.push(id)
+        return id
+      },
     }
+  }
+
+  async restore(snapshotId: string, spec: SandboxSpec): Promise<IsolatedSandbox> {
+    this.restored.push(snapshotId)
+    return this.create(spec)
+  }
+
+  async deleteSnapshot(snapshotId: string): Promise<void> {
+    this.deleted.push(snapshotId)
   }
 }

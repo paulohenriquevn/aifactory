@@ -1,10 +1,8 @@
 import { config } from 'theokit'
-import { PostgresJobBackend } from 'theokit/server/jobs'
-import { getStorageManager } from 'theokit/server/storage'
 
-import { createPool } from './src/server/db'
-import { DATABASE_NAME, storageFromEnv } from './src/server/db/config'
+import { storageFromEnv } from './src/server/db/config'
 import { LOCK_SECONDS } from './src/server/factory/lease'
+import { jobBackend } from './src/server/jobs/backend'
 
 /**
  * The project has two surfaces, and one of them is the whole backend.
@@ -38,7 +36,7 @@ export default config()
 function jobsFromEnv(): TheoConfigJobs | undefined {
   if (!storageFromEnv()) return undefined
   return {
-    backend: PostgresJobBackend.fromStorageManager(getStorageManager(), DATABASE_NAME, createPool),
+    backend: jobBackend(),
     worker: { enabled: true, pollIntervalMs: 2_000, batchSize: 1, lockSeconds: LOCK_SECONDS },
   }
 }
