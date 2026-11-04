@@ -56,6 +56,9 @@ const PERMISSIONS = {
   checks: 'write',
 } as const
 
+/** How long the list of reachable repositories is kept. */
+const LIST_TTL_MS = 15_000
+
 /** A token with less than this left is replaced rather than handed out. */
 const REFRESH_MARGIN_MS = 60_000
 
@@ -69,6 +72,7 @@ export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks
   const fetchImpl: FetchLike = options.fetch ?? ((url, init) => fetch(url, init))
   const now = options.now ?? Date.now
   const cache = new Map<string, InstallationToken>()
+  let listed: { at: number; repositories: ReachableRepository[] } | undefined
 
   function appJwt(): string {
     const seconds = Math.floor(now() / 1000)
@@ -95,9 +99,12 @@ export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks
 
   return {
     async installationRepositories() {
-      const listed = await call('/app/installations')
-      if (!listed.ok) throw new Error(`GitHub answered ${listed.status} listing installations`)
-      const installations = (await listed.json()) as { id: number }[]
+      // The list is walked page by page, so a page that asks twice in a row is answered from memory.
+      if (listed && now() - listed.at < LIST_TTL_MS) return listed.repositories
+      const installed = await call('/app/installations')
+      if (!installed.ok)
+        throw new Error(`GitHub answered ${installed.status} listing installations`)
+      const installations = (await installed.json()) as { id: number }[]
       const found: ReachableRepository[] = []
       for (const { id } of installations) {
         // Reading names and visibility needs metadata and nothing else, and this token never writes.
@@ -135,7 +142,9 @@ export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks
           if (body.repositories.length < 100) break
         }
       }
-      return found.sort((a, b) => a.fullName.localeCompare(b.fullName))
+      const repositories = found.sort((a, b) => a.fullName.localeCompare(b.fullName))
+      listed = { at: now(), repositories }
+      return repositories
     },
     async hookDeliveries({ pages = 3 } = {}) {
       const found: HookDelivery[] = []

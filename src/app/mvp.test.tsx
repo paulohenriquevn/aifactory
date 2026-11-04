@@ -7,7 +7,7 @@ import type { PlanView, RepositoriesView, SetupReport } from '../shared/panel'
 
 import { NewJob } from './components/NewJob'
 import PlansPage from './plans/page'
-import PlanPage from './plans/[id]/page'
+import PlanPage from './plans/[planId]/page'
 import RepositoriesPage from './repositories/page'
 import SetupPage from './setup/page'
 
@@ -403,7 +403,7 @@ describe('a plan', () => {
     render(
       <MemoryRouter initialEntries={[`/plans/${id}`]}>
         <Routes>
-          <Route path="/plans/:id" element={<PlanPage />} />
+          <Route path="/plans/:planId" element={<PlanPage />} />
         </Routes>
       </MemoryRouter>,
     )

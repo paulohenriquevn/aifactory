@@ -359,6 +359,45 @@ Cloudflare Tunnel só deixa passar `/api/webhooks/github` e `/api/health`, entã
 alcançável pela internet. Expô-lo exigiria mudar essa regra do túnel, e isso só deve acontecer com o
 login já atrás de algo mais forte que um token (por exemplo, o Cloudflare Access).
 
+## Do zero ao primeiro PR, pelo painel
+
+Tudo o que o dono precisa fazer acontece no painel (`http://localhost:3000`) e nas páginas do GitHub que
+ele abre. Nenhum comando.
+
+1. **Setup.** A página lista o que falta: a GitHub App, o webhook, o segredo do webhook, o sandbox, ao
+   menos um agente (Claude Code ou Codex) e um repositório habilitado. Cada linha diz o que está
+   errado e leva à página que conserta. Nunca mostra um segredo, só se ele existe e o que o paga.
+2. **Dar acesso aos repositórios.** O link "Give the App access to more repositories" abre a página da
+   App no GitHub, onde o dono escolhe quais repositórios ela alcança. Voltando ao painel, "Refresh"
+   lista o que ela alcança. A permissão é do GitHub, não nossa.
+3. **Habilitar.** Alcançar um repositório não é licença para trabalhar nele: a App está instalada em
+   todos os da conta, e uma issue com a label `factory` num repositório não habilitado é gravada e
+   ignorada (`repository_disabled`). Habilitar é o clique em Enable na página Repositories. Só quem a
+   App alcança pode ser habilitado.
+4. **Ajustar por projeto.** Para cada repositório habilitado: os checks (um por linha, `nome: comando`,
+   vazio roda `npm test`), os domínios extras que o sandbox pode alcançar (o GitHub, o agente e o
+   registro do npm já estão abertos; um projeto Python pede `pypi.org` e `files.pythonhosted.org`), o
+   agente que constrói e o que revisa, e até onde vai o release. Isso vale para toda execução daquele
+   repositório. Uma label `harness:` ou `reviewer:` na issue ainda vence o padrão do repositório.
+5. **Planejar.** Em Plans, o dono escolhe o repositório e escreve o objetivo. Um agente lê o repositório
+   num sandbox (sem escrever nada) e devolve até dez issues independentes, cada uma com critérios de
+   aceite. O dono edita os títulos e as descrições, tira ou reordena itens e decide: "Create issues"
+   cria as issues sob um milestone do GitHub sem a label, e "Create issues and start" já põe a label
+   `factory`, o que começa o trabalho. Uma issue criada sem a label pode ser iniciada depois, com
+   "Start this one".
+6. **Abrir um job avulso.** O botão "New job" do quadro abre uma issue (com a label, se "Start now"
+   estiver marcado). A task nasce pelo webhook da própria issue, o mesmo caminho de qualquer outra.
+7. **Acompanhar e entregar.** O quadro, a caixa de entrada e o detalhe de cada task seguem como antes:
+   o dono aprova, pede mudanças e faz o release.
+
+As issues de um plano devem ser independentes porque cada uma parte da branch padrão: uma que dependa
+de outra ainda não mergeada vai conflitar. O agente que planeja recebe essa regra no prompt, e o dono
+revisa antes de criar. Um plano que falha (o agente não terminou ou a cota acabou) diz o motivo na
+própria página, e nada é criado no GitHub até o dono pedir.
+
+O GitHub Projects não é usado. Uma App de GitHub não alcança um Project de uma conta pessoal (só os de
+uma organização, com outra permissão), e o quadro do painel já mostra o estado de cada trabalho.
+
 ## Claude Code
 
 O harness roda `claude -p --output-format json --dangerously-skip-permissions` com o prompt lido
@@ -573,7 +612,10 @@ como texto.
 ## Limites conhecidos
 
 - Uma task por issue. Repor a label não reexecuta, nem depois de uma task que falhou por falta de resposta.
-- Um repositório de cada vez no sentido de operação: não há onboarding de repositórios.
+- A GitHub App ainda é criada por um comando (`scripts/github-app-setup.mjs`), uma vez. Instalar e escolher
+  os repositórios é pelo GitHub, e habilitar e configurar é pelo painel.
+- O planejador só lê o repositório que a App alcança e devolve texto: ele não vê issues antigas, PRs nem o
+  histórico, só o código da branch padrão.
 - O Postgres reinicia sozinho se o processo dele morrer, mas o reinício no boot depende do Docker estar
   habilitado (está) e não foi exercitado com um reboot de verdade.
 - O vigia só olha o commit de merge de cada release, não a `main` inteira.

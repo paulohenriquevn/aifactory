@@ -27,12 +27,20 @@ export function releaseModeFromEnv(env: NodeJS.ProcessEnv): ReleaseMode {
   return mode
 }
 
-/** The App, signed with its own key. */
+const apps = new Map<string, ReturnType<typeof createGithubApp>>()
+
+/**
+ * The App, signed with its own key. One per credential, so what it remembers (a token for a
+ * repository, the list of repositories it reaches) is shared by everything that asks.
+ */
 export function githubAppFromEnv(env: NodeJS.ProcessEnv = process.env) {
-  return createGithubApp({
-    appId: required(env, 'GITHUB_APP_ID'),
-    privateKey: readFileSync(required(env, 'GITHUB_APP_PRIVATE_KEY_PATH'), 'utf8'),
-  })
+  const appId = required(env, 'GITHUB_APP_ID')
+  const keyPath = required(env, 'GITHUB_APP_PRIVATE_KEY_PATH')
+  const known = apps.get(`${appId}:${keyPath}`)
+  if (known) return known
+  const created = createGithubApp({ appId, privateKey: readFileSync(keyPath, 'utf8') })
+  apps.set(`${appId}:${keyPath}`, created)
+  return created
 }
 
 export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {

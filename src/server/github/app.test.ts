@@ -302,3 +302,47 @@ describe('the repositories the App reaches', () => {
     ).rejects.toThrow('GitHub answered 500 listing repositories')
   })
 })
+
+describe('how long the repository list is kept', () => {
+  it('answers a second ask from memory, and asks GitHub again after fifteen seconds', async () => {
+    let clock = 1_000_000
+    let installationCalls = 0
+    const fetch: FetchLike = async (url) => {
+      if (url.endsWith('/app/installations')) {
+        installationCalls += 1
+        return Response.json([{ id: 5 }])
+      }
+      if (url.endsWith('/access_tokens')) return Response.json({ token: 't' }, { status: 201 })
+      return Response.json({
+        repositories: [{ full_name: 'o/a', private: false, default_branch: 'main' }],
+      })
+    }
+    const github = app(fetch, { now: () => clock })
+
+    await github.installationRepositories()
+    await github.installationRepositories()
+    expect(installationCalls).toBe(1)
+
+    clock += 14_999
+    await github.installationRepositories()
+    expect(installationCalls).toBe(1)
+
+    clock += 2
+    await github.installationRepositories()
+    expect(installationCalls).toBe(2)
+  })
+
+  it('does not keep a failure', async () => {
+    let fail = true
+    const fetch: FetchLike = async (url) => {
+      if (url.endsWith('/app/installations')) {
+        return fail ? Response.json({}, { status: 502 }) : Response.json([])
+      }
+      return Response.json({})
+    }
+    const github = app(fetch)
+    await expect(github.installationRepositories()).rejects.toThrow('502')
+    fail = false
+    expect(await github.installationRepositories()).toEqual([])
+  })
+})

@@ -26,9 +26,13 @@ const fromServer = (items: PlanItemView[]): Edit[] =>
     locked: i.issueNumber !== null,
   }))
 
-/** One plan: the agent's draft to edit, and the buttons that turn it into issues. */
+/**
+ * One plan: the agent's draft to edit, and the buttons that turn it into issues. The folder is
+ * `[planId]` and not `[id]` because two pages with the same dynamic folder name break the build
+ * (usetheokit/theokit#1151).
+ */
 export default function PlanPage() {
-  const id = Number(useParams().id)
+  const id = Number(useParams().planId)
   const resource = useResource<PlanView>(`/api/panel/plans/${id}`, { everyMs: 3_000 })
   const plan = resource.data
   const [edits, setEdits] = useState<Edit[]>()

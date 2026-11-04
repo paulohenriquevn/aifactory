@@ -20,6 +20,21 @@ vermelhos, abre um PR de revert que a fábrica nunca mergeia. A página Health d
 por execução e o que o supervisor achou de errado (`stalled`, `orphaned`), e o CI cobra CRAP, duplicação
 e mutação.
 
+## Primeiros passos, pelo painel
+
+Com o servidor no ar (`scripts/install-services.sh`, ou `pnpm dev`), abra `http://localhost:3000` e entre
+com o token de `FACTORY_PANEL_TOKEN`.
+
+1. A página Setup mostra o que falta e leva à página que conserta.
+2. Em Repositories, o link "Give the App access to more repositories" abre o GitHub, onde você escolhe
+   o que a App alcança. Habilite os repositórios em que a fábrica pode trabalhar e ajuste os checks, os
+   domínios e os agentes de cada um.
+3. Em Plans, escreva o objetivo, revise as issues que o agente propõe e crie-as (já iniciadas ou não).
+4. O botão New job no quadro abre uma issue avulsa.
+5. Acompanhe no quadro, aprove, peça mudanças e faça o release.
+
+Detalhes em [como a fábrica funciona](docs/como-funciona.md#do-zero-ao-primeiro-pr-pelo-painel).
+
 ## Rodando localmente
 
 ```bash

@@ -75,6 +75,10 @@ reads that file, not a convention.
   so `installationToken(repo)` is the only way to get one, and it always names the repository.
 - **`src/server/jobs/` holds only jobs.** `theokit build` treats every file there as one and fails the
   build on a helper; a test guards it. Shared helpers live in `factory/`.
+- **A labelled issue is not permission.** The App is installed on every repository of the account, so ingestion
+  turns an issue into a task only in a repository the owner enabled in the panel (`repository.enabled`).
+  Listing what the App reaches is the one place a token is not limited to a repository, and it can only read
+  metadata.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;
   `.policy('public')` is for the webhook and the probes. The panel never goes through the tunnel.
 - **The factory delivers by pre-release and never releases on its own account.** A pre-release (a tag

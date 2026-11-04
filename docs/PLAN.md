@@ -643,6 +643,21 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   compartilhada. Ficou para o M10 o filtro por repositório (não há o que filtrar com um só). O
   `RunStatusPill` e o `AgentTimeline` não entraram: o primeiro trocaria o texto dos estágios que os
   testes e a pessoa já leem, e o segundo espera o transcript do M12.
+- MVP, tudo pelo painel (2026-11-04, a pedido do Paulo: instalar por interfaces, dar acesso aos repositórios,
+  criar planos e issues pelo próprio sistema). Entrou o essencial do M10 e do M11. Páginas novas: Setup (o
+  que falta, com o link que conserta), Repositories (o que a App alcança, habilitar e ajustar checks,
+  domínios, agentes e release por projeto), Plans (um agente lê o repositório e propõe até dez issues
+  independentes, que o dono edita e cria sob um milestone, já iniciadas ou não) e o botão New job. Antes,
+  rotular uma issue em qualquer repositório da conta gastava dinheiro: agora só vale em um habilitado
+  (ADR 0005). Os ajustes por repositório são lidos por toda execução (checks no lugar do `npm test`,
+  domínios extras no firewall, agentes e modo de release). Ao vivo, só pela interface (Chrome sem cabeça
+  no painel): Setup, habilitar o playground, um plano de 2 issues por US$ 0,04, criar e iniciar, e em 80
+  segundos dois PRs com pré-release; "New job" abriu a issue #48 sem a label e disse que esperava. O
+  playground foi limpo depois. Dois achados pelo caminho: o TheoKit quebra o build com duas páginas de
+  mesma pasta dinâmica (`tasks/[id]` e `plans/[id]`, usetheokit/theokit#1151; a pasta virou
+  `[planId]`), e a lista de 120 repositórios levava 4,5 segundos, então ficou guardada por 15. O GitHub
+  Projects ficou de fora: uma App não alcança o Project de uma conta pessoal. Falta do M10: a receita
+  `.factory/setup.json` (hoje o dono ajusta no painel) e o primeiro projeto que não seja o playground.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 
