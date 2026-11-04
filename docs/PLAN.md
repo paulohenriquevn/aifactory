@@ -104,7 +104,17 @@ Claude: placeholder no ambiente e firewall assinando. Com login do ChatGPT é ma
 invalidar o dele. O marshal-factory resolve com um login dedicado por sandbox simultâneo
 (`CODEX_HOME` separado, "slots"). A fábrica deve fazer o mesmo, e talvez renovar o token no host
 e assinar pelo firewall. A OpenAI recomenda não usar login de assinatura em repositório público.
-A primeira tarefa do M3b é um spike que responde isso com um sandbox real.
+Spike de 2026-11-04 em um sandbox real, com egress só para `registry.npmjs.org` e `chatgpt.com`:
+o `codex` 0.166 instalou por npm e aceitou um `auth.json` de placeholder (id_token e access_token
+com a assinatura trocada, refresh_token falso). O firewall assinou `Authorization: Bearer` e o
+servidor respondeu com a mensagem de limite de uso da conta e a hora da liberação, o que só
+acontece com a conta autenticada. O access token dura 10 dias e o de renovação pode ficar só no
+host. A conexão por WebSocket falha com "Attack attempt detected" (o cabeçalho não é injetado no
+upgrade) e o Codex cai para HTTPS depois de cinco tentativas; desligar o WebSocket na configuração
+evita a demora. Uma execução completa não foi possível, porque a conta estava sem cota até
+2026-11-05 11:48. Isso confirma que o sinal de limite atingido precisa virar espera. O login
+usado foi copiado de `~/.codex`; um login dedicado em `~/.codex-factory-1` evita que o Codex do
+Paulo e a fábrica invalidem o token um do outro quando um deles o renovar.
 
 **Assinatura: limites e termos.** O uso do binário oficial `claude -p` com a assinatura do
 próprio dono, nos próprios repositórios, está dentro dos termos lidos em 2026-11-04. Uma fábrica
