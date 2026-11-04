@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { Sandbox } from '@vercel/sandbox'
+import { describe, expect, it, vi } from 'vitest'
 
-import { networkPolicyFor, vercelCredentials } from './vercel-sandbox'
+import { networkPolicyFor, vercelCredentials, vercelSandboxProvider } from './vercel-sandbox'
 
 describe('networkPolicyFor', () => {
   it('lists exactly the destinations of the spec, with credentials only where given', () => {
@@ -33,5 +34,20 @@ describe('vercelCredentials', () => {
     ).toEqual({ token: 't', teamId: 'team', projectId: 'prj' })
     expect(vercelCredentials({ VERCEL_TOKEN: 't' })).toBeUndefined()
     expect(vercelCredentials({ VERCEL_OIDC_TOKEN: 'oidc' })).toBeUndefined()
+  })
+})
+
+describe('vercelSandboxProvider', () => {
+  it('creates a sandbox that does not snapshot its disk when it stops', async () => {
+    const create = vi
+      .spyOn(Sandbox, 'create')
+      .mockResolvedValue({ stop: async () => {} } as unknown as Awaited<
+        ReturnType<typeof Sandbox.create>
+      >)
+
+    await vercelSandboxProvider().create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ persistent: false }))
+    create.mockRestore()
   })
 })

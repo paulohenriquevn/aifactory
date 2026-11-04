@@ -76,6 +76,10 @@ export function vercelSandboxProvider(): IsolatedSandboxProvider {
     async create(spec): Promise<IsolatedSandbox> {
       const sandbox = await Sandbox.create({
         ...vercelCredentials(),
+        // A persistent sandbox (the SDK default) snapshots its disk, about 1 GB, every time it
+        // stops. Twenty runs filled the Hobby plan's snapshot storage and every create then failed
+        // with 402. A run is disposable; resuming one (M4) takes an explicit snapshot instead.
+        persistent: false,
         timeout: spec.timeoutMs,
         networkPolicy: networkPolicyFor(spec),
       })

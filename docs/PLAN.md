@@ -93,10 +93,18 @@ arquivo.
 - um nome registrado. O harness de uma task vem de configuração, de um label da issue (como
   `harness:codex`) ou do padrão, e o reviewer do M4 pode usar um agente diferente do builder.
 
-**Claude Code.** Chave de API ou token de `claude setup-token`, sempre pelo firewall. Pendente:
-rodar com um token real para confirmar que o CLI envia o header que a regra substitui. Se não
-enviar, o fallback é o token dentro do sandbox, como faz o marshal-factory, e isso precisa de
-decisão registrada aqui, porque rebaixa o isolamento.
+**Claude Code.** Chave de API ou token de `claude setup-token`, sempre pelo firewall. Verificado em
+2026-11-04 com um token real: o CLI envia o bearer, o firewall o substitui e o sandbox só tem
+o placeholder. A fábrica completa (issue, agente, push, checks, PR) rodou por assinatura, com
+custo equivalente de US$ 0,04. O token vem de `claude setup-token`, que mostra na página do
+navegador um código `código#estado` para colar de volta no terminal; só então imprime o token
+`sk-ant-oat01-`. Não há necessidade do fallback com o token dentro do sandbox.
+
+**Snapshots do Vercel Sandbox.** O SDK cria sandboxes persistentes por padrão e tira um snapshot
+de cerca de 1 GB a cada `stop()`. Vinte execuções (16,8 GB) esgotaram o armazenamento do plano
+Hobby, e todo `create` passou a falhar com 402 até os snapshots serem apagados. O adapter agora
+cria com `persistent: false`, e o M4 deve tirar um snapshot explícito, com validade curta, só
+quando uma task entrar em `waiting`.
 
 **Codex.** `codex exec` sem interface. Com chave (`OPENAI_API_KEY`) o caminho é o mesmo do
 Claude: placeholder no ambiente e firewall assinando. Com login do ChatGPT é mais difícil: o
