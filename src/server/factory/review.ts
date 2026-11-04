@@ -43,7 +43,7 @@ Use "changes" when there is any blocker or major finding. Use "approve" only whe
 const SEVERITIES: Severity[] = ['blocker', 'major', 'minor']
 
 /** Every top-level `{...}` in the text, balanced and string-aware, in order. */
-function jsonObjects(text: string): string[] {
+export function jsonObjects(text: string): string[] {
   const found: string[] = []
   for (let start = text.indexOf('{'); start !== -1; start = text.indexOf('{', start + 1)) {
     let depth = 0

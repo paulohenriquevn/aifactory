@@ -41,6 +41,8 @@ import {
   StageFailure,
   type StoredCheck,
 } from './run-support'
+import type { RepoConfig } from './repo-config'
+import { labelsWithRepoChoice } from './repo-config'
 import type { Parked, RunResult, RunTaskDeps } from './run-types'
 import {
   createIsolatedSandbox,
@@ -59,6 +61,8 @@ export type RunContext = {
   taskId: number
   row: typeof task.$inferSelect
   issue: Issue
+  /** What the owner set for this repository. */
+  repo: RepoConfig
   token: string
   api: GithubApi
   branch: string
@@ -118,7 +122,7 @@ export class Run {
     return `${oneLine(this.c.issue.title)} (#${this.c.row.issueNumber})`
   }
   private get checks() {
-    return this.c.deps.checks ?? DEFAULT_CHECKS
+    return this.c.repo.checks ?? this.c.deps.checks ?? DEFAULT_CHECKS
   }
 
   /**
@@ -128,7 +132,7 @@ export class Run {
    */
   static async open(c: RunContext): Promise<Run> {
     const { deps, issue, resuming } = c
-    const labels = issue.labels ?? []
+    const labels = labelsWithRepoChoice(issue.labels ?? [], c.repo)
     const builder = typeof deps.harness === 'function' ? deps.harness(labels) : deps.harness
     const chosen = typeof deps.reviewer === 'function' ? deps.reviewer(labels) : deps.reviewer
     const reviewer = chosen ?? builder
@@ -146,6 +150,7 @@ export class Run {
         },
         ...agentEgress,
         { domain: 'registry.npmjs.org' },
+        ...c.repo.egress.map((domain) => ({ domain })),
       ],
     }
     const sandbox = resuming
@@ -590,11 +595,12 @@ export class Run {
     const actor = `agent:${this.reviewer.name}`
     const record = (note: string) =>
       deps.db.insert(decision).values({ taskId, kind: 'would_release', sha, note })
-    if (deps.releaseMode === 'trial') {
+    const mode = this.c.repo.releaseMode ?? deps.releaseMode
+    if (mode === 'trial') {
       await record(`${actor}: checks green and the review approved`)
       return undefined
     }
-    if (deps.releaseMode !== 'auto') return undefined
+    if (mode !== 'auto') return undefined
     try {
       return (
         await release({ db: deps.db, github: deps.github, api }, taskId, { bump: 'patch', actor })

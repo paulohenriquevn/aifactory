@@ -41,6 +41,12 @@ export default function RootLayout() {
                   <NavLink to="/" end className={link}>
                     Board
                   </NavLink>
+                  <NavLink to="/plans" className={link}>
+                    Plans
+                  </NavLink>
+                  <NavLink to="/repositories" className={link}>
+                    Repositories
+                  </NavLink>
                   <NavLink to="/inbox" className={link}>
                     Inbox{waiting > 0 ? ` (${waiting})` : ''}
                   </NavLink>

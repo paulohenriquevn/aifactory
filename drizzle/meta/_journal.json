@@ -71,6 +71,13 @@
       "when": 1793814230105,
       "tag": "0009_webhook_redelivery",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793820630429,
+      "tag": "0010_repositories_and_plans",
+      "breakpoints": true
     }
   ]
 }

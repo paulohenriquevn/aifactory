@@ -1,11 +1,15 @@
 import { getDb } from '../db'
 import { jobBackend } from '../factory/job-backend'
-import { inTransactionForRun } from '../factory/resume-queue'
+import { githubAppFromEnv } from '../factory/deps'
+import { harnessRegistry } from '../factory/harness-registry'
+import { inTransactionForPlan, inTransactionForRun } from '../factory/resume-queue'
 import { vercelSandboxProvider } from '../factory/vercel-sandbox'
 import { createGithubApp } from '../github/app'
+import { createIssuesApi } from '../github/issues-api'
 import { createGithubApi } from '../github/pulls'
 
 import { ActionRefused, type ActionDeps } from './actions'
+import type { WorkDeps } from './work'
 import { readFileSync } from 'node:fs'
 
 /** What a panel action needs, read when it runs, like the factory's own dependencies. */
@@ -27,6 +31,19 @@ export function actionDeps(env: NodeJS.ProcessEnv = process.env): ActionDeps {
       await jobBackend().enqueue({ name: 'resume-task', input, idempotencyKey: key })
     },
     deleteSnapshot: (snapshotId) => vercelSandboxProvider().deleteSnapshot!(snapshotId),
+  }
+}
+
+/** What the repositories, jobs and plans pages need, read when they run. */
+export function workDeps(env: NodeJS.ProcessEnv = process.env): WorkDeps {
+  const slug = env.GITHUB_APP_SLUG
+  return {
+    db: getDb(),
+    github: githubAppFromEnv(env),
+    issues: createIssuesApi(),
+    installUrl: slug ? `https://github.com/apps/${slug}/installations/new` : undefined,
+    agents: Object.keys(harnessRegistry(env)),
+    inTransaction: inTransactionForPlan,
   }
 }
 

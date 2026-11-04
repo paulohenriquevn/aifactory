@@ -13,7 +13,10 @@
     "src/server/factory/watch.ts:1-40",
     "src/server/factory/waiting.ts:1-90",
     "src/shared/panel.ts",
-    "src/app/lib/format.ts"
+    "src/app/lib/format.ts",
+    "src/server/factory/plan.ts:1-76",
+    "src/server/factory/repo-config.ts:20-23","src/server/factory/repo-config.ts:40-60",
+    "src/server/panel/work.ts:44-80"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

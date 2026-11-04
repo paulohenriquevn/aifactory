@@ -1,9 +1,11 @@
 import { Button, EmptyState, Sheet } from '@usetheo/ui'
+import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
 import type { TaskCard } from '../shared/panel'
 
 import { Board, TaskList } from './components/Board'
+import { NewJob, type CreatedJob } from './components/NewJob'
 import { TaskDetailView } from './components/TaskDetail'
 import { useEscape } from './lib/keys'
 import { useResource } from './lib/live'
@@ -16,6 +18,7 @@ import { useView } from './lib/view'
 export default function Page() {
   const tasks = useResource<{ tasks: TaskCard[] }>('/api/panel/tasks')
   const [view, setView] = useView()
+  const [opened, setOpened] = useState<CreatedJob>()
   const [params, setParams] = useSearchParams()
   const open = Number(params.get('task')) || undefined
   const full = params.get('full') === '1'
@@ -41,20 +44,39 @@ export default function Page() {
     <>
       <div className="mb-4 flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Board</h1>
-        <div className="flex gap-1" role="group" aria-label="View">
-          {(['board', 'list'] as const).map((v) => (
-            <Button
-              key={v}
-              size="sm"
-              variant={view === v ? 'primary' : 'secondary'}
-              aria-pressed={view === v}
-              onClick={() => setView(v)}
-            >
-              {v === 'board' ? 'Board' : 'List'}
-            </Button>
-          ))}
+        <div className="flex items-center gap-2">
+          <NewJob onCreated={setOpened} />
+          <div className="flex gap-1" role="group" aria-label="View">
+            {(['board', 'list'] as const).map((v) => (
+              <Button
+                key={v}
+                size="sm"
+                variant={view === v ? 'primary' : 'secondary'}
+                aria-pressed={view === v}
+                onClick={() => setView(v)}
+              >
+                {v === 'board' ? 'Board' : 'List'}
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
+      {opened ? (
+        <p role="status" className="mb-3 text-sm text-foreground">
+          Opened{' '}
+          <a
+            href={opened.url}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            issue #{opened.number}
+          </a>
+          {opened.started
+            ? '. The factory picks it up in a moment.'
+            : '. It waits until you start it.'}
+        </p>
+      ) : null}
       {tasks.error ? <p className="text-sm text-destructive">{tasks.error}</p> : null}
       {tasks.data ? (
         tasks.data.tasks.length === 0 ? (
@@ -62,7 +84,11 @@ export default function Page() {
             title="No tasks yet"
             description={
               <>
-                Put the <code>factory</code> label on an issue and it shows up here.
+                Put the <code>factory</code> label on an issue and it shows up here. New here?{' '}
+                <Link to="/setup" className="underline underline-offset-2">
+                  Check the setup
+                </Link>
+                .
               </>
             }
           />

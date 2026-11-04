@@ -271,3 +271,60 @@ export const webhookRedelivery = pgTable('webhook_redelivery', {
   attempts: integer('attempts').notNull().default(0),
   lastAt: timestamp('last_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+/**
+ * A repository the owner has let the factory work in. The GitHub App is installed on every
+ * repository of the account, so being reachable is not permission: only a row with `enabled` makes a
+ * labelled issue become a task. The columns after `enabled` are what the owner sets per project, and
+ * an empty one means the factory's default.
+ */
+export const repository = pgTable('repository', {
+  id: serial('id').primaryKey(),
+  fullName: text('full_name').notNull().unique(),
+  enabled: boolean('enabled').notNull().default(false),
+  /** The checks a commit must pass: `[{ name, command }]`. Empty means `npm test`. */
+  checks: jsonb('checks').$type<{ name: string; command: string }[]>(),
+  /** Domains the sandbox may reach besides GitHub, the agent and the npm registry. */
+  egress: jsonb('egress').$type<string[]>().notNull().default([]),
+  /** The agent that builds and the one that reviews, when not the factory's default. */
+  harness: text('harness'),
+  reviewer: text('reviewer'),
+  releaseMode: text('release_mode', { enum: ['manual', 'trial', 'auto'] }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * A plan: a goal the owner wrote for a repository, broken by an agent into issues. The owner edits the
+ * items and decides which become real issues on GitHub, and whether they start at once.
+ */
+export const plan = pgTable('plan', {
+  id: serial('id').primaryKey(),
+  repository: text('repository').notNull(),
+  goal: text('goal').notNull(),
+  status: text('status', { enum: ['planning', 'ready', 'failed', 'created'] })
+    .notNull()
+    .default('planning'),
+  summary: text('summary').notNull().default(''),
+  error: text('error'),
+  costUsd: real('cost_usd').notNull().default(0),
+  /** The GitHub milestone the issues were gathered under, once created. */
+  milestoneNumber: integer('milestone_number'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const planItem = pgTable('plan_item', {
+  id: serial('id').primaryKey(),
+  planId: integer('plan_id')
+    .notNull()
+    .references(() => plan.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  selected: boolean('selected').notNull().default(true),
+  issueNumber: integer('issue_number'),
+  issueUrl: text('issue_url'),
+  /** True once the `factory` label is on the issue, which is what starts the work. */
+  started: boolean('started').notNull().default(false),
+})

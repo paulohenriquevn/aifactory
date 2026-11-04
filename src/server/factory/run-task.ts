@@ -5,6 +5,7 @@ import { fetchIssue as defaultFetchIssue } from '../github/issues'
 import { createGithubApi } from '../github/pulls'
 
 import { Asked, QuotaStop } from './run-support'
+import { loadRepoConfig } from './repo-config'
 import { Run, type RunState } from './run'
 import type { Parked, RunResult, RunTaskDeps } from './run-types'
 import { enterStage } from './stages'
@@ -90,6 +91,7 @@ async function execute(
       taskId,
       row,
       issue,
+      repo: await loadRepoConfig(db, row.repository),
       token,
       api: deps.githubApi ?? createGithubApi(),
       branch: `factory/${row.issueNumber}`,

@@ -212,3 +212,62 @@ export type InboxItem = {
 
 /** Sent over the event stream whenever a task enters a stage. */
 export type StreamEvent = { type: 'stage'; taskId: number; stage: Stage; at: string }
+
+export type RepositoryView = {
+  fullName: string
+  private: boolean
+  defaultBranch: string
+  /** False for a repository the owner enabled that the GitHub App no longer reaches. */
+  reachable: boolean
+  enabled: boolean
+  checks: { name: string; command: string }[] | null
+  egress: string[]
+  harness: string | null
+  reviewer: string | null
+  releaseMode: 'manual' | 'trial' | 'auto' | null
+}
+
+export type RepositoriesView = {
+  repositories: RepositoryView[]
+  /** The agents the owner can pick for a repository. */
+  agents: string[]
+  /** Where GitHub lets the owner choose which repositories the App reaches. */
+  installUrl: string | null
+  /** Set when GitHub could not be asked, so the list is only what is already saved. */
+  error: string | null
+}
+
+export type PlanItemView = {
+  id: number
+  position: number
+  title: string
+  body: string
+  selected: boolean
+  issueNumber: number | null
+  issueUrl: string | null
+  started: boolean
+}
+
+export type PlanView = {
+  id: number
+  repository: string
+  goal: string
+  status: 'planning' | 'ready' | 'failed' | 'created'
+  summary: string
+  error: string | null
+  costUsd: number
+  milestoneNumber: number | null
+  createdAt: string
+  items: PlanItemView[]
+}
+
+export type SetupItem = {
+  id: string
+  label: string
+  status: 'ok' | 'warn' | 'missing'
+  detail: string
+  /** Where to go to fix it, when the fix is a page on GitHub or here. */
+  link?: { label: string; href: string }
+}
+
+export type SetupReport = { ready: boolean; items: SetupItem[] }

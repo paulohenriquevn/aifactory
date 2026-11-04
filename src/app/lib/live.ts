@@ -46,7 +46,11 @@ export type Resource<T> = {
  */
 export function useResource<T>(
   path: string,
-  { only, everyMs = 10_000 }: { only?: number; everyMs?: number } = {},
+  {
+    only,
+    everyMs = 10_000,
+    stream = true,
+  }: { only?: number; everyMs?: number; stream?: boolean } = {},
 ): Resource<T> {
   const [data, setData] = useState<T>()
   const [error, setError] = useState<string>()
@@ -73,18 +77,21 @@ export function useResource<T>(
     reload()
     const timer = setInterval(reload, everyMs)
     let pending: ReturnType<typeof setTimeout> | undefined
-    const unsubscribe = subscribe((event) => {
-      if (only !== undefined && event.taskId !== only) return
-      clearTimeout(pending)
-      pending = setTimeout(reload, 150)
-    })
+    // A page that asks GitHub for its data does not reload on every stage change of every task.
+    const unsubscribe = stream
+      ? subscribe((event) => {
+          if (only !== undefined && event.taskId !== only) return
+          clearTimeout(pending)
+          pending = setTimeout(reload, 150)
+        })
+      : () => {}
     return () => {
       alive.current = false
       clearInterval(timer)
       clearTimeout(pending)
       unsubscribe()
     }
-  }, [reload, only, everyMs])
+  }, [reload, only, everyMs, stream])
 
   return { data, error, signedOut, reload }
 }

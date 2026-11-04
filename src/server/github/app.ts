@@ -23,6 +23,15 @@ export type AppHooks = {
   redeliver(deliveryId: string): Promise<void>
 }
 
+/** A repository the App can reach, which is not the same as one the factory may work in. */
+export type ReachableRepository = { fullName: string; private: boolean; defaultBranch: string }
+
+/** The one place a token is not limited to a repository: it can only read the list of them. */
+export type AppRepos = {
+  /** Repositories the installation covers, and where to install or change that. */
+  installationRepositories(): Promise<ReachableRepository[]>
+}
+
 export type GithubApp = {
   /**
    * A short-lived token limited to one repository. There is no way to ask for a token without a
@@ -55,7 +64,7 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const base64url = (value: unknown) =>
   Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url')
 
-export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks {
+export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks & AppRepos {
   const { appId, privateKey, apiUrl = 'https://api.github.com' } = options
   const fetchImpl: FetchLike = options.fetch ?? ((url, init) => fetch(url, init))
   const now = options.now ?? Date.now
@@ -85,6 +94,49 @@ export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks
   }
 
   return {
+    async installationRepositories() {
+      const listed = await call('/app/installations')
+      if (!listed.ok) throw new Error(`GitHub answered ${listed.status} listing installations`)
+      const installations = (await listed.json()) as { id: number }[]
+      const found: ReachableRepository[] = []
+      for (const { id } of installations) {
+        // Reading names and visibility needs metadata and nothing else, and this token never writes.
+        const minted = await call(`/app/installations/${id}/access_tokens`, {
+          method: 'POST',
+          body: JSON.stringify({ permissions: { metadata: 'read' } }),
+        })
+        if (minted.status !== 201) {
+          throw new Error(`GitHub answered ${minted.status} minting a listing token`)
+        }
+        const { token } = (await minted.json()) as { token: string }
+        for (let page = 1; page <= 10; page++) {
+          const response = await fetchImpl(
+            `${apiUrl}/installation/repositories?per_page=100&page=${page}`,
+            {
+              headers: {
+                accept: 'application/vnd.github+json',
+                'x-github-api-version': '2022-11-28',
+                authorization: `Bearer ${token}`,
+              },
+            },
+          )
+          if (!response.ok)
+            throw new Error(`GitHub answered ${response.status} listing repositories`)
+          const body = (await response.json()) as {
+            repositories: { full_name: string; private: boolean; default_branch: string }[]
+          }
+          for (const r of body.repositories) {
+            found.push({
+              fullName: r.full_name,
+              private: r.private,
+              defaultBranch: r.default_branch,
+            })
+          }
+          if (body.repositories.length < 100) break
+        }
+      }
+      return found.sort((a, b) => a.fullName.localeCompare(b.fullName))
+    },
     async hookDeliveries({ pages = 3 } = {}) {
       const found: HookDelivery[] = []
       let path: string | undefined = '/app/hook/deliveries?per_page=100'

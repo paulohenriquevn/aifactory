@@ -26,7 +26,11 @@ export type IngressDecision =
   | { accept: false; code: IgnoreCode; reason: string; repository: string | null }
 
 export type IgnoreCode =
-  'event_not_issues' | 'payload_invalid' | 'action_not_relevant' | 'label_not_factory'
+  | 'event_not_issues'
+  | 'payload_invalid'
+  | 'action_not_relevant'
+  | 'label_not_factory'
+  | 'repository_disabled'
 
 /**
  * Decides whether a GitHub delivery asks for work. An issue is taken when it gets the `factory`

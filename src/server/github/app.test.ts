@@ -228,3 +228,77 @@ describe('the delivery log', () => {
     )
   })
 })
+
+describe('the repositories the App reaches', () => {
+  const repo = (name: string, priv = false) => ({
+    full_name: name,
+    private: priv,
+    default_branch: 'main',
+  })
+
+  function fakeInstall(pages: { repositories: ReturnType<typeof repo>[] }[]) {
+    const calls: { url: string; auth: string; body: unknown }[] = []
+    const fetch: FetchLike = async (url, init) => {
+      const headers = Object.fromEntries(Object.entries(init?.headers ?? {}))
+      calls.push({
+        url,
+        auth: headers.authorization,
+        body: init?.body && JSON.parse(String(init.body)),
+      })
+      if (url.endsWith('/app/installations')) return Response.json([{ id: 77 }])
+      if (url.endsWith('/access_tokens'))
+        return Response.json({ token: 'ghs_list' }, { status: 201 })
+      const page = Number(new URL(url).searchParams.get('page'))
+      return Response.json(pages[page - 1] ?? { repositories: [] })
+    }
+    return { fetch, calls }
+  }
+
+  it('lists them sorted, asks for a token that can only read metadata, and never names a repository', async () => {
+    const { fetch, calls } = fakeInstall([
+      { repositories: [repo('o/zeta', true), repo('o/alpha')] },
+    ])
+
+    const found = await app(fetch).installationRepositories()
+
+    expect(found).toEqual([
+      { fullName: 'o/alpha', private: false, defaultBranch: 'main' },
+      { fullName: 'o/zeta', private: true, defaultBranch: 'main' },
+    ])
+    const mint = calls.find((c) => c.url.endsWith('/access_tokens'))
+    expect(mint?.body).toEqual({ permissions: { metadata: 'read' } })
+    expect(calls.find((c) => c.url.includes('/installation/repositories'))?.auth).toBe(
+      'Bearer ghs_list',
+    )
+  })
+
+  it('follows the pages while they are full, and stops at the first that is not', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => repo(`o/r${String(i).padStart(3, '0')}`))
+    const { fetch, calls } = fakeInstall([
+      { repositories: full },
+      { repositories: [repo('o/last')] },
+    ])
+
+    const found = await app(fetch).installationRepositories()
+
+    expect(found).toHaveLength(101)
+    expect(calls.filter((c) => c.url.includes('/installation/repositories'))).toHaveLength(2)
+  })
+
+  it('says what GitHub answered when listing, minting or reading fails', async () => {
+    const failing = (bad: string, status: number): FetchLike => {
+      const ok = fakeInstall([{ repositories: [] }]).fetch
+      return async (url, init) =>
+        url.includes(bad) ? Response.json({}, { status }) : ok(url, init)
+    }
+    await expect(
+      app(failing('/app/installations', 401)).installationRepositories(),
+    ).rejects.toThrow('GitHub answered 401 listing installations')
+    await expect(app(failing('/access_tokens', 403)).installationRepositories()).rejects.toThrow(
+      'GitHub answered 403 minting a listing token',
+    )
+    await expect(
+      app(failing('/installation/repositories', 500)).installationRepositories(),
+    ).rejects.toThrow('GitHub answered 500 listing repositories')
+  })
+})

@@ -20,7 +20,10 @@ beforeAll(async () => {
 })
 
 beforeEach(async () => {
-  await getPool().query('truncate table stage_event, task, ingress restart identity cascade')
+  await getPool().query(
+    'truncate table stage_event, task, ingress, repository restart identity cascade',
+  )
+  await getPool().query("insert into repository (full_name, enabled) values ('paulo/app', true)")
 })
 
 afterAll(() => getStorageManager().dispose())
@@ -167,5 +170,44 @@ describe('GitHub deliveries', () => {
     const statuses = (await Promise.all(results.map((r) => r.json()))) as { status: string }[]
     expect(statuses.map((s) => s.status).sort()).toEqual(['duplicate', 'task_created'])
     expect(await rows()).toEqual({ deliveries: 1, tasks: 1 })
+  })
+})
+
+describe('which repositories may start work', () => {
+  const take = (repo: string, id: string) =>
+    recordDelivery(getDb(), {
+      deliveryId: id,
+      event: 'issues',
+      payload: {
+        action: 'labeled',
+        label: { name: 'factory' },
+        issue: { number: 3, title: 'T', labels: [{ name: 'factory' }] },
+        repository: { full_name: repo },
+      },
+    })
+
+  it('ignores an issue in a repository that was never enabled, and says why', async () => {
+    const result = await take('paulo/other', 'x-1')
+    expect(result).toMatchObject({ status: 'ignored', code: 'repository_disabled' })
+    expect((result as { reason: string }).reason).toContain('paulo/other is not enabled')
+    expect(await getDb().select().from(task)).toEqual([])
+  })
+
+  it('ignores one in a repository that was enabled and then switched off', async () => {
+    await getPool().query("update repository set enabled = false where full_name = 'paulo/app'")
+    expect(await take('paulo/app', 'x-2')).toMatchObject({
+      status: 'ignored',
+      code: 'repository_disabled',
+    })
+  })
+
+  it('takes one in an enabled repository whatever the case GitHub writes the name in', async () => {
+    expect(await take('Paulo/App', 'x-3')).toMatchObject({ status: 'task_created' })
+  })
+
+  it('records the ignored delivery, so the refusal can be found later', async () => {
+    await take('paulo/other', 'x-4')
+    const [row] = await getDb().select().from(ingress).where(eq(ingress.deliveryId, 'x-4'))
+    expect(row).toMatchObject({ outcome: 'ignored', code: 'repository_disabled' })
   })
 })

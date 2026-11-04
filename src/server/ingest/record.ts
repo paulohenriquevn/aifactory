@@ -1,7 +1,7 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { ingress, stageEvent, task } from '../db/schema'
+import { ingress, repository, stageEvent, task } from '../db/schema'
 
 import { decideIngress } from './decide'
 
@@ -20,6 +20,33 @@ export type RecordResult =
   | { status: 'task_exists'; taskId: number }
 
 /**
+ * An issue asking for work in a repository the owner has not enabled is recorded and ignored. The
+ * App is installed on every repository of the account, so the label alone is not permission.
+ */
+async function withRepositoryPermission(
+  tx: Database,
+  decision: ReturnType<typeof decideIngress>,
+): Promise<ReturnType<typeof decideIngress>> {
+  if (!decision.accept) return decision
+  const [allowed] = await tx
+    .select({ id: repository.id })
+    .from(repository)
+    .where(
+      and(
+        sql`lower(${repository.fullName}) = lower(${decision.repository})`,
+        eq(repository.enabled, true),
+      ),
+    )
+  if (allowed) return decision
+  return {
+    accept: false,
+    code: 'repository_disabled',
+    reason: `${decision.repository} is not enabled for the factory: enable it in the panel`,
+    repository: decision.repository,
+  }
+}
+
+/**
  * Records one delivery and, when it asks for work, the task. Both writes are one transaction, so
  * a delivery is never recorded without the task it created. A delivery ID already on file is a
  * redelivery and changes nothing. A second delivery for an issue that already has a task is
@@ -31,9 +58,10 @@ export async function recordDelivery(
   /** Runs inside the transaction once a task exists, so whatever it writes commits or rolls back with it. */
   onTaskCreated?: (taskId: number) => Promise<unknown>,
 ): Promise<RecordResult> {
-  const decision = decideIngress(delivery.event, delivery.payload)
+  const asked = decideIngress(delivery.event, delivery.payload)
 
   return db.transaction(async (tx) => {
+    const decision = await withRepositoryPermission(tx, asked)
     const [row] = await tx
       .insert(ingress)
       .values({

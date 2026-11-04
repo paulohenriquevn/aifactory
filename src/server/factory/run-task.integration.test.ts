@@ -41,7 +41,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -1249,7 +1249,7 @@ describe('runTask waiting for an answer', () => {
 
     const sandbox = new FakeSandbox(changed())
     await getPool().query(
-      'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+      'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
     )
     const id2 = await seedTask()
     const b = await runTask(
@@ -1441,7 +1441,7 @@ describe('release', () => {
   const dependencies = () => ({ db: getDb(), github, api: githubApi })
   const reset = async () => {
     await getPool().query(
-      'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+      'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
     )
     dirty = true
   }
@@ -1676,5 +1676,91 @@ describe('the cost of each execution', () => {
     await runTask(deps(new FakeSandbox(changed()), { harness: silent }), id)
 
     expect((await runsOf(id))[0]).toMatchObject({ harness: 'codex', costUsd: null })
+  })
+})
+
+describe('what the owner set for the repository', () => {
+  const setRepo = (values: string) =>
+    getPool().query(
+      `insert into repository (full_name, enabled, ${values.split('|')[0]}) values ('Paulo/App', true, ${values.split('|')[1]})`,
+    )
+
+  beforeEach(async () => {
+    await getPool().query('truncate table repository restart identity')
+    dirty = true
+  })
+
+  it('runs the checks the owner chose, in place of npm test', async () => {
+    await setRepo(
+      `checks|'[{"name":"unit","command":"pnpm test"},{"name":"types","command":"pnpm typecheck"}]'`,
+    )
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
+    expect(stored.map((e) => e.name).sort()).toEqual(['types', 'unit'])
+    const commands = sandbox.backend.commands.join('\n')
+    expect(commands).toContain('pnpm test')
+    expect(commands).toContain('pnpm typecheck')
+    expect(sandbox.backend.commands.filter((c) => c.endsWith('&& npm test'))).toEqual([])
+  })
+
+  it('opens the sandbox to the extra domains the owner listed, with no credential on them', async () => {
+    await setRepo(`egress|'["pypi.org","files.pythonhosted.org"]'`)
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    await runTask(deps(sandbox), id)
+
+    const byDomain = Object.fromEntries(sandbox.specs[0].egress.map((r) => [r.domain, r.headers]))
+    expect(Object.keys(byDomain)).toEqual(
+      expect.arrayContaining(['pypi.org', 'files.pythonhosted.org', 'registry.npmjs.org']),
+    )
+    expect(byDomain['pypi.org']).toBeUndefined()
+  })
+
+  it('uses the agent the owner set for the repository, and an issue label still wins', async () => {
+    await setRepo(`harness, reviewer|'codex', 'claude-code'`)
+    const seen: string[][] = []
+    const pick = (labels: string[]) => {
+      seen.push(labels)
+      return okHarness
+    }
+    const id = await seedTask()
+    await runTask(deps(new FakeSandbox(changed()), { harness: pick, reviewer: pick }), id)
+    expect(seen[0]).toEqual(expect.arrayContaining(['harness:codex', 'reviewer:claude-code']))
+
+    seen.length = 0
+    await getPool().query('truncate table stage_event, task, ingress restart identity cascade')
+    const second = await seedTask()
+    await runTask(
+      deps(new FakeSandbox(changed()), {
+        harness: pick,
+        reviewer: pick,
+        fetchIssue: async () => ({
+          number: 7,
+          title: 't',
+          body: '',
+          labels: ['harness:claude-code'],
+        }),
+      }),
+      second,
+    )
+    expect(seen[0]).toContain('harness:claude-code')
+    expect(seen[0]).not.toContain('harness:codex')
+  })
+
+  it('lets the repository decide how far a release goes, over the factory default', async () => {
+    await setRepo(`release_mode|'trial'`)
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { releaseMode: 'manual' }), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    const decisions = await getDb().select().from(decision).where(eq(decision.taskId, id))
+    expect(decisions.map((d) => d.kind)).toContain('would_release')
   })
 })

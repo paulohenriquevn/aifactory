@@ -5,6 +5,7 @@ import * as schema from '../db/schema'
 import { jobBackend } from './job-backend'
 
 import type { ActionDeps } from '../panel/actions'
+import type { WorkDeps } from '../panel/work'
 
 import type { PollDeps } from './waiting'
 
@@ -18,6 +19,24 @@ export const inTransaction: PollDeps['inTransaction'] = async (work) => {
           name: 'resume-task',
           input: { taskId, questionId },
           idempotencyKey: `resume-${questionId}`,
+        })
+      }),
+    )
+  } finally {
+    client.release()
+  }
+}
+
+/** The same for a plan: its row and the `plan-run` job that has an agent read the repository commit together. */
+export const inTransactionForPlan: WorkDeps['inTransaction'] = async (work) => {
+  const client = await getPool().connect()
+  try {
+    return await drizzle(client, { schema }).transaction((tx) =>
+      work(tx as never, async (planId) => {
+        await jobBackend().enqueueInTransaction(client, {
+          name: 'plan-run',
+          input: { planId },
+          idempotencyKey: `plan-${planId}`,
         })
       }),
     )
