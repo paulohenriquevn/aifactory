@@ -13,8 +13,12 @@ single-tenant, com suporte a vários projetos.
 ## Decisões acordadas
 
 - GitHub Issues é a fonte inicial; Linear entra depois por adapter.
-- O executor é um CLI externo atrás de uma interface `CodingHarness`: Claude Code
-  headless primeiro, Codex depois.
+- O executor é um CLI externo atrás de uma interface `CodingHarness`. Claude Code e
+  Codex são suportados desde o início; o desenho deve aceitar outros assistentes de
+  código sem mexer no orquestrador (seção "Agentes de código e autenticação").
+- Cada agente paga com uma chave de API ou com a assinatura do dono (Paulo aceitou o
+  risco em 2026-11-04). Em qualquer dos modos o segredo fica com a fábrica e o
+  firewall do sandbox o injeta; só um fallback documentado coloca um token dentro.
 - O isolamento é fornecido por um `SandboxProvider` na nuvem. Sem isolamento, a
   execução é recusada; ambiente e acesso de saída usam allowlists.
 - A dependência do TheoKit vem do npm publicado, sem link para o checkout local.
@@ -54,20 +58,77 @@ Princípios:
 Os marcos abaixo recuperam a proposta da sessão; os estados refletem o código
 local inspecionado em 2026-11-03.
 
-| Marco | Entrega                                                        | Critério de aceite                                                                                                                  | Estado       |
-| ----- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                            | Concluído    |
-| M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                  | Concluído    |
-| M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                      | Concluído    |
-| M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                  | Concluído    |
-| M4    | Review + `waiting`                                             | Reprovação retorna ao build; após três rodadas, encaminha ao humano. Pergunta vira comentário na issue e resposta retoma a execução | Não iniciado |
-| M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel                    | Não iniciado |
-| M6    | Merge + vigia                                                  | `trial` registra “would merge” sem executar; `auto` faz merge preso ao SHA; main vermelha gera PR de revert                         | Não iniciado |
-| M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                     | Não iniciado |
+| Marco | Entrega                                                        | Critério de aceite                                                                                                                                                                                | Estado       |
+| ----- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                                                                                          | Concluído    |
+| M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                                                                                | Concluído    |
+| M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                                                                                    | Concluído    |
+| M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                                                                                | Concluído    |
+| M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                         | Não iniciado |
+| M4    | Review + `waiting`                                             | Reprovação retorna ao build; após três rodadas, encaminha ao humano. Pergunta vira comentário na issue e resposta retoma a execução da mesma sessão do agente, num sandbox restaurado de snapshot | Não iniciado |
+| M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel                                                                                  | Não iniciado |
+| M6    | Merge + vigia                                                  | `trial` registra “would merge” sem executar; `auto` faz merge preso ao SHA; main vermelha gera PR de revert                                                                                       | Não iniciado |
+| M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                   | Não iniciado |
 
 As aprovações de ferramentas com efeitos externos seguem a convenção do
 `AGENTS.md`. A interação entre essa regra e o futuro modo `auto` precisa ser
 explicitada antes do M6.
+
+## Agentes de código e autenticação
+
+Estado em 2026-11-04: só o Claude Code roda, por chave de API (testado ao vivo) ou por
+assinatura (`CLAUDE_CODE_OAUTH_TOKEN`, coberto por testes de unidade e ainda sem teste ao
+vivo). O objetivo é Claude Code e Codex desde o início, e um terceiro agente deve custar um
+arquivo.
+
+**Contrato do harness.** `CodingHarness` hoje só tem `run`. Para suportar vários agentes e o
+`waiting` do M4, cada harness passa a declarar:
+
+- `egress(credential)`: as regras de firewall que assinam as chamadas do agente (Claude: `x-api-key`
+  ou `Authorization: Bearer`; Codex: o mesmo mecanismo contra a API da OpenAI).
+- as variáveis de ambiente com placeholder, para que o CLI se comporte como logado sem receber o
+  segredo.
+- `run` e `resume(sessionId)`: o resultado devolve o `sessionId`, o custo e um sinal de limite de
+  cota atingido, que é espera e não falha.
+- um nome registrado. O harness de uma task vem de configuração, de um label da issue (como
+  `harness:codex`) ou do padrão, e o reviewer do M4 pode usar um agente diferente do builder.
+
+**Claude Code.** Chave de API ou token de `claude setup-token`, sempre pelo firewall. Pendente:
+rodar com um token real para confirmar que o CLI envia o header que a regra substitui. Se não
+enviar, o fallback é o token dentro do sandbox, como faz o marshal-factory, e isso precisa de
+decisão registrada aqui, porque rebaixa o isolamento.
+
+**Codex.** `codex exec` sem interface. Com chave (`OPENAI_API_KEY`) o caminho é o mesmo do
+Claude: placeholder no ambiente e firewall assinando. Com login do ChatGPT é mais difícil: o
+`auth.json` tem token de renovação que rotaciona, e copiar o login do Paulo para um sandbox pode
+invalidar o dele. O marshal-factory resolve com um login dedicado por sandbox simultâneo
+(`CODEX_HOME` separado, "slots"). A fábrica deve fazer o mesmo, e talvez renovar o token no host
+e assinar pelo firewall. A OpenAI recomenda não usar login de assinatura em repositório público.
+A primeira tarefa do M3b é um spike que responde isso com um sandbox real.
+
+**Assinatura: limites e termos.** O uso do binário oficial `claude -p` com a assinatura do
+próprio dono, nos próprios repositórios, está dentro dos termos lidos em 2026-11-04. Uma fábrica
+ligada o dia todo cai numa zona cinzenta de volume, e a Anthropic recomenda chave de API para
+qualquer coisa compartilhada. As regras mudaram várias vezes em 2026 e devem ser relidas antes
+de depender delas. Efeitos para o código: "limite atingido" vira espera; o custo em dólar vira
+valor equivalente e o painel o rotula assim.
+
+**Assumir a sessão do agente.** O marshal-factory roda o T3 Code dentro do sandbox, e o botão
+"Open in T3" gera um token de pareamento de 15 minutos para abrir a sessão no navegador e
+conduzir o agente. O Vercel Sandbox permite isso: o SDK 3.9.1 tem `ports`, `domain(porta)`,
+`snapshot` e `extendTimeout`. Não foi verificado se o T3 roda sem interface nesse sandbox, e a
+regra "TheoKit primeiro" manda ver antes o que o framework já oferece. Quem tiver o link executa
+código no sandbox, que não guarda segredos, então o link deve ser curto e de uso único. A sessão
+no plano Hobby termina em 45 minutos. Fica depois do painel (M5), a menos que o Paulo peça antes.
+
+**Ordem.** M3b (contrato, spike do Codex, spike da assinatura do Claude) antes do M4. O M4 usa
+`resume` para a pergunta e a resposta. O "assumir ao vivo" vem depois do M5.
+
+## Fora do escopo por enquanto, mas decidido que virá
+
+- Vários repositórios com onboarding (hoje, um por vez, pelo GitHub App instalado em todos).
+- Rodar sempre ligado: hoje o servidor e o túnel são processos da sessão de trabalho.
+- Fonte Linear por adapter, depois do GitHub Issues.
 
 ## Base de conhecimento aprovada
 
