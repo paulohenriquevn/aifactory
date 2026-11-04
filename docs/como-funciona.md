@@ -408,8 +408,8 @@ várias vezes em 2026 e devem ser relidas antes de depender delas.
 
 ## Codex
 
-**Estado:** implementado e verificado até a chamada ao modelo. Uma execução que completa uma issue
-ainda não foi vista, porque a conta do ChatGPT usada estava sem cota até 2026-11-05 11:48.
+**Estado:** completa uma issue de ponta a ponta, como construtor e como revisor (verificado em
+2026-11-04, com revisão cruzada com o Claude Code nos dois sentidos).
 
 O que foi verificado numa execução real da fábrica (2026-11-04), com saída apenas para
 `github.com`, `registry.npmjs.org` e `chatgpt.com`:
@@ -459,7 +459,7 @@ tem um login só dela. O access token dura 10 dias. A fábrica o renova no host 
 de 2 dias, e grava o token novo no mesmo arquivo. Se a renovação for recusada, a task diz como
 fazer o login de novo. Cada execução simultânea do Codex por assinatura precisa do seu login
 (`~/.codex-factory-2` e assim por diante); o Claude por token não tem essa restrição. A renovação
-foi coberta por teste de unidade e ainda não foi exercitada contra a OpenAI. A OpenAI recomenda não
+foi coberta por teste de unidade e exercitada contra a OpenAI em 2026-11-04. A OpenAI recomenda não
 usar login de assinatura em repositório público.
 
 ## Escolhendo o agente
@@ -556,5 +556,4 @@ responde `/api/health` mesmo sem as credenciais.
 - A resposta é lida por sondagem a cada minuto, não por evento.
 - O supervisor só reporta; não corrige nada sozinho.
 - Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.
-- O Codex ainda não completou uma issue do início ao fim, por causa da cota da conta usada.
 - A sessão do Vercel Sandbox no plano Hobby termina em 45 minutos.
