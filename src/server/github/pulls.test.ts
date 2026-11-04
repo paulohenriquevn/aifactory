@@ -132,3 +132,134 @@ describe('commentOnIssue', () => {
     ).rejects.toThrow(/403/)
   })
 })
+
+describe('releases', () => {
+  const release = {
+    tag: 'pre/7-abcdef1',
+    sha: 'abcdef1234',
+    name: 'N',
+    body: 'B',
+    prerelease: true,
+  }
+
+  it('creates a pre-release on the commit, marked as one and not as the latest', async () => {
+    const { fetch, calls } = fakeFetch({
+      'POST /releases': {
+        status: 201,
+        body: {
+          id: 4,
+          tag_name: 'pre/7-abcdef1',
+          html_url: 'https://github.com/o/r/releases/tag/pre%2F7-abcdef1',
+        },
+      },
+    })
+
+    const made = await createGithubApi(fetch).createRelease('o/r', 'tok', release)
+
+    expect(made).toEqual({
+      id: 4,
+      tag: 'pre/7-abcdef1',
+      url: 'https://github.com/o/r/releases/tag/pre%2F7-abcdef1',
+    })
+    expect(calls[0].body).toMatchObject({
+      tag_name: 'pre/7-abcdef1',
+      target_commitish: 'abcdef1234',
+      prerelease: true,
+      draft: false,
+      make_latest: 'false',
+    })
+  })
+
+  it('makes a full release the latest one', async () => {
+    const { fetch, calls } = fakeFetch({
+      'POST /releases': { status: 201, body: { id: 5, tag_name: 'v0.1.0', html_url: 'u' } },
+    })
+    await createGithubApi(fetch).createRelease('o/r', 't', {
+      ...release,
+      tag: 'v0.1.0',
+      prerelease: false,
+    })
+    expect(calls[0].body).toMatchObject({ prerelease: false, make_latest: 'true' })
+  })
+
+  it('returns the release a tag already has instead of failing, so delivering twice delivers once', async () => {
+    const { fetch } = fakeFetch({
+      'POST /releases': { status: 422, body: { message: 'already_exists' } },
+      'GET /releases/tags/pre%2F7-abcdef1': {
+        status: 200,
+        body: {
+          id: 4,
+          tag_name: 'pre/7-abcdef1',
+          html_url: 'https://github.com/o/r/releases/tag/pre%2F7-abcdef1',
+        },
+      },
+    })
+    expect(await createGithubApi(fetch).createRelease('o/r', 't', release)).toMatchObject({ id: 4 })
+  })
+
+  it('throws when GitHub refuses for another reason', async () => {
+    const { fetch } = fakeFetch({ 'POST /releases': { status: 403, body: { message: 'nope' } } })
+    await expect(createGithubApi(fetch).createRelease('o/r', 't', release)).rejects.toThrow(/403/)
+  })
+
+  it('reads the latest full release, or nothing when there is none', async () => {
+    const some = fakeFetch({
+      'GET /releases/latest': { status: 200, body: { tag_name: 'v1.2.3' } },
+    })
+    expect(await createGithubApi(some.fetch).latestReleaseTag('o/r', 't')).toBe('v1.2.3')
+    const none = fakeFetch({ 'GET /releases/latest': { status: 404 } })
+    expect(await createGithubApi(none.fetch).latestReleaseTag('o/r', 't')).toBeUndefined()
+  })
+})
+
+describe('pull request state and merge', () => {
+  it('finds the pull request opened from a branch, whatever its state', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls': {
+        status: 200,
+        body: [
+          {
+            number: 9,
+            html_url: 'u',
+            head: { sha: 'abc' },
+            draft: false,
+            state: 'open',
+            merged_at: null,
+          },
+        ],
+      },
+    })
+    expect(await createGithubApi(fetch).findPullRequest('o/r', 't', 'factory/7')).toEqual({
+      number: 9,
+      url: 'u',
+      headSha: 'abc',
+      draft: false,
+      state: 'open',
+      merged: false,
+    })
+    expect(calls[0].url).toContain('state=all')
+    const none = fakeFetch({ 'GET /pulls': { status: 200, body: [] } })
+    expect(
+      await createGithubApi(none.fetch).findPullRequest('o/r', 't', 'factory/7'),
+    ).toBeUndefined()
+  })
+
+  it('pins the merge to the commit that was looked at', async () => {
+    const { fetch, calls } = fakeFetch({
+      'PUT /pulls/9/merge': { status: 200, body: { sha: 'merge1' } },
+    })
+    expect(await createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', 'squash')).toEqual({
+      sha: 'merge1',
+    })
+    expect(calls[0]).toMatchObject({ method: 'PUT', body: { sha: 'abc', merge_method: 'squash' } })
+  })
+
+  it('throws when GitHub refuses the merge, as it does when the head moved', async () => {
+    const { fetch } = fakeFetch({
+      'PUT /pulls/9/merge': { status: 409, body: { message: 'Head branch was modified' } },
+    })
+    await expect(
+      createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
+    ).rejects.toThrow(/409.*Head branch was modified/)
+  })
+})

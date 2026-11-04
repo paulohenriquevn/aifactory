@@ -75,6 +75,10 @@ reads that file, not a convention.
   build on a helper; a test guards it. Shared helpers live in `factory/`.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;
   `.policy('public')` is for the webhook and the probes. The panel never goes through the tunnel.
+- **The factory delivers by pre-release and never releases on its own account.** A pre-release (a tag
+  marked as one, no change to the default branch) is always allowed. A release (merge and final tag)
+  goes through `release()` in `factory/deliver.ts`, with its refusals, and only a person or, in
+  `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it.
 - **Commits carry no co-author trailer.**
 - **Validate at the boundary.** A route validates input with Zod once, then trusts it.
 - **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`

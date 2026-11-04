@@ -25,6 +25,11 @@ const base: TaskCard = {
   createdAt: '2026-11-04T10:00:00Z',
   updatedAt: '2026-11-04T10:05:00Z',
   approved: false,
+  preRelease: {
+    tag: 'pre/7-abcdef1',
+    url: 'https://github.com/paulo/app/releases/tag/pre%2F7-abcdef1',
+  },
+  release: null,
 }
 
 const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
@@ -71,6 +76,7 @@ const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
   ],
   questions: [],
   decisions: [],
+  deliveries: [],
   ...over,
 })
 
@@ -250,6 +256,101 @@ describe('task actions', () => {
   })
 })
 
+describe('releasing from the panel', () => {
+  const noop = () => {}
+
+  it('offers a release for a delivered commit, asks first, and sends the version to bump', async () => {
+    const calls = serve({ 'POST /api/panel/tasks/5/release': { tag: 'v1.3.0' } })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    render(<TaskActions detail={detail()} onDone={noop} />)
+
+    fireEvent.change(screen.getByLabelText('Version bump'), { target: { value: 'minor' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }))
+    expect(calls).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }))
+
+    await waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0]).toMatchObject({
+      url: '/api/panel/tasks/5/release',
+      body: { bump: 'minor' },
+      csrf: '1',
+    })
+    expect(confirm).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Released.'))
+  })
+
+  it('does not offer a release without a pre-release, or once released', () => {
+    const none = detail({ task: { ...base, preRelease: null } })
+    render(<TaskActions detail={none} onDone={noop} />)
+    expect(screen.queryByRole('button', { name: 'Release' })).toBeNull()
+    cleanup()
+    const released = detail({
+      task: {
+        ...base,
+        stage: 'released',
+        column: 'released',
+        release: { tag: 'v0.1.0', url: 'u' },
+      },
+    })
+    const { container } = render(<TaskActions detail={released} onDone={noop} />)
+    expect(container.textContent).toBe('')
+  })
+
+  it('shows the refusal when GitHub or the checks do not allow it', async () => {
+    serve({
+      'POST /api/panel/tasks/5/release': () =>
+        new Response(
+          JSON.stringify({
+            error: 'refused',
+            message: 'the pull request is a draft: mark it ready first',
+          }),
+          { status: 409 },
+        ),
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/is a draft/))
+  })
+
+  it('shows the pre-release and the release on the task page, with who made each', async () => {
+    serve({
+      'GET /api/panel/tasks/5': detail({
+        task: {
+          ...base,
+          release: { tag: 'v0.1.0', url: 'https://github.com/paulo/app/releases/tag/v0.1.0' },
+        },
+        deliveries: [
+          {
+            id: 1,
+            kind: 'prerelease',
+            tag: 'pre/7-abcdef1',
+            url: 'https://x/pre',
+            sha: 'abcdef123456',
+            actor: 'factory',
+            at: '2026-11-04T10:05:00Z',
+          },
+          {
+            id: 2,
+            kind: 'release',
+            tag: 'v0.1.0',
+            url: 'https://x/rel',
+            sha: 'merge0001',
+            actor: 'human',
+            at: '2026-11-04T10:30:00Z',
+          },
+        ],
+      }),
+    })
+    renderTask()
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Deliveries' })).toBeDefined())
+    expect(screen.getByRole('link', { name: 'Release v0.1.0' })).toBeDefined()
+    expect(screen.getByRole('link', { name: /Pre-release pre\/7-abcdef1/ })).toBeDefined()
+    expect(screen.getByText(/by human/)).toBeDefined()
+    expect(screen.getByText(/by factory/)).toBeDefined()
+  })
+})
+
 describe('inbox', () => {
   it('lists what waits for a person with why, and says so when nothing does', async () => {
     const items: InboxItem[] = [
@@ -330,6 +431,13 @@ describe('describing events', () => {
       'a person request changes: rename it',
     )
     expect(line('push' as never, null)).toBe('')
+    expect(line('released' as never, { tag: 'v0.1.0', actor: 'human' })).toBe('v0.1.0 by human')
+    expect(line('released' as never, { actor: 'human', releaseError: 'boom' })).toContain(
+      'merged by human, but the release could not be created: boom',
+    )
+    expect(line('done' as never, { pullRequestUrl: 'u', preRelease: 'pre/7-abcdef1' })).toBe(
+      'u\npre-release pre/7-abcdef1',
+    )
     expect(shortSha(null)).toBe('')
   })
 })

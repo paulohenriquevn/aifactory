@@ -1,10 +1,11 @@
 import { asc, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { decision, evidence, question, review, stageEvent, task } from '../db/schema'
+import { decision, delivery, evidence, question, review, stageEvent, task } from '../db/schema'
 import {
   columnOf,
   type DecisionView,
+  type DeliveryView,
   type EvidenceView,
   type InboxItem,
   type QuestionView,
@@ -40,6 +41,11 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
     .from(decision)
     .where(inArray(decision.taskId, ids))
     .orderBy(asc(decision.id))
+  const delivered = await db
+    .select()
+    .from(delivery)
+    .where(inArray(delivery.taskId, ids))
+    .orderBy(asc(delivery.id))
   const byTask = new Map(activity.map((a) => [a.taskId, a]))
   return rows.map((r) => {
     const seen = byTask.get(r.id)
@@ -58,8 +64,21 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       createdAt: iso(r.createdAt),
       updatedAt: iso(new Date(seen?.last ?? r.createdAt)),
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
+      preRelease: lastDelivery(delivered, r, 'prerelease'),
+      release: lastDelivery(delivered, r, 'release'),
     }
   })
+}
+
+type DeliveryRow = typeof delivery.$inferSelect
+
+/** The latest delivery of a kind for a task. A pre-release counts for the commit the task is at. */
+function lastDelivery(rows: DeliveryRow[], t: TaskRow, kind: 'prerelease' | 'release') {
+  const mine = rows.filter(
+    (d) => d.taskId === t.id && d.kind === kind && (kind === 'release' || d.sha === t.headSha),
+  )
+  const last = mine.at(-1)
+  return last ? { tag: last.tag, url: last.url } : null
 }
 
 /** Every task, newest activity first. */
@@ -72,12 +91,13 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
   const [row] = await db.select().from(task).where(eq(task.id, id))
   if (!row) return undefined
   const [card] = await cards(db, [row])
-  const [events, checks, reviews, questions, decisions] = await Promise.all([
+  const [events, checks, reviews, questions, decisions, deliveries] = await Promise.all([
     db.select().from(stageEvent).where(eq(stageEvent.taskId, id)).orderBy(asc(stageEvent.id)),
     db.select().from(evidence).where(eq(evidence.taskId, id)).orderBy(asc(evidence.id)),
     db.select().from(review).where(eq(review.taskId, id)).orderBy(asc(review.id)),
     db.select().from(question).where(eq(question.taskId, id)).orderBy(asc(question.id)),
     db.select().from(decision).where(eq(decision.taskId, id)).orderBy(asc(decision.id)),
+    db.select().from(delivery).where(eq(delivery.taskId, id)).orderBy(asc(delivery.id)),
   ])
   return {
     task: card,
@@ -122,6 +142,15 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
       kind: d.kind,
       sha: d.sha,
       note: d.note,
+      at: iso(d.at),
+    })),
+    deliveries: deliveries.map((d): DeliveryView => ({
+      id: d.id,
+      kind: d.kind,
+      tag: d.tag,
+      url: d.url,
+      sha: d.sha,
+      actor: d.actor,
       at: iso(d.at),
     })),
   }

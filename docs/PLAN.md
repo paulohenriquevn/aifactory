@@ -25,6 +25,11 @@ single-tenant, com suporte a vários projetos.
 - Usar o máximo possível do TheoKit: verificar funcionalidades e pacotes do
   framework antes de adicionar bibliotecas ou mecanismos próprios. Lacunas devem
   ser registradas no framework antes de adotar um contorno documentado.
+- A fábrica entrega por **pré-release**: é ela que faz a entrega, e pode gerar uma pré-release sempre,
+  sem pedir licença a ninguém (decisão do Paulo em 2026-11-04). Uma pré-release é uma tag, marcada
+  como pré-release no GitHub, sobre o commit com a evidência que o sustenta, e não mexe na branch
+  padrão. A **release** (o merge e a versão final) é a promoção desse trabalho e é gerada por agentes
+  ou por humanos, nunca como efeito colateral da entrega.
 - Commits nunca incluem coautoria.
 
 ## Arquitetura planejada
@@ -68,12 +73,14 @@ local inspecionado em 2026-11-03.
 | M4a   | Review independente + rodadas                                  | Checks vermelhos ou review que pede mudanças devolvem o trabalho à mesma sessão do agente; após três tentativas, PR em rascunho e comentário na issue; um PR só abre com evidência verde e aprovação | Concluído    |
 | M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Concluído    |
 | M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel (local, com um dono)                                                                | Concluído    |
-| M6    | Merge + vigia                                                  | `trial` registra “would merge” sem executar; `auto` faz merge preso ao SHA; main vermelha gera PR de revert                                                                                          | Não iniciado |
+| M6a   | Pré-release e release                                          | A fábrica gera uma pré-release para todo commit com checks verdes que chegou a um PR; um humano (painel) ou um agente (modo `auto`) promove a release, com o merge preso ao SHA entregue             | Concluído    |
+| M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Não iniciado |
 | M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Não iniciado |
 
 As aprovações de ferramentas com efeitos externos seguem a convenção do
-`AGENTS.md`. A interação entre essa regra e o futuro modo `auto` precisa ser
-explicitada antes do M6.
+`AGENTS.md`. A interação com o modo `auto` ficou definida pelo conceito de pré-release: o que a
+fábrica faz sem licença (a pré-release) não mexe na branch padrão, e o que mexe (o release) só começa
+por um humano ou por um veredito de agente no modo `auto`, que é opt-in e vem desligado.
 
 ## Agentes de código e autenticação
 
@@ -286,6 +293,20 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   pedido que não exigia mudança fez a task voltar a `done` com a resposta do agente na issue, em vez de
   falhar. Os testes que escrevem no banco passaram a usar `<nome>_test`, porque apagavam as tasks
   reais. O Tailwind só funciona com `@theokit/ui` instalado, que agora é dependência.
+- M6a: a entrega virou pré-release. Para todo commit com checks verdes que chegou a um PR, aprovado ou
+  entregue a uma pessoa, a fábrica cria uma tag `pre/<issue>-<sha7>`, marcada como pré-release, com os
+  checks, o veredito do review, as tentativas e o custo nas notas. Isso não pede licença e não mexe na
+  `main`; se o GitHub recusar, a task não falha e o motivo fica no estágio. A release é a promoção:
+  `release()` recusa sem pré-release do commit, sem checks verdes, ou com um PR fechado, já mergeado,
+  em rascunho ou que andou, e o merge é fixado ao SHA entregue, então um push no meio faz o GitHub
+  recusar em vez de mergear o que ninguém viu. A versão é a seguinte à da última release (v0.1.0 na
+  primeira). Quem promove é um humano, pelo painel (o clique vale como aprovação), ou um agente: o modo
+  `FACTORY_RELEASE_MODE` é `manual` (padrão, só humanos), `trial` (registra o que um agente teria
+  liberado) ou `auto` (libera um commit com checks verdes e review aprovado). Trabalho entregue a uma
+  pessoa nunca é liberado sozinho. Pelo GitHub e pelo painel reais: uma issue virou PR em 47 segundos, a
+  pré-release `pre/21-df799ca` apareceu apontando para o commit entregue com a `main` intacta, o release
+  pelo painel mergeou, publicou `v0.1.0` como a última versão e levou a task a `released`, e um segundo
+  clique foi recusado. O que falta do plano antigo é o vigia da `main` (M6b).
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

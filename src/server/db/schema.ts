@@ -21,6 +21,7 @@ export const TASK_STAGES = [
   'waiting',
   'pr',
   'done',
+  'released',
   'handoff',
   'failed',
 ] as const
@@ -154,9 +155,32 @@ export const decision = pgTable('decision', {
   taskId: integer('task_id')
     .notNull()
     .references(() => task.id),
-  kind: text('kind', { enum: ['approve', 'request_changes', 'retry'] }).notNull(),
+  kind: text('kind', {
+    enum: ['approve', 'request_changes', 'retry', 'release', 'would_release'],
+  }).notNull(),
   /** The head commit when the person decided. */
   sha: text('sha'),
   note: text('note').notNull().default(''),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * What the factory delivered. A pre-release is the factory's own delivery and it makes one whenever
+ * it has work worth handing over: a tag on the commit with the evidence behind it, marked as a
+ * pre-release, that moves nothing on the default branch. A release is the promotion of that work
+ * (the merge and the final tag), made by a person or by an agent's verdict.
+ */
+export const delivery = pgTable('delivery', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  kind: text('kind', { enum: ['prerelease', 'release'] }).notNull(),
+  tag: text('tag').notNull(),
+  url: text('url').notNull(),
+  /** The commit the tag points at. */
+  sha: text('sha').notNull(),
+  /** `factory`, `human` or `agent:<name>`. */
+  actor: text('actor').notNull(),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })

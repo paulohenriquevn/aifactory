@@ -12,9 +12,11 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string>()
+  const [bump, setBump] = useState<'patch' | 'minor' | 'major'>('patch')
 
   const hasPullRequest = (task.stage === 'done' || task.stage === 'handoff') && !!task.headSha
   const canRetry = task.stage === 'failed' || task.stage === 'handoff'
+  const canRelease = task.stage === 'done' && task.preRelease !== null
 
   async function run(path: string, body?: unknown, done?: string) {
     setBusy(true)
@@ -31,7 +33,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
     }
   }
 
-  if (!hasPullRequest && !canRetry) return null
+  if (!hasPullRequest && !canRetry && !canRelease) return null
 
   return (
     <section aria-label="Actions" className="rounded-lg border border-slate-200 bg-white p-4">
@@ -46,6 +48,36 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
           >
             {task.approved ? 'Approved' : 'Approve this commit'}
           </button>
+        ) : null}
+        {canRelease ? (
+          <span className="flex items-center gap-1">
+            <select
+              aria-label="Version bump"
+              value={bump}
+              onChange={(e) => setBump(e.target.value as typeof bump)}
+              className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              <option value="patch">patch</option>
+              <option value="minor">minor</option>
+              <option value="major">major</option>
+            </select>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Merge the pull request into the default branch and publish a release? This cannot be undone from here.',
+                  )
+                ) {
+                  void run('release', { bump }, 'Released.')
+                }
+              }}
+              className="rounded bg-violet-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              Release
+            </button>
+          </span>
         ) : null}
         {canRetry ? (
           <button

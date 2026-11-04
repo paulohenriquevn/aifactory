@@ -3,7 +3,9 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { Database } from '../db'
 import { decision, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
+import { release as promote, ReleaseRefused } from '../factory/deliver'
 import type { GithubApi } from '../github/pulls'
+import type { Bump } from '../factory/release'
 
 /** A person asked for something the task's state does not allow. The panel shows the message. */
 export class ActionRefused extends Error {
@@ -121,4 +123,19 @@ export async function retry(deps: ActionDeps, taskId: number) {
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
   const decisionId = await requeue(deps, taskId, ['failed', 'handoff'], 'retry', '', row.headSha)
   return { decisionId }
+}
+
+/**
+ * Releases a task from the panel: its pull request is merged and a full release is published. The
+ * click is the approval, so it is recorded as one. Everything the commit must satisfy is checked in
+ * `release`, and a refusal is shown as it is.
+ */
+export async function releaseTask(deps: ActionDeps, taskId: number, bump: Bump) {
+  await load(deps.db, taskId)
+  try {
+    return await promote(deps, taskId, { bump, actor: 'human' })
+  } catch (error) {
+    if (error instanceof ReleaseRefused) throw new ActionRefused(error.message)
+    throw error
+  }
 }

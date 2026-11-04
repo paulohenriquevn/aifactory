@@ -38,7 +38,13 @@ issue com a label "factory"
         v
    check run "success" + pull request com "Closes #<n>"
         |
-        |  (sem aprovação e sem tentativas: PR em rascunho + comentário na issue = handoff)
+        v
+   pré-release no GitHub (a entrega da fábrica)
+        |
+        v  (um humano pelo painel, ou um agente em modo auto)
+   release: merge do PR preso ao SHA + versão final
+
+(sem aprovação e sem tentativas: PR em rascunho + comentário na issue = handoff, e também uma pré-release)
 ```
 
 O agente escreve código. Quem commita, envia, verifica e abre o PR é a fábrica. Uma declaração do
@@ -48,19 +54,20 @@ agente, como "todos os testes passam", nunca vira evidência.
 
 Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `task.stage`.
 
-| Estágio   | O que acontece                                                                                              |
-| --------- | ----------------------------------------------------------------------------------------------------------- |
-| `intake`  | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                   |
-| `sandbox` | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.     |
-| `build`   | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                        |
-| `push`    | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).     |
-| `verify`  | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.     |
-| `review`  | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.      |
-| `waiting` | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.     |
-| `pr`      | Se o portão abriu, cria o check run `aifactory/verify` e o pull request, ou devolve o que já estava aberto. |
-| `done`    | Guarda o SHA, a URL do PR, o número de tentativas e o custo total (construtor mais revisor).                |
-| `handoff` | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.       |
-| `failed`  | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                 |
+| Estágio    | O que acontece                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------- |
+| `intake`   | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                   |
+| `sandbox`  | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.     |
+| `build`    | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                        |
+| `push`     | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).     |
+| `verify`   | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.     |
+| `review`   | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.      |
+| `waiting`  | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.     |
+| `pr`       | Se o portão abriu, cria o check run `aifactory/verify` e o pull request, ou devolve o que já estava aberto. |
+| `done`     | Guarda o SHA, a URL do PR, a pré-release, o número de tentativas e o custo total (construtor e revisor).    |
+| `released` | O PR foi mergeado e a release publicada, por um humano ou pelo veredito de um agente.                       |
+| `handoff`  | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.       |
+| `failed`   | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                 |
 
 Depois de um retrabalho, a task volta a `build` e repete `push`, `verify` e `review`: o histórico mostra cada tentativa.
 
@@ -200,6 +207,42 @@ e o snapshot é apagado.
 Cada snapshot ocupa cerca de 800 MB, e o plano Hobby da Vercel limita o armazenamento. Muitas
 perguntas abertas ao mesmo tempo esgotam esse limite.
 
+## Entrega: pré-release e release
+
+A fábrica entrega por pré-release, e a release é a promoção dessa entrega. São dois passos com donos
+diferentes de propósito.
+
+**Pré-release.** É feita pela fábrica, sempre, sem pedir a ninguém: uma tag `pre/<issue>-<sha7>` sobre o
+commit entregue, marcada como pré-release no GitHub. Ela não mexe na branch padrão, então não há o que
+pedir licença. Nas notas vão os checks que rodaram naquele commit, o veredito do review, as tentativas, o
+custo e o que o agente disse. Cada commit entregue tem a sua tag, e pedir duas vezes a mesma devolve a
+primeira. A fábrica a faz para todo commit com checks verdes que chegou a um PR, inclusive um trabalho
+entregue a uma pessoa (as notas dizem que o revisor não aprovou). Checks vermelhos não geram entrega,
+porque não há o que entregar. Se o GitHub recusar a pré-release, a task não falha: o motivo fica no
+estágio `done`.
+
+**Release.** É a promoção: o PR é mergeado e uma release de verdade (não pré-release) é publicada, com a
+versão seguinte à da última release (`v0.1.0` na primeira, e `patch`, `minor` ou `major` escolhe o que
+sobe). Quem a faz:
+
+- um humano, pelo painel. O clique vale como a aprovação, e o painel pede confirmação;
+- um agente, quando o modo permite. `FACTORY_RELEASE_MODE` é `manual` (padrão: só humanos), `trial` (a
+  fábrica registra que "um agente teria liberado", sem liberar) ou `auto` (a fábrica libera um commit com
+  checks verdes e review aprovado). Trabalho entregue a uma pessoa nunca é liberado sozinho.
+
+`release()` recusa, dizendo por quê, quando:
+
+- a task não está concluída, ou já foi liberada, ou outra liberação está em curso;
+- o commit não tem pré-release ou os checks não estão verdes;
+- o PR não existe, está fechado, já foi mergeado, é um rascunho, ou **andou** para outro commit que não
+  foi entregue.
+
+O merge é fixado ao SHA entregue: se um push cair entre olhar e mergear, o GitHub recusa o merge em vez de
+juntar o que ninguém viu, e a task volta a `done`. Se o merge acontece mas a release não pôde ser criada,
+a task fica `released` com o erro registrado, porque o merge não se desfaz.
+
+O que esta etapa ainda não faz é vigiar a `main` depois do release (M6b).
+
 ## O painel
 
 Uma interface local para ver e conduzir a fábrica. Abre em `http://localhost:3000` e mostra, ao vivo:
@@ -228,7 +271,7 @@ consegue fazer o que a task já não permite.
 Se o agente, ao receber um pedido de mudança, concluir que não há o que mudar (o teste já existia, por
 exemplo), a task volta a `done` e a resposta dele vira um comentário na issue, em vez de falhar.
 
-Aprovar não faz merge. O merge, preso ao SHA aprovado, é o M6.
+Aprovar não faz merge. Quem mergeia é o Release.
 
 **Quem entra.** O painel tem um dono, que entra com o token de `FACTORY_PANEL_TOKEN`. A sessão é um
 cookie criptografado com `FACTORY_PANEL_SECRET` (os dois com pelo menos 32 caracteres, por exemplo
@@ -433,7 +476,7 @@ responde `/api/health` mesmo sem as credenciais.
 - Uma task por issue. Repor a label não reexecuta, nem depois de uma task que falhou por falta de resposta.
 - Um repositório de cada vez no sentido de operação: não há onboarding de repositórios.
 - O servidor e o túnel rodam como processos da sessão de trabalho, sem supervisor.
-- Não há merge. Está no M6.
+- Não há vigia da `main` depois de um release (M6b).
 - O painel é local e tem um dono só, com um token.
 - A resposta é lida por sondagem a cada minuto, não por evento.
 - Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.

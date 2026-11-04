@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { getDb } from '../db'
 import { createGithubApp } from '../github/app'
 
+import type { ReleaseMode } from './deliver'
 import { DEFAULT_HARNESS, harnessRegistry, pickHarness } from './harness-registry'
 import type { RunTaskDeps } from './run-task'
 import { vercelSandboxProvider } from './vercel-sandbox'
@@ -17,6 +18,15 @@ const required = (env: NodeJS.ProcessEnv, name: string): string => {
  * What a run needs, from the environment. It is read when a job starts, not at boot, so the
  * server can come up (and answer liveness and readiness) before every credential is in place.
  */
+/** `manual` unless the environment says otherwise, and an unknown word is an error, not a default. */
+export function releaseModeFromEnv(env: NodeJS.ProcessEnv): ReleaseMode {
+  const mode = env.FACTORY_RELEASE_MODE || 'manual'
+  if (mode !== 'manual' && mode !== 'trial' && mode !== 'auto') {
+    throw new Error(`FACTORY_RELEASE_MODE must be manual, trial or auto, got ${mode}`)
+  }
+  return mode
+}
+
 export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
   const slug = required(env, 'GITHUB_APP_SLUG')
   const registry = harnessRegistry(env)
@@ -37,6 +47,7 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
     }),
     sandbox: vercelSandboxProvider(),
     harness: pick,
+    releaseMode: releaseModeFromEnv(env),
     reviewer: pickReviewer,
     author: { name: `${slug}[bot]`, email: `${slug}[bot]@users.noreply.github.com` },
   }

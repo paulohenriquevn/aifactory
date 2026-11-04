@@ -5,11 +5,27 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
-import { decision, evidence, ingress, question, review, stageEvent, task } from '../db/schema'
+import {
+  decision,
+  delivery,
+  evidence,
+  ingress,
+  question,
+  review,
+  stageEvent,
+  task,
+} from '../db/schema'
 import type { GithubApi } from '../github/pulls'
 import { COLUMNS } from '../../shared/panel'
 
-import { ActionRefused, approve, requestChanges, retry, type ActionDeps } from './actions'
+import {
+  ActionRefused,
+  approve,
+  releaseTask,
+  requestChanges,
+  retry,
+  type ActionDeps,
+} from './actions'
 import { inbox, listTasks, taskDetail } from './queries'
 import { stageStream } from './stream'
 
@@ -19,12 +35,12 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
 
-let delivery = 0
+let seeded = 0
 async function seed(
   stage: string,
   fields: Partial<typeof task.$inferInsert> = {},
@@ -34,7 +50,7 @@ async function seed(
   const [i] = await db
     .insert(ingress)
     .values({
-      deliveryId: `d-${++delivery}`,
+      deliveryId: `d-${++seeded}`,
       event: 'issues',
       payload: {},
       outcome: 'task_created',
@@ -47,8 +63,8 @@ async function seed(
     .values({
       ingressId: i.id,
       repository: 'paulo/app',
-      issueNumber: delivery,
-      issueTitle: `Issue ${delivery}`,
+      issueNumber: seeded,
+      issueTitle: `Issue ${seeded}`,
       stage: stage as never,
       ...fields,
     })
@@ -331,5 +347,55 @@ describe('stageStream', () => {
     const text = await readFrames(response, (t) => t.includes(': ping'))
     abort.abort()
     expect(text).toContain(': ping')
+  })
+})
+
+describe('deliveries on the panel', () => {
+  it('shows the pre-release of the commit the task is at, and the release once there is one', async () => {
+    const id = await seed('done', { headSha: 'sha-2' })
+    const add = (kind: 'prerelease' | 'release', tag: string, sha: string, actor = 'factory') =>
+      getDb()
+        .insert(delivery)
+        .values({ taskId: id, kind, tag, url: `https://x/${tag}`, sha, actor })
+    await add('prerelease', 'pre/1-sha-1', 'sha-1')
+    await add('prerelease', 'pre/1-sha-2', 'sha-2')
+
+    let [card] = await listTasks(getDb())
+    expect(card.preRelease).toEqual({ tag: 'pre/1-sha-2', url: 'https://x/pre/1-sha-2' })
+    expect(card.release).toBeNull()
+
+    await getDb().update(task).set({ headSha: 'sha-3' }).where(eq(task.id, id))
+    ;[card] = await listTasks(getDb())
+    expect(card.preRelease).toBeNull() // the commit it is at now was not delivered
+
+    await getDb().update(task).set({ headSha: 'sha-2', stage: 'released' }).where(eq(task.id, id))
+    await add('release', 'v0.1.0', 'merge1', 'human')
+    ;[card] = await listTasks(getDb())
+    expect(card).toMatchObject({ column: 'released', release: { tag: 'v0.1.0' } })
+
+    const detail = (await taskDetail(getDb(), id))!
+    expect(detail.deliveries.map((d) => [d.kind, d.tag, d.actor])).toEqual([
+      ['prerelease', 'pre/1-sha-1', 'factory'],
+      ['prerelease', 'pre/1-sha-2', 'factory'],
+      ['release', 'v0.1.0', 'human'],
+    ])
+  })
+
+  it('does not count a released task as waiting for a person', async () => {
+    await seed('released', { headSha: 'abc' }, [{ stage: 'released' }])
+    expect(await inbox(getDb())).toEqual([])
+  })
+
+  it('turns a refused release into a refusal the panel can show', async () => {
+    const id = await seed('build')
+    const deps = {
+      db: getDb(),
+      github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
+      api: {} as never,
+      inTransaction: async () => undefined as never,
+    } as ActionDeps
+    await expect(releaseTask(deps, id, 'patch')).rejects.toThrow(ActionRefused)
+    await expect(releaseTask(deps, id, 'patch')).rejects.toThrow(/only a finished task/)
+    await expect(releaseTask(deps, 999, 'patch')).rejects.toThrow(/does not exist/)
   })
 })

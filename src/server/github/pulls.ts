@@ -19,6 +19,26 @@ export type IssueComment = {
   createdAt: Date
 }
 
+export type ReleaseInput = {
+  tag: string
+  /** The commit the tag is created on. */
+  sha: string
+  name: string
+  body: string
+  prerelease: boolean
+}
+
+export type CreatedRelease = { id: number; tag: string; url: string }
+
+export type PullRequestState = {
+  number: number
+  url: string
+  headSha: string
+  draft: boolean
+  state: 'open' | 'closed'
+  merged: boolean
+}
+
 export type PullRequest = { number: number; url: string }
 
 export type GithubApi = {
@@ -29,6 +49,23 @@ export type GithubApi = {
     token: string,
     pull: { head: string; title: string; body: string; draft?: boolean },
   ): Promise<PullRequest>
+  /**
+   * Creates a release and the tag it points at. A tag that already has a release is not an error:
+   * the existing release comes back, so a repeated call delivers once.
+   */
+  createRelease(repo: string, token: string, release: ReleaseInput): Promise<CreatedRelease>
+  /** The tag of the latest full release (not a pre-release), if there is one. */
+  latestReleaseTag(repo: string, token: string): Promise<string | undefined>
+  /** The pull request opened from `head`, open or not, if there is one. */
+  findPullRequest(repo: string, token: string, head: string): Promise<PullRequestState | undefined>
+  /** Merges a pull request only if its head is still `sha`. Returns the merge commit. */
+  mergePullRequest(
+    repo: string,
+    token: string,
+    number: number,
+    sha: string,
+    method: 'merge' | 'squash',
+  ): Promise<{ sha: string }>
   /** Deletes a branch, which also closes a pull request that was open from it. A missing branch is fine. */
   deleteBranch(repo: string, token: string, branch: string): Promise<void>
   /** Posts a comment and returns its id. */
@@ -116,6 +153,93 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
         )
       ).json()) as { number: number; html_url: string }
       return { number: created.number, url: created.html_url }
+    },
+
+    async createRelease(repo, token, release) {
+      const response = await call(repo, token, '/releases', {
+        method: 'POST',
+        body: JSON.stringify({
+          tag_name: release.tag,
+          target_commitish: release.sha,
+          name: release.name,
+          body: release.body,
+          prerelease: release.prerelease,
+          draft: false,
+          make_latest: release.prerelease ? 'false' : 'true',
+        }),
+      })
+      if (response.status === 422) {
+        const existing = await call(
+          repo,
+          token,
+          `/releases/tags/${encodeURIComponent(release.tag)}`,
+        )
+        if (existing.ok) {
+          const found = (await existing.json()) as {
+            id: number
+            tag_name: string
+            html_url: string
+          }
+          return { id: found.id, tag: found.tag_name, url: found.html_url }
+        }
+      }
+      const made = (await (
+        await ensure(response, `creating release ${release.tag} on ${repo}`, [201])
+      ).json()) as { id: number; tag_name: string; html_url: string }
+      return { id: made.id, tag: made.tag_name, url: made.html_url }
+    },
+
+    async latestReleaseTag(repo, token) {
+      const response = await call(repo, token, '/releases/latest')
+      if (response.status === 404) return undefined
+      return (
+        (await (await ensure(response, `reading the latest release of ${repo}`, [200])).json()) as {
+          tag_name: string
+        }
+      ).tag_name
+    },
+
+    async findPullRequest(repo, token, head) {
+      const owner = repo.split('/')[0]
+      const found = (await (
+        await ensure(
+          await call(repo, token, `/pulls?state=all&head=${owner}:${encodeURIComponent(head)}`),
+          `listing pull requests of ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        number: number
+        html_url: string
+        head: { sha: string }
+        draft: boolean
+        state: 'open' | 'closed'
+        merged_at: string | null
+      }[]
+      const pr = found[0]
+      return pr
+        ? {
+            number: pr.number,
+            url: pr.html_url,
+            headSha: pr.head.sha,
+            draft: pr.draft,
+            state: pr.state,
+            merged: pr.merged_at !== null,
+          }
+        : undefined
+    },
+
+    async mergePullRequest(repo, token, number, sha, method) {
+      const merged = (await (
+        await ensure(
+          await call(repo, token, `/pulls/${number}/merge`, {
+            method: 'PUT',
+            body: JSON.stringify({ sha, merge_method: method }),
+          }),
+          `merging ${repo}#${number}`,
+          [200],
+        )
+      ).json()) as { sha: string }
+      return { sha: merged.sha }
     },
 
     async deleteBranch(repo, token, branch) {

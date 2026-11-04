@@ -30,6 +30,26 @@ export default function TaskPage() {
           <span>{money(task.costUsd)}</span>
           {task.attempts > 0 ? <span>{task.attempts} of 3 attempts</span> : null}
           {task.headSha ? <code>{shortSha(task.headSha)}</code> : null}
+          {task.preRelease ? (
+            <a
+              href={task.preRelease.url}
+              className="text-violet-700 underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Pre-release {task.preRelease.tag}
+            </a>
+          ) : null}
+          {task.release ? (
+            <a
+              href={task.release.url}
+              className="font-medium text-violet-800 underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Release {task.release.tag}
+            </a>
+          ) : null}
           {task.pullRequestUrl ? (
             <a
               href={task.pullRequestUrl}
@@ -57,6 +77,32 @@ export default function TaskPage() {
                     ? `${q.answeredBy} answered: ${q.answer}`
                     : 'Reply in a comment on the issue, as someone with write access.'}
                 </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {detail.deliveries.length > 0 ? (
+        <section aria-label="Deliveries">
+          <h2 className="mb-2 text-sm font-semibold">Deliveries</h2>
+          <ul className="space-y-1 text-sm">
+            {detail.deliveries.map((d) => (
+              <li key={d.id}>
+                <span className="font-medium">
+                  {d.kind === 'release' ? 'Release' : 'Pre-release'}
+                </span>{' '}
+                <a
+                  href={d.url}
+                  className="text-blue-700 underline"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {d.tag}
+                </a>{' '}
+                <span className="text-xs text-slate-500">
+                  on {shortSha(d.sha)} by {d.actor} · {ago(d.at)}
+                </span>
               </li>
             ))}
           </ul>

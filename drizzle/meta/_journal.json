@@ -43,6 +43,13 @@
       "when": 1793799739743,
       "tag": "0005_panel",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793801437901,
+      "tag": "0006_delivery",
+      "breakpoints": true
     }
   ]
 }

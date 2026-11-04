@@ -5,13 +5,29 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
-import { evidence, ingress, question, review, stageEvent, task } from '../db/schema'
+import {
+  decision,
+  delivery,
+  evidence,
+  ingress,
+  question,
+  review,
+  stageEvent,
+  task,
+} from '../db/schema'
 import type { GithubApp } from '../github/app'
-import type { CheckRun, GithubApi, IssueComment } from '../github/pulls'
+import type {
+  CheckRun,
+  GithubApi,
+  IssueComment,
+  PullRequestState,
+  ReleaseInput,
+} from '../github/pulls'
 
 import { FakeSandbox, type Reply } from './fake-sandbox'
 import type { CodingHarness } from './harness'
 import { mergeEgress, resumeTask, runTask, type RunTaskDeps } from './run-task'
+import { release } from './deliver'
 import { pollAnswers } from './waiting'
 
 const TOKEN = 'ghs_installation_token_must_not_leak'
@@ -23,7 +39,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -70,12 +86,22 @@ const githubApi: GithubApi & {
   drafts: boolean[]
   comments: string[]
   replies: IssueComment[]
+  releases: ReleaseInput[]
+  releaseFails: boolean
+  latest: string | undefined
+  pullRequest: PullRequestState | undefined
+  merges: { number: number; sha: string }[]
 } = {
   checkRuns: [],
   pulls: [],
   drafts: [],
   comments: [],
   replies: [],
+  releases: [],
+  releaseFails: false,
+  latest: undefined,
+  pullRequest: undefined,
+  merges: [],
   async createCheckRun(_repo, _token, check) {
     this.checkRuns.push(check)
   },
@@ -85,6 +111,25 @@ const githubApi: GithubApi & {
     return { number: 12, url: PR_URL }
   },
   async deleteBranch() {},
+  async createRelease(_repo, _token, release) {
+    this.releases.push(release)
+    if (this.releaseFails) throw new Error('GitHub answered 403 creating the release')
+    return {
+      id: this.releases.length,
+      tag: release.tag,
+      url: `https://github.com/paulo/app/releases/tag/${release.tag}`,
+    }
+  },
+  async latestReleaseTag() {
+    return this.latest
+  },
+  async findPullRequest() {
+    return this.pullRequest
+  },
+  async mergePullRequest(_repo, _token, number, sha) {
+    this.merges.push({ number, sha })
+    return { sha: 'merge0001' }
+  },
   async commentOnIssue(_repo, _token, _issue, body) {
     this.comments.push(body)
     return `comment-${this.comments.length}`
@@ -101,6 +146,11 @@ beforeEach(() => {
   githubApi.drafts = []
   githubApi.comments = []
   githubApi.replies = []
+  githubApi.releases = []
+  githubApi.releaseFails = false
+  githubApi.latest = undefined
+  githubApi.pullRequest = undefined
+  githubApi.merges = []
   dirty = true
 })
 
@@ -1191,7 +1241,7 @@ describe('runTask waiting for an answer', () => {
 
     const sandbox = new FakeSandbox(changed())
     await getPool().query(
-      'truncate table question, review, evidence, stage_event, task, ingress restart identity cascade',
+      'truncate table delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
     )
     const id2 = await seedTask()
     const b = await runTask(
@@ -1218,5 +1268,304 @@ describe('runTask waiting for an answer', () => {
     expect(result).toMatchObject({ status: 'failed' })
     expect(sandbox.deleted).toEqual(['snap-1'])
     expect(await getDb().select().from(question)).toEqual([])
+  })
+})
+
+const deliveries = async (taskId: number) =>
+  getDb().select().from(delivery).where(eq(delivery.taskId, taskId)).orderBy(delivery.id)
+
+const openPullRequest = (over: Partial<PullRequestState> = {}): PullRequestState => ({
+  number: 12,
+  url: PR_URL,
+  headSha: 'abc123def',
+  draft: false,
+  state: 'open',
+  merged: false,
+  ...over,
+})
+
+describe('the factory always makes a pre-release', () => {
+  it('tags the commit it delivered, marked as a pre-release, with the evidence in the notes', async () => {
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done', preRelease: 'pre/7-abc123d' })
+    expect(githubApi.releases).toHaveLength(1)
+    expect(githubApi.releases[0]).toMatchObject({
+      tag: 'pre/7-abc123d',
+      sha: 'abc123def',
+      prerelease: true,
+      name: '#7 Add truncate',
+    })
+    expect(githubApi.releases[0].body).toContain('- passed: `npm test`')
+    expect(githubApi.releases[0].body).toContain('Independent review: fake-reviewer: approve.')
+    expect(githubApi.releases[0].body).toContain(PR_URL)
+    expect(await deliveries(id)).toMatchObject([
+      { kind: 'prerelease', tag: 'pre/7-abc123d', sha: 'abc123def', actor: 'factory' },
+    ])
+    const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
+    expect(done.detail).toMatchObject({ preRelease: 'pre/7-abc123d' })
+    expect(githubApi.merges).toEqual([])
+  })
+
+  it('delivers once, at the commit the work ended on, after a rework', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const reviewer = reviewerSaying(verdictJson('changes', [finding]), verdictJson('approve'))
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done', sha: 'abc123def2' })
+    expect(githubApi.releases).toHaveLength(1)
+    expect(githubApi.releases[0]).toMatchObject({ sha: 'abc123def2' })
+    expect(githubApi.releases[0].body).toContain('Attempts: 2.')
+  })
+
+  it('hands over work the reviewer did not approve as a pre-release too, and says so', async () => {
+    const id = await seedTask()
+    const reviewer = reviewerSaying(verdictJson('changes', [finding], 'still wrong'))
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'handoff', preRelease: 'pre/7-abc123d' })
+    expect(githubApi.releases[0].body).toContain(
+      'Independent review: fake-reviewer: changes. still wrong',
+    )
+    expect((await deliveries(id))[0]).toMatchObject({ kind: 'prerelease' })
+  })
+
+  it('makes none when the checks never passed, because there is nothing to hand over', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) => (c.endsWith('npm test') ? { exitCode: 1, stdout: 'not ok' } : undefined)),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'verify' })
+    expect(githubApi.releases).toEqual([])
+    expect(await deliveries(id)).toEqual([])
+  })
+
+  it('does not fail the task when GitHub refuses the pre-release, and says why', async () => {
+    const id = await seedTask()
+    githubApi.releaseFails = true
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done', pullRequestUrl: PR_URL })
+    expect(await deliveries(id)).toEqual([])
+    const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
+    expect((done.detail as { preReleaseError: string }).preReleaseError).toContain(
+      'creating the release',
+    )
+  })
+})
+
+describe('what the factory does with a release', () => {
+  const run = async (mode?: 'manual' | 'trial' | 'auto') => {
+    const id = await seedTask()
+    githubApi.pullRequest = openPullRequest()
+    const result = await runTask(deps(new FakeSandbox(changed()), { releaseMode: mode }), id)
+    return { id, result }
+  }
+
+  it('leaves the release to a person by default, and merges nothing', async () => {
+    const { id, result } = await run()
+    expect(result).toMatchObject({ status: 'done', released: undefined })
+    expect(githubApi.merges).toEqual([])
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+  })
+
+  it('in trial, records what an agent would have released and releases nothing', async () => {
+    const { id } = await run('trial')
+    expect(githubApi.merges).toEqual([])
+    expect(await getDb().select().from(decision).where(eq(decision.taskId, id))).toMatchObject([
+      {
+        kind: 'would_release',
+        sha: 'abc123def',
+        note: 'agent:fake-reviewer: checks green and the review approved',
+      },
+    ])
+  })
+
+  it("in auto, merges the delivered commit and publishes the release on the agent's verdict", async () => {
+    const { id, result } = await run('auto')
+
+    expect(result).toMatchObject({ status: 'done', released: 'v0.1.0' })
+    expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('released')
+    expect((await deliveries(id)).map((d) => [d.kind, d.tag, d.actor])).toEqual([
+      ['prerelease', 'pre/7-abc123d', 'factory'],
+      ['release', 'v0.1.0', 'agent:fake-reviewer'],
+    ])
+    const published = githubApi.releases.at(-1)!
+    expect(published).toMatchObject({ tag: 'v0.1.0', sha: 'merge0001', prerelease: false })
+    expect(published.body).toContain('pre/7-abc123d')
+  })
+
+  it('in auto, keeps the task at done and records why when the release is refused', async () => {
+    const id = await seedTask()
+    githubApi.pullRequest = openPullRequest({ draft: true })
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { releaseMode: 'auto' }), id)
+
+    expect(result).toMatchObject({ status: 'done', released: undefined })
+    expect(githubApi.merges).toEqual([])
+    const [refused] = await getDb().select().from(decision).where(eq(decision.taskId, id))
+    expect(refused.note).toContain('an automatic release was refused: the pull request is a draft')
+  })
+
+  it('does not release work that was handed over, whatever the mode', async () => {
+    const id = await seedTask()
+    githubApi.pullRequest = openPullRequest()
+    const reviewer = reviewerSaying(verdictJson('changes', [finding]))
+    await runTask(deps(new FakeSandbox(changed()), { reviewer, releaseMode: 'auto' }), id)
+    expect(githubApi.merges).toEqual([])
+  })
+})
+
+describe('release', () => {
+  const dependencies = () => ({ db: getDb(), github, api: githubApi })
+  const reset = async () => {
+    await getPool().query(
+      'truncate table delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    )
+    dirty = true
+  }
+
+  async function delivered() {
+    const id = await seedTask()
+    await runTask(deps(new FakeSandbox(changed())), id)
+    githubApi.pullRequest = openPullRequest()
+    return id
+  }
+
+  it('merges the pull request pinned to the delivered commit and publishes the next version', async () => {
+    const id = await delivered()
+    githubApi.latest = 'v1.2.3'
+
+    const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: 'v1.3.0', mergeSha: 'merge0001' })
+    expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+    expect(githubApi.releases.at(-1)).toMatchObject({
+      tag: 'v1.3.0',
+      prerelease: false,
+      sha: 'merge0001',
+    })
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row.stage).toBe('released')
+    expect(await getDb().select().from(decision).where(eq(decision.taskId, id))).toMatchObject([
+      { kind: 'release', sha: 'abc123def', note: 'human -> v1.3.0' },
+    ])
+    expect((await deliveries(id)).at(-1)).toMatchObject({
+      kind: 'release',
+      tag: 'v1.3.0',
+      actor: 'human',
+    })
+    expect(await stagesOf(id)).toContain('released')
+  })
+
+  it('starts at v0.1.0 when the repository has no release yet', async () => {
+    const id = await delivered()
+    expect((await release(dependencies(), id, { bump: 'major', actor: 'human' })).tag).toBe(
+      'v0.1.0',
+    )
+  })
+
+  it('refuses a commit with no pre-release, red checks, or a task that is not finished', async () => {
+    const running = await seedTask()
+    await expect(
+      release(dependencies(), running, { bump: 'patch', actor: 'human' }),
+    ).rejects.toThrow(/only a finished task/)
+
+    await reset()
+    const noPre = await delivered()
+    await getDb().delete(delivery).where(eq(delivery.taskId, noPre))
+    await expect(release(dependencies(), noPre, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+      /no pre-release for the commit/,
+    )
+
+    await reset()
+    const red = await delivered()
+    await getDb().update(evidence).set({ passed: false }).where(eq(evidence.taskId, red))
+    await expect(release(dependencies(), red, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+      /checks are not green/,
+    )
+    expect(githubApi.merges).toEqual([])
+  })
+
+  it('refuses when the pull request is a draft, closed, merged, missing or has moved', async () => {
+    const id = await delivered()
+    const cases: [PullRequestState | undefined, RegExp][] = [
+      [openPullRequest({ draft: true }), /draft/],
+      [openPullRequest({ state: 'closed' }), /closed/],
+      [openPullRequest({ merged: true, state: 'closed' }), /already merged/],
+      [undefined, /not found/],
+      [openPullRequest({ headSha: 'moved999' }), /moved to moved99, which was not delivered/],
+    ]
+    for (const [pr, message] of cases) {
+      githubApi.pullRequest = pr
+      await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+        message,
+      )
+    }
+    expect(githubApi.merges).toEqual([])
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+  })
+
+  it('does not release twice', async () => {
+    const id = await delivered()
+    await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+    await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+      /already released/,
+    )
+    expect(githubApi.merges).toHaveLength(1)
+  })
+
+  it('gives the task back when GitHub will not merge, and says what GitHub said', async () => {
+    const id = await delivered()
+    const refusing = {
+      ...githubApi,
+      mergePullRequest: async () => {
+        throw new Error('GitHub answered 409 merging paulo/app#12: Head branch was modified')
+      },
+    }
+
+    await expect(
+      release({ db: getDb(), github, api: refusing }, id, { bump: 'patch', actor: 'human' }),
+    ).rejects.toThrow(/GitHub did not merge it:.*Head branch was modified/)
+
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+    expect((await deliveries(id)).filter((d) => d.kind === 'release')).toEqual([])
+  })
+
+  it('records the merge and the failure when the release object cannot be created afterwards', async () => {
+    const id = await delivered()
+    const failing = {
+      ...githubApi,
+      createRelease: async (_r: string, _t: string, input: { prerelease: boolean }) => {
+        if (!input.prerelease) throw new Error('GitHub answered 403 creating the release')
+        return { id: 1, tag: 'x', url: 'u' }
+      },
+    } as unknown as typeof githubApi
+
+    const result = await release({ db: getDb(), github, api: failing }, id, {
+      bump: 'patch',
+      actor: 'human',
+    })
+
+    expect(result).toMatchObject({ tag: undefined, mergeSha: 'merge0001' })
+    expect(result.releaseError).toContain('403')
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('released')
+    const released = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'released'))
+    )[0]
+    expect(released.detail).toMatchObject({ mergeSha: 'merge0001' })
   })
 })

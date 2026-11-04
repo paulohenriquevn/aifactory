@@ -2,11 +2,18 @@ import { provisionRepo, type SandboxBackend } from '@theokit/agents/sandbox'
 import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { evidence, question as questionTable, review as reviewTable, task } from '../db/schema'
+import {
+  decision,
+  evidence,
+  question as questionTable,
+  review as reviewTable,
+  task,
+} from '../db/schema'
 import type { FetchLike, GithubApp } from '../github/app'
 import { fetchIssue as defaultFetchIssue, type Issue } from '../github/issues'
 import { createGithubApi, type GithubApi } from '../github/pulls'
 
+import { createPreRelease, release, type ReleaseMode } from './deliver'
 import { DEFAULT_CHECKS, gate, runChecks, type CheckResult, type CheckSpec } from './evidence'
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
 import { buildPrompt, type CodingHarness, type HarnessResult } from './harness'
@@ -46,6 +53,12 @@ export type RunTaskDeps = {
   author: { name: string; email: string }
   fetchIssue?: (repo: string, number: number, token: string, fetch?: FetchLike) => Promise<Issue>
   githubApi?: GithubApi
+  /**
+   * What the factory does with a release, the promotion of its work to the default branch. It always
+   * makes a pre-release. `manual` (the default) leaves the release to a person, `trial` records what
+   * an agent would have released, and `auto` releases a commit with green checks and an approval.
+   */
+  releaseMode?: ReleaseMode
   /** What must pass on the pushed commit before a pull request opens. */
   checks?: CheckSpec[]
   timeouts?: { sandboxMs: number; agentMs: number; checkMs?: number; reviewMs?: number }
@@ -54,8 +67,23 @@ export type RunTaskDeps = {
 }
 
 export type RunResult =
-  | { status: 'done'; branch: string; sha: string; pullRequestUrl: string; summary: string }
-  | { status: 'handoff'; branch: string; sha: string; pullRequestUrl: string; reason: string }
+  | {
+      status: 'done'
+      branch: string
+      sha: string
+      pullRequestUrl: string
+      summary: string
+      preRelease?: string
+      released?: string
+    }
+  | {
+      status: 'handoff'
+      branch: string
+      sha: string
+      pullRequestUrl: string
+      reason: string
+      preRelease?: string
+    }
   | { status: 'waiting'; question: string }
   | { status: 'failed'; stage: string; error: string }
 
@@ -309,6 +337,33 @@ async function execute(
       return (await must(backend, `${git} rev-parse HEAD`)).stdout.trim()
     }
 
+    /**
+     * The factory's delivery. It is made for any commit with green checks that reached a pull request,
+     * approved or handed over, and a failure here never fails the task: the pull request is the work,
+     * and the pre-release is how it is handed over.
+     */
+    const deliver = async (sha: string, pullRequestUrl: string, attempts: number) => {
+      try {
+        return await createPreRelease(
+          { db, api },
+          {
+            taskId,
+            repository: row.repository,
+            token,
+            issueNumber: row.issueNumber,
+            title: issue.title,
+            sha,
+            pullRequestUrl,
+            attempts,
+            costUsd: cost,
+            agentSummary: summary,
+          },
+        )
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
     current = 'build'
     let first: HarnessResult
     if (resuming) {
@@ -547,14 +602,58 @@ async function execute(
             review: { reviewer: reviewer.name, attempt, outcome },
           }),
         })
+        const handedOver = await deliver(sha, pull.url, attempt)
+        const preRelease = 'tag' in handedOver ? handedOver.tag : undefined
         await enterStage(
           db,
           taskId,
           'done',
-          { branch, sha, pullRequestUrl: pull.url, costUsd: cost, attempts: attempt },
+          {
+            branch,
+            sha,
+            pullRequestUrl: pull.url,
+            costUsd: cost,
+            attempts: attempt,
+            ...('tag' in handedOver
+              ? { preRelease: handedOver.tag, preReleaseUrl: handedOver.url }
+              : { preReleaseError: handedOver.error }),
+          },
           { pullRequestUrl: pull.url },
         )
-        return { status: 'done', branch, sha, pullRequestUrl: pull.url, summary }
+        let released: string | undefined
+        if (preRelease && deps.releaseMode === 'trial') {
+          await db.insert(decision).values({
+            taskId,
+            kind: 'would_release',
+            sha,
+            note: `agent:${reviewer.name}: checks green and the review approved`,
+          })
+        } else if (preRelease && deps.releaseMode === 'auto') {
+          try {
+            released = (
+              await release({ db, github: deps.github, api }, taskId, {
+                bump: 'patch',
+                actor: `agent:${reviewer.name}`,
+              })
+            ).tag
+          } catch (error) {
+            await db.insert(decision).values({
+              taskId,
+              kind: 'would_release',
+              sha,
+              note: `an automatic release was refused: ${error instanceof Error ? error.message : String(error)}`,
+            })
+          }
+        }
+        return {
+          status: 'done',
+          branch,
+          sha,
+          pullRequestUrl: pull.url,
+          summary,
+          preRelease,
+          released,
+        }
       }
 
       if (outcome.verdict === 'changes' && canRework) {
@@ -593,6 +692,7 @@ async function execute(
           outcome.findings.length > 0 ? renderFindings(outcome.findings) : outcome.summary,
         ].join('\n'),
       )
+      const handedOver = await deliver(sha, pull.url, attempt)
       await enterStage(
         db,
         taskId,
@@ -605,10 +705,20 @@ async function execute(
           findings: outcome.findings,
           costUsd: cost,
           attempts: attempt,
+          ...('tag' in handedOver
+            ? { preRelease: handedOver.tag, preReleaseUrl: handedOver.url }
+            : { preReleaseError: handedOver.error }),
         },
         { pullRequestUrl: pull.url },
       )
-      return { status: 'handoff', branch, sha, pullRequestUrl: pull.url, reason }
+      return {
+        status: 'handoff',
+        branch,
+        sha,
+        pullRequestUrl: pull.url,
+        reason,
+        preRelease: 'tag' in handedOver ? handedOver.tag : undefined,
+      }
     }
   } catch (error) {
     if (error instanceof Asked) return error.result

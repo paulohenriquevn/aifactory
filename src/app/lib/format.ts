@@ -22,6 +22,7 @@ const LABELS: Record<Stage, string> = {
   waiting: 'waiting for you',
   pr: 'opening pull request',
   done: 'pull request open',
+  released: 'released',
   handoff: 'handed to a person',
   failed: 'failed',
 }
@@ -59,7 +60,18 @@ export function describeEvent(event: TimelineEvent): string {
     case 'waiting':
       return text(d.question)
     case 'done':
-      return text(d.pullRequestUrl)
+      return [
+        text(d.pullRequestUrl),
+        d.preRelease ? `pre-release ${text(d.preRelease)}` : '',
+        d.preReleaseError ? `no pre-release: ${text(d.preReleaseError)}` : '',
+        d.unchanged ? 'nothing to change' : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    case 'released':
+      return d.tag
+        ? `${text(d.tag)} by ${text(d.actor)}${d.releaseError ? `, but the release could not be created: ${text(d.releaseError)}` : ''}`
+        : `merged by ${text(d.actor)}, but the release could not be created: ${text(d.releaseError)}`
     case 'handoff':
       return text(d.reason)
     case 'failed':

@@ -10,17 +10,19 @@ export type Stage =
   | 'waiting'
   | 'pr'
   | 'done'
+  | 'released'
   | 'handoff'
   | 'failed'
 
 /** Where a stage sits on the board. */
-export type Column = 'queued' | 'working' | 'waiting' | 'review' | 'attention'
+export type Column = 'queued' | 'working' | 'waiting' | 'review' | 'released' | 'attention'
 
 export const COLUMNS: { id: Column; title: string }[] = [
   { id: 'queued', title: 'Queued' },
   { id: 'working', title: 'Working' },
   { id: 'waiting', title: 'Waiting for you' },
   { id: 'review', title: 'Pull request' },
+  { id: 'released', title: 'Released' },
   { id: 'attention', title: 'Needs a person' },
 ]
 
@@ -32,12 +34,24 @@ export function columnOf(stage: Stage): Column {
       return 'waiting'
     case 'done':
       return 'review'
+    case 'released':
+      return 'released'
     case 'handoff':
     case 'failed':
       return 'attention'
     default:
       return 'working'
   }
+}
+
+export type DeliveryView = {
+  id: number
+  kind: 'prerelease' | 'release'
+  tag: string
+  url: string
+  sha: string
+  actor: string
+  at: string
 }
 
 export type TaskCard = {
@@ -57,6 +71,9 @@ export type TaskCard = {
   updatedAt: string
   /** Whether a person approved the commit the pull request is at. */
   approved: boolean
+  /** The factory's delivery of the commit the pull request is at, if it made one. */
+  preRelease: { tag: string; url: string } | null
+  release: { tag: string; url: string } | null
 }
 
 export type TimelineEvent = {
@@ -101,7 +118,7 @@ export type QuestionView = {
 
 export type DecisionView = {
   id: number
-  kind: 'approve' | 'request_changes' | 'retry'
+  kind: 'approve' | 'request_changes' | 'retry' | 'release' | 'would_release'
   sha: string | null
   note: string
   at: string
@@ -114,6 +131,7 @@ export type TaskDetail = {
   reviews: ReviewView[]
   questions: QuestionView[]
   decisions: DecisionView[]
+  deliveries: DeliveryView[]
 }
 
 /** What the inbox lists: a task that waits for a person, and why. */

@@ -30,7 +30,7 @@ export function Card({ task }: { task: TaskCard }) {
 
 export function Board({ tasks }: { tasks: TaskCard[] }) {
   return (
-    <div className="grid gap-4 md:grid-cols-5">
+    <div className="grid gap-4 lg:grid-cols-6">
       {COLUMNS.map((column) => {
         const inColumn = tasks.filter((t) => t.column === column.id)
         return (
