@@ -144,7 +144,10 @@ Estado local confirmado em 2026-11-03, com `theokit@0.77.4`:
 - M2: `runTask` leva uma task a `factory/<n>` e registra os estágios em `stage_event`. Contra o
   GitHub, a Vercel e o Postgres reais, com um agente roteirizado no lugar do Claude (`pnpm
 test:e2e`), a issue #1 do playground virou uma branch `factory/1` enviada. A task e o job
-  `run-task` entram juntos, na mesma transação, e o worker do TheoKit executa o job. Com o Claude Code
+  `run-task` entram juntos, na mesma transação, e o worker do TheoKit executa o job. Pela URL
+  pública `factory.aquim.ai`, a label `factory` na issue #1 do playground levou o fluxo real,
+  webhook do GitHub incluído, de `intake` a `done` em 31 segundos, por US$ 0,06: `factory/1` foi
+  enviada pelo GitHub App e os 6 testes dela passam fora do sandbox. Com o Claude Code
   de verdade (`FACTORY_LIVE=1 pnpm test:e2e -t "real agent"`), o mesmo fluxo implementou a issue #1 em
   46 segundos, por US$ 0,03, enviou `factory/1` e os testes do que ele enviou passaram fora do
   sandbox. Uma primeira tentativa falhou num erro interno do GitHub no push (`fatal error in

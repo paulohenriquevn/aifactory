@@ -38,6 +38,33 @@ pnpm dev
 - A assinatura `X-Hub-Signature-256` é verificada sobre o corpo bruto antes de qualquer escrita.
   Assinatura inválida ou ausente responde 401. Sem `GITHUB_WEBHOOK_SECRET` a rota responde 503.
 
+### Exposição pública
+
+O webhook precisa de uma URL pública. A fábrica usa um Cloudflare Tunnel para `factory.aquim.ai`,
+criado a partir desta máquina, que expõe **só** o webhook e o health check; qualquer outro caminho
+responde 404 na borda da Cloudflare.
+
+```yaml
+# ~/.cloudflared/aifactory.yml (fora do repositório; a credencial do túnel fica em ~/.cloudflared/)
+tunnel: <id do túnel>
+credentials-file: /home/<usuário>/.cloudflared/<id do túnel>.json
+ingress:
+  - hostname: factory.aquim.ai
+    path: ^/api/(webhooks/github|health)$
+    service: http://localhost:3000
+  - service: http_status:404
+```
+
+```bash
+cloudflared tunnel --config ~/.cloudflared/aifactory.yml run aifactory
+```
+
+O webhook do GitHub App aponta para essa URL (`node --env-file=.env.local
+scripts/github-app-webhook.mjs https://factory.aquim.ai/api/webhooks/github` grava a URL, o tipo de
+conteúdo e o secret). A API do GitHub não liga o webhook do App: a caixa "Active" fica na página de
+configurações do App, e o GitHub pede a confirmação de acesso (sudo) para abri-la. No repositório de
+teste há também um webhook próprio do repositório, com a mesma URL e o mesmo secret.
+
 ### Readiness
 
 Sem `DATABASE_URL` o servidor sobe e `/api/ready` responde 503 com "Database "main" not
