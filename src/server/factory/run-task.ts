@@ -1,11 +1,13 @@
 import { provisionRepo, type SandboxBackend } from '@theokit/agents/sandbox'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { task } from '../db/schema'
+import { evidence, task } from '../db/schema'
 import type { FetchLike, GithubApp } from '../github/app'
 import { fetchIssue as defaultFetchIssue, type Issue } from '../github/issues'
+import { createGithubApi, type GithubApi } from '../github/pulls'
 
+import { DEFAULT_CHECKS, gate, runChecks, type CheckResult, type CheckSpec } from './evidence'
 import { buildPrompt, type CodingHarness } from './harness'
 import {
   createIsolatedSandbox,
@@ -24,13 +26,16 @@ export type RunTaskDeps = {
   /** The commit author, so the pull request shows who wrote it. */
   author: { name: string; email: string }
   fetchIssue?: (repo: string, number: number, token: string, fetch?: FetchLike) => Promise<Issue>
-  timeouts?: { sandboxMs: number; agentMs: number }
+  githubApi?: GithubApi
+  /** What must pass on the pushed commit before a pull request opens. */
+  checks?: CheckSpec[]
+  timeouts?: { sandboxMs: number; agentMs: number; checkMs?: number }
   /** Wait between push attempts. */
   pushRetryDelayMs?: number
 }
 
 export type RunResult =
-  | { status: 'done'; branch: string; sha: string; summary: string }
+  | { status: 'done'; branch: string; sha: string; pullRequestUrl: string; summary: string }
   | { status: 'failed'; stage: string; error: string }
 
 const INSTANCE = 'work'
@@ -41,8 +46,9 @@ const COMMIT_MESSAGE = '/tmp/factory-commit-message.txt'
 class StageFailure extends Error {}
 
 /**
- * Runs one task: reads the issue, starts an isolated sandbox, has the agent implement it, and
- * pushes the result to `factory/<issue>`. Each stage is recorded as the run enters it. The
+ * Runs one task: reads the issue, starts an isolated sandbox, has the agent implement it, pushes
+ * the result to `factory/<issue>`, runs the checks on the pushed commit, and opens a pull request
+ * only if the evidence for that commit is green. Each stage is recorded as the run enters it. The
  * sandbox is always stopped, and a failure is recorded as the `failed` stage with its reason.
  */
 export async function runTask(
@@ -140,8 +146,68 @@ export async function runTask(
     }
     const sha = (await must(backend, `${git} rev-parse HEAD`)).stdout.trim()
 
-    await enterStage(db, taskId, 'done', { branch, sha, costUsd: result.costUsd })
-    return { status: 'done', branch, sha, summary: result.summary }
+    current = 'verify'
+    const checks = deps.checks ?? DEFAULT_CHECKS
+    await enterStage(
+      db,
+      taskId,
+      'verify',
+      { sha, checks: checks.map((c) => c.name) },
+      { headSha: sha },
+    )
+    // The checks must run on the commit that was pushed and nothing else.
+    const head = (await must(backend, `git -C ${repoDir} rev-parse HEAD`)).stdout.trim()
+    const dirty = (await must(backend, `git -C ${repoDir} status --porcelain`)).stdout.trim()
+    if (head !== sha || dirty !== '') {
+      throw new StageFailure(`the checkout is not the pushed commit ${sha.slice(0, 7)}`)
+    }
+    const api = deps.githubApi ?? createGithubApi()
+    for (const check of await runChecks(
+      backend,
+      repoDir,
+      checks,
+      timeouts.checkMs ?? 10 * 60_000,
+    )) {
+      await db.insert(evidence).values({ taskId, sha, ...check })
+    }
+    const rows = await db
+      .select()
+      .from(evidence)
+      .where(eq(evidence.taskId, taskId))
+      .orderBy(asc(evidence.id))
+    const verdict = gate({ headSha: sha, required: checks.map((c) => c.name), evidence: rows })
+    await api.createCheckRun(row.repository, token, {
+      name: 'aifactory/verify',
+      headSha: sha,
+      conclusion: verdict.open ? 'success' : 'failure',
+      title: verdict.open ? 'All checks passed' : 'Checks did not pass',
+      summary: checkSummary(rows.filter((r) => r.sha === sha)),
+    })
+    if (!verdict.open) {
+      throw new StageFailure(`no pull request: ${verdict.reasons.join('; ')}`)
+    }
+
+    current = 'pr'
+    await enterStage(db, taskId, 'pr', { branch, sha })
+    const pull = await api.openPullRequest(row.repository, token, {
+      head: branch,
+      title: `${oneLine(issue.title)} (#${row.issueNumber})`,
+      body: pullRequestBody(
+        row.issueNumber,
+        sha,
+        rows.filter((r) => r.sha === sha),
+        result.summary,
+      ),
+    })
+
+    await enterStage(
+      db,
+      taskId,
+      'done',
+      { branch, sha, pullRequestUrl: pull.url, costUsd: result.costUsd },
+      { pullRequestUrl: pull.url },
+    )
+    return { status: 'done', branch, sha, pullRequestUrl: pull.url, summary: result.summary }
   } catch (error) {
     const message = signal?.aborted
       ? 'the job lease expired before the run finished'
@@ -180,6 +246,38 @@ async function must(backend: SandboxBackend, command: string) {
     throw new StageFailure(`\`${command}\` exited ${result.exitCode}: ${output}`)
   }
   return result
+}
+
+type StoredCheck = Pick<CheckResult, 'name' | 'command' | 'passed' | 'durationMs' | 'output'>
+
+function checkSummary(rows: StoredCheck[]): string {
+  return rows
+    .map((r) => `- ${r.passed ? 'passed' : 'failed'}: \`${r.command}\` (${seconds(r.durationMs)})`)
+    .join('\n')
+}
+
+const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`
+
+function pullRequestBody(
+  issueNumber: number,
+  sha: string,
+  rows: StoredCheck[],
+  agentSummary: string,
+): string {
+  return [
+    `Closes #${issueNumber}`,
+    '',
+    `Checks the factory ran on \`${sha.slice(0, 7)}\`:`,
+    '',
+    checkSummary(rows),
+    '',
+    '<details><summary>What the agent said</summary>',
+    '',
+    agentSummary.slice(0, 3_000),
+    '',
+    '</details>',
+    '',
+  ].join('\n')
 }
 
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()

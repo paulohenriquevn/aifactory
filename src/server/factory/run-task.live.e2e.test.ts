@@ -104,13 +104,14 @@ describe.skipIf(!live)('the factory with the real agent', () => {
       }),
     )
     expect(result).toMatchObject({ status: 'done', branch: 'factory/1' })
+    expect(result.status === 'done' && result.pullRequestUrl).toMatch(/\/pull\/\d+$/)
 
     const events = await db
       .select()
       .from(stageEvent)
       .where(eq(stageEvent.taskId, created.id))
       .orderBy(stageEvent.id)
-    expect(events.map((e) => e.stage)).toEqual(['sandbox', 'build', 'push', 'done'])
+    expect(events.map((e) => e.stage)).toEqual(['sandbox', 'build', 'push', 'verify', 'pr', 'done'])
     const done = events.at(-1)!.detail as { costUsd?: number }
     console.log(JSON.stringify({ event: 'live_cost', costUsd: done.costUsd }))
 

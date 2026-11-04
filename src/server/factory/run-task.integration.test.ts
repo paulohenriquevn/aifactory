@@ -5,8 +5,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
-import { ingress, stageEvent, task } from '../db/schema'
+import { evidence, ingress, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
+import type { CheckRun, GithubApi } from '../github/pulls'
 
 import { FakeSandbox, type Reply } from './fake-sandbox'
 import type { CodingHarness } from './harness'
@@ -20,7 +21,9 @@ beforeAll(async () => {
   await migrate(getDb(), { migrationsFolder: 'drizzle' })
 })
 beforeEach(async () => {
-  await getPool().query('truncate table stage_event, task, ingress restart identity cascade')
+  await getPool().query(
+    'truncate table evidence, stage_event, task, ingress restart identity cascade',
+  )
 })
 afterAll(() => getStorageManager().dispose())
 
@@ -57,6 +60,25 @@ const github: GithubApp & { asked: string[] } = {
   },
 }
 
+const PR_URL = 'https://github.com/paulo/app/pull/12'
+
+/** A GitHub that records what the factory asked of it. */
+const githubApi: GithubApi & { checkRuns: CheckRun[]; pulls: string[] } = {
+  checkRuns: [],
+  pulls: [],
+  async createCheckRun(_repo, _token, check) {
+    this.checkRuns.push(check)
+  },
+  async openPullRequest(_repo, _token, pull) {
+    this.pulls.push(pull.head)
+    return { number: 12, url: PR_URL }
+  },
+}
+beforeEach(() => {
+  githubApi.checkRuns = []
+  githubApi.pulls = []
+})
+
 const okHarness: CodingHarness = {
   name: 'fake-agent',
   run: async () => ({ ok: true, summary: 'added truncate', costUsd: 0.12 }),
@@ -66,6 +88,7 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
   return {
     db: getDb(),
     github,
+    githubApi,
     sandbox,
     harness: okHarness,
     anthropicApiKey: ANTHROPIC,
@@ -81,15 +104,21 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
 }
 
 /** A sandbox that behaves like a repository the agent changed. */
-const changed = (extra?: (command: string) => Reply | undefined) => (command: string) => {
-  if (extra) {
-    const reply = extra(command)
-    if (reply) return reply
+const changed = (extra?: (command: string) => Reply | undefined) => {
+  let committed = false
+  return (command: string) => {
+    if (extra) {
+      const reply = extra(command)
+      if (reply) return reply
+    }
+    if (command.includes('commit -F')) committed = true
+    if (command.includes('rev-parse --show-toplevel')) return { stdout: '/vercel/work\n' }
+    if (command.includes('status --porcelain')) {
+      return { stdout: committed ? '' : ' M src/truncate.js\n' }
+    }
+    if (command.endsWith('rev-parse HEAD')) return { stdout: 'abc123def\n' }
+    return undefined
   }
-  if (command.includes('rev-parse --show-toplevel')) return { stdout: '/vercel/work\n' }
-  if (command.includes('status --porcelain')) return { stdout: ' M src/truncate.js\n' }
-  if (command.endsWith('rev-parse HEAD')) return { stdout: 'abc123def\n' }
-  return undefined
 }
 
 const stagesOf = async (taskId: number) =>
@@ -108,8 +137,13 @@ describe('runTask', () => {
 
     const result = await runTask(deps(sandbox), id)
 
-    expect(result).toMatchObject({ status: 'done', branch: 'factory/7', sha: 'abc123def' })
-    expect(await stagesOf(id)).toEqual(['sandbox', 'build', 'push', 'done'])
+    expect(result).toMatchObject({
+      status: 'done',
+      branch: 'factory/7',
+      sha: 'abc123def',
+      pullRequestUrl: PR_URL,
+    })
+    expect(await stagesOf(id)).toEqual(['sandbox', 'build', 'push', 'verify', 'pr', 'done'])
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
     expect(row.stage).toBe('done')
     expect(sandbox.backend.commands.some((c) => c.endsWith('push origin factory/7'))).toBe(true)
@@ -123,6 +157,84 @@ describe('runTask', () => {
 
     const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
     expect(done.detail).toMatchObject({ branch: 'factory/7', sha: 'abc123def', costUsd: 0.12 })
+  })
+
+  it('opens the pull request after green evidence for the pushed commit, and says so on GitHub', async () => {
+    const id = await seedTask()
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    const rows = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
+    expect(rows).toMatchObject([{ name: 'test', sha: 'abc123def', exitCode: 0, passed: true }])
+    expect(githubApi.checkRuns).toMatchObject([
+      { name: 'aifactory/verify', headSha: 'abc123def', conclusion: 'success' },
+    ])
+    expect(githubApi.pulls).toEqual(['factory/7'])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ headSha: 'abc123def', pullRequestUrl: PR_URL })
+  })
+
+  it('opens no pull request when the agent says the tests pass and they do not', async () => {
+    const id = await seedTask()
+    const liar: CodingHarness = {
+      name: 'liar',
+      run: async () => ({ ok: true, summary: 'All tests pass, ready to merge.', costUsd: 0.1 }),
+    }
+    const sandbox = new FakeSandbox(
+      changed((c) =>
+        c.endsWith('npm test') ? { exitCode: 1, stdout: 'not ok 1 - truncates' } : undefined,
+      ),
+    )
+
+    const result = await runTask(deps(sandbox, { harness: liar }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'verify' })
+    expect(result.status === 'failed' && result.error).toContain('"test" failed at abc123d')
+    expect(githubApi.pulls).toEqual([])
+    expect(githubApi.checkRuns).toMatchObject([{ headSha: 'abc123def', conclusion: 'failure' }])
+    const [stored] = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
+    expect(stored).toMatchObject({ passed: false, exitCode: 1 })
+    expect(stored.output).toContain('not ok 1')
+    expect(await stagesOf(id)).toEqual(['sandbox', 'build', 'push', 'verify', 'failed'])
+  })
+
+  it('opens no pull request when no check is required, however confident the agent is', async () => {
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { checks: [] }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'verify' })
+    expect(githubApi.pulls).toEqual([])
+  })
+
+  it('refuses to verify a checkout that is not the pushed commit', async () => {
+    const id = await seedTask()
+    let heads = 0
+    const sandbox = new FakeSandbox(
+      changed((c) =>
+        c.endsWith('rev-parse HEAD') && ++heads === 2 ? { stdout: 'other999\n' } : undefined,
+      ),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'verify' })
+    expect(githubApi.pulls).toEqual([])
+    expect(await getDb().select().from(evidence).where(eq(evidence.taskId, id))).toEqual([])
+  })
+
+  it('fails at the pr stage when GitHub refuses the pull request, keeping the evidence', async () => {
+    const id = await seedTask()
+    const refusing = {
+      ...githubApi,
+      openPullRequest: async () => {
+        throw new Error('GitHub answered 422 opening a pull request')
+      },
+    }
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { githubApi: refusing }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'pr' })
+    expect(await getDb().select().from(evidence).where(eq(evidence.taskId, id))).toHaveLength(1)
   })
 
   it('gives the firewall the credentials and the sandbox none of them', async () => {

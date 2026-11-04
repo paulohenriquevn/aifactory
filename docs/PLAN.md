@@ -59,7 +59,7 @@ local inspecionado em 2026-11-03.
 | M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                            | Concluído    |
 | M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                  | Concluído    |
 | M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                      | Concluído    |
-| M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                  | Não iniciado |
+| M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                  | Concluído    |
 | M4    | Review + `waiting`                                             | Reprovação retorna ao build; após três rodadas, encaminha ao humano. Pergunta vira comentário na issue e resposta retoma a execução | Não iniciado |
 | M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel                    | Não iniciado |
 | M6    | Merge + vigia                                                  | `trial` registra “would merge” sem executar; `auto` faz merge preso ao SHA; main vermelha gera PR de revert                         | Não iniciado |
@@ -152,6 +152,16 @@ test:e2e`), a issue #1 do playground virou uma branch `factory/1` enviada. A tas
   46 segundos, por US$ 0,03, enviou `factory/1` e os testes do que ele enviou passaram fora do
   sandbox. Uma primeira tentativa falhou num erro interno do GitHub no push (`fatal error in
 commit_refs`), que não se repetiu; o push agora tenta até três vezes.
+- M3: depois do push, a fábrica roda os checks (`npm test` por padrão) no commit enviado, dentro
+  do sandbox, e grava cada resultado em `evidence` com o SHA, o código de saída real e o fim da
+  saída. Uma função pura, `gate`, só libera o PR quando cada check exigido passou no SHA enviado;
+  resultado de outro SHA não conta, e a ausência de checks exigidos também fecha o portão. O
+  resultado vira o check run `aifactory/verify` no commit, e o PR abre apontando para a issue,
+  com a fala do agente dentro de um bloco recolhido. Um teste com um agente que diz "todos os
+  testes passam" enquanto `npm test` sai com 1 mostra que nenhum PR abre. Contra o GitHub real,
+  o agente roteirizado e o Claude Code de verdade (US$ 0,06) abriram o PR com check run verde.
+  Limite conhecido: um agente pode editar o próprio script de teste. Quem pega isso é o review
+  independente do M4.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

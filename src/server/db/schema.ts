@@ -1,7 +1,25 @@
-import { integer, jsonb, pgTable, serial, text, timestamp, unique } from 'drizzle-orm/pg-core'
+import {
+  boolean,
+  integer,
+  jsonb,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  unique,
+} from 'drizzle-orm/pg-core'
 
 /** The stages of a task, in the order a successful run passes through them. */
-export const TASK_STAGES = ['intake', 'sandbox', 'build', 'push', 'done', 'failed'] as const
+export const TASK_STAGES = [
+  'intake',
+  'sandbox',
+  'build',
+  'push',
+  'verify',
+  'pr',
+  'done',
+  'failed',
+] as const
 export type TaskStage = (typeof TASK_STAGES)[number]
 
 /**
@@ -33,6 +51,9 @@ export const task = pgTable(
     issueNumber: integer('issue_number').notNull(),
     issueTitle: text('issue_title').notNull(),
     stage: text('stage', { enum: TASK_STAGES }).notNull().default('intake'),
+    /** The commit the factory pushed. Evidence counts only when it names this SHA. */
+    headSha: text('head_sha'),
+    pullRequestUrl: text('pull_request_url'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [unique('task_issue_unique').on(table.repository, table.issueNumber)],
@@ -46,5 +67,26 @@ export const stageEvent = pgTable('stage_event', {
     .references(() => task.id),
   stage: text('stage', { enum: TASK_STAGES }).notNull(),
   detail: jsonb('detail'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * What the factory itself observed about a commit: a check it ran, on that SHA, with its real exit
+ * code. An agent's account of its own work is never stored here.
+ */
+export const evidence = pgTable('evidence', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  name: text('name').notNull(),
+  command: text('command').notNull(),
+  sha: text('sha').notNull(),
+  exitCode: integer('exit_code').notNull(),
+  timedOut: boolean('timed_out').notNull(),
+  passed: boolean('passed').notNull(),
+  /** The tail of stdout and stderr. */
+  output: text('output').notNull(),
+  durationMs: integer('duration_ms').notNull(),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })

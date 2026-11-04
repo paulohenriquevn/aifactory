@@ -126,7 +126,7 @@ describe('the factory against the real services', () => {
       .from(stageEvent)
       .where(eq(stageEvent.taskId, created.id))
       .orderBy(stageEvent.id)
-    expect(events.map((e) => e.stage)).toEqual(['sandbox', 'build', 'push', 'done'])
+    expect(events.map((e) => e.stage)).toEqual(['sandbox', 'build', 'push', 'verify', 'pr', 'done'])
 
     // The branch is on GitHub, at the commit the sandbox reported, holding the agent's change.
     const { token } = await github.installationToken(REPO)
@@ -143,6 +143,24 @@ describe('the factory against the real services', () => {
     }
     expect(commit.commit.message).toContain('Add a truncate(text, max) helper (#1)')
     expect(commit.commit.author.name).toBe('aifactory-paulohenriquevn[bot]')
+
+    // The factory ran the tests on that commit, said so as a check run, and opened the pull request.
+    const sha = ref.object.sha
+    const checks = (await api(`/commits/${sha}/check-runs`)) as {
+      check_runs: { name: string; conclusion: string }[]
+    }
+    expect(checks.check_runs).toContainEqual(
+      expect.objectContaining({ name: 'aifactory/verify', conclusion: 'success' }),
+    )
+    const pulls = (await api('/pulls?state=open&head=paulohenriquevn:factory/1')) as {
+      html_url: string
+      head: { sha: string }
+      body: string
+    }[]
+    expect(pulls).toHaveLength(1)
+    expect(pulls[0].head.sha).toBe(sha)
+    expect(pulls[0].html_url).toBe(result.status === 'done' ? result.pullRequestUrl : '')
+    expect(pulls[0].body).toContain('Closes #1')
 
     const [row] = await db
       .select()
