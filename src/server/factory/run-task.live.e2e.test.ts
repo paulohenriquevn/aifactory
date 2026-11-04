@@ -97,6 +97,11 @@ describe.skipIf(!live)('the factory with the real agent', () => {
             process.env.FACTORY_HARNESS ?? DEFAULT_HARNESS,
             labels,
           ),
+        // FACTORY_REVIEWER names a second opinion from another agent; unset, the builder reviews.
+        reviewer: process.env.FACTORY_REVIEWER
+          ? (labels) =>
+              pickHarness(harnessRegistry(process.env), process.env.FACTORY_REVIEWER!, labels)
+          : undefined,
         author: {
           name: 'aifactory-paulohenriquevn[bot]',
           email: 'aifactory@users.noreply.github.com',

@@ -63,19 +63,19 @@ Princípios:
 Os marcos abaixo recuperam a proposta da sessão; os estados refletem o código
 local inspecionado em 2026-11-03.
 
-| Marco | Entrega                                                        | Critério de aceite                                                                                                                                                                                   | Estado       |
-| ----- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                                                                                             | Concluído    |
-| M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                                                                                   | Concluído    |
-| M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                                                                                       | Concluído    |
-| M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                                                                                   | Concluído    |
-| M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                            | Em andamento |
-| M4a   | Review independente + rodadas                                  | Checks vermelhos ou review que pede mudanças devolvem o trabalho à mesma sessão do agente; após três tentativas, PR em rascunho e comentário na issue; um PR só abre com evidência verde e aprovação | Concluído    |
-| M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Concluído    |
-| M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel (local, com um dono)                                                                | Concluído    |
-| M6a   | Pré-release e release                                          | A fábrica gera uma pré-release para todo commit com checks verdes que chegou a um PR; um humano (painel) ou um agente (modo `auto`) promove a release, com o merge preso ao SHA entregue             | Concluído    |
-| M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Concluído    |
-| M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Concluído    |
+| Marco | Entrega                                                        | Critério de aceite                                                                                                                                                                                   | Estado    |
+| ----- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| M0    | Fundação: TheoKit, PostgreSQL, Drizzle, CI, branch `workspace` | CI executa `theokit check` e testes, com resultado verde                                                                                                                                             | Concluído |
+| M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                                                                                   | Concluído |
+| M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                                                                                       | Concluído |
+| M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                                                                                   | Concluído |
+| M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                            | Concluído |
+| M4a   | Review independente + rodadas                                  | Checks vermelhos ou review que pede mudanças devolvem o trabalho à mesma sessão do agente; após três tentativas, PR em rascunho e comentário na issue; um PR só abre com evidência verde e aprovação | Concluído |
+| M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Concluído |
+| M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel (local, com um dono)                                                                | Concluído |
+| M6a   | Pré-release e release                                          | A fábrica gera uma pré-release para todo commit com checks verdes que chegou a um PR; um humano (painel) ou um agente (modo `auto`) promove a release, com o merge preso ao SHA entregue             | Concluído |
+| M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Concluído |
+| M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Concluído |
 
 As aprovações de ferramentas com efeitos externos seguem a convenção do
 `AGENTS.md`. A interação com o modo `auto` ficou definida pelo conceito de pré-release: o que a
@@ -88,10 +88,12 @@ Estado em 2026-11-04: o contrato `CodingHarness` (`egress`, `prepare`, `run`, `r
 `sessionId` e sinal de cota no resultado) está implementado, com o Claude Code e o Codex como
 harnesses e um registro que escolhe o agente por label `harness:<nome>`, `FACTORY_HARNESS` ou o
 padrão. O Claude Code roda do início ao fim por chave de API e por assinatura. O Codex instala,
-autentica pelo firewall e lê a parada por cota numa execução real da fábrica; falta uma execução que
-complete uma issue, que depende da cota da conta do ChatGPT (libera em 2026-11-05 11:48). O
-M3b fecha com essa execução, com a renovação do token do Codex exercitada contra a OpenAI e com o
-login dedicado `~/.codex-factory-1`. Um terceiro agente deve custar um arquivo.
+autentica pelo firewall e lê a parada por cota. Em 2026-11-04, com crédito na conta e o login dedicado
+`~/.codex-factory-1`, o Codex completou uma issue de ponta a ponta (construiu, revisou, PR #39 e
+pré-release), e as duas combinações de agentes funcionaram: Claude Code construindo com revisão do
+Codex (PR #40) e Codex construindo com revisão do Claude Code (PR #41). A renovação do token foi
+exercitada contra a OpenAI: o refresh token girou, o `auth.json` foi regravado com modo 600 e o
+`~/.codex` do Paulo não mudou. Um terceiro agente deve custar um arquivo.
 
 **Contrato do harness.** `CodingHarness` hoje só tem `run`. Para suportar vários agentes e o
 `waiting` do M4, cada harness passa a declarar:
@@ -262,8 +264,8 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   e a task termina em `handoff`. Contra os serviços reais: o Claude Code construiu, outro Claude Code
   revisou e aprovou (US$ 0,04 no total, PR #9), e, com um revisor roteirizado que pediu um teste
   específico, o Claude real retomou a mesma sessão, acrescentou o teste, houve o segundo commit, o
-  segundo review aprovou e o PR #10 abriu. Falta rodar o revisor em outro agente (Codex), por causa
-  da cota da conta.
+  segundo review aprovou e o PR #10 abriu. O revisor em outro agente (Codex) foi
+  exercitado depois, no M3b.
 - M4b: o agente que não pode seguir sem uma decisão termina a resposta com `QUESTION:`. A fábrica salva
   o disco do sandbox num snapshot, comenta a pergunta na issue, grava tudo o que uma retomada precisa
   em `question` e põe a task em `waiting`. Um cron (`poll-answers`, a cada minuto) lê os comentários
