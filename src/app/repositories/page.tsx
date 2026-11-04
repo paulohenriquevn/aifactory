@@ -201,7 +201,9 @@ export default function RepositoriesPage() {
               rel="noreferrer"
               className="text-sm text-foreground underline underline-offset-2"
             >
-              Choose which repositories the App reaches ({i.account})
+              {i.selection === 'all'
+                ? `Restrict which repositories the App reaches (${i.account})`
+                : `Choose which repositories the App reaches (${i.account})`}
             </a>
           ))}
           {data && data.installations.length === 0 && data.installUrl ? (
@@ -223,10 +225,19 @@ export default function RepositoriesPage() {
       {data?.error ? (
         <Alert intent="warning" title="GitHub could not be asked" description={data.error} />
       ) : null}
+      {data?.installations.map((i) =>
+        i.selection === 'all' ? (
+          <p key={i.account} className="text-sm text-muted-foreground">
+            The App already reaches every repository of {i.account}, so there is nothing to grant:
+            enable the ones you want below. The link above is only for narrowing that list, and
+            GitHub shows it only when you are signed in as {i.account}.
+          </p>
+        ) : null,
+      )}
       {data?.owner ? (
         <p className="text-sm text-muted-foreground">
-          The App is private. Open the links above signed in to GitHub as {data.owner}: any other
-          account sees &ldquo;private GitHub App&rdquo;.
+          The App is private: signed in as any other account, GitHub answers 404 or &ldquo;private
+          GitHub App&rdquo;.
         </p>
       ) : null}
       {data ? (

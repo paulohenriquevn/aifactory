@@ -165,13 +165,34 @@ describe('repositories', () => {
     expect(screen.getByText('enabled')).toBeDefined()
     expect(screen.getByText('public')).toBeDefined()
     const manage = screen.getByRole('link', {
-      name: 'Choose which repositories the App reaches (paulo)',
+      name: 'Restrict which repositories the App reaches (paulo)',
     })
     expect(manage.getAttribute('href')).toBe('https://github.com/settings/installations/9')
     expect(screen.queryByRole('link', { name: 'Install the App' })).toBeNull()
+    expect(screen.getByText(/already reaches every repository of paulo/)).toBeDefined()
+    expect(screen.getByText(/signed in as any other account, GitHub answers 404/)).toBeDefined()
+  })
+
+  it('offers to choose repositories, and says nothing about "already reaches", when the App was given only some', async () => {
+    serve({
+      'GET /api/panel/repositories': repos({
+        installations: [
+          {
+            account: 'acme',
+            selection: 'selected',
+            url: 'https://github.com/organizations/acme/settings/installations/2',
+          },
+        ],
+      }),
+    })
+    mount()
+    await waitFor(() => expect(screen.getByText('paulo/app')).toBeDefined())
     expect(
-      screen.getByText(/The App is private\. Open the links above signed in to GitHub as paulo/),
-    ).toBeDefined()
+      screen
+        .getByRole('link', { name: 'Choose which repositories the App reaches (acme)' })
+        .getAttribute('href'),
+    ).toBe('https://github.com/organizations/acme/settings/installations/2')
+    expect(screen.queryByText(/already reaches every repository/)).toBeNull()
   })
 
   it('enables a repository through the API, with the header the server asks for', async () => {
