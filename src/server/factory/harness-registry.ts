@@ -17,20 +17,21 @@ export function harnessRegistry(env: NodeJS.ProcessEnv = process.env): HarnessRe
   }
 }
 
-const LABEL = /^harness:(.+)$/i
-
 /**
- * The agent for an issue: the one its `harness:<name>` label names, or the default. Two such labels
+ * The agent for an issue: the one its `harness:<name>` label names (`reviewer:<name>` for the
+ * reviewer), or the default. Two such labels
  * or an unknown name are refused, because running the wrong agent silently costs real money.
  */
 export function pickHarness(
   registry: HarnessRegistry,
   fallback: string,
   labels: string[],
+  role: 'harness' | 'reviewer' = 'harness',
 ): CodingHarness {
-  const named = [...new Set(labels.flatMap((l) => LABEL.exec(l)?.[1].trim().toLowerCase() ?? []))]
+  const label = new RegExp(`^${role}:(.+)$`, 'i')
+  const named = [...new Set(labels.flatMap((l) => label.exec(l)?.[1].trim().toLowerCase() ?? []))]
   if (named.length > 1) {
-    throw new Error(`the issue names more than one agent: ${named.join(', ')}`)
+    throw new Error(`the issue names more than one ${role}: ${named.join(', ')}`)
   }
   const name = named[0] ?? fallback
   const build = registry[name]

@@ -63,6 +63,16 @@ test('rejects max below 1', () => assert.throws(() => truncate('abc', 0), RangeE
   },
 }
 
+/** The reviewer: reads nothing and approves, so the pipeline's real services are what is tested. */
+const scriptedReviewer: CodingHarness = {
+  name: 'scripted-reviewer',
+  egress: async () => [],
+  run: async () => ({
+    ok: true,
+    summary: JSON.stringify({ verdict: 'approve', summary: 'scripted approval', findings: [] }),
+  }),
+}
+
 async function deleteBranch(branch: string) {
   const { token } = await github.installationToken(REPO)
   await fetch(`https://api.github.com/repos/${REPO}/git/refs/heads/${branch}`, {
@@ -112,6 +122,7 @@ describe('the factory against the real services', () => {
         github,
         sandbox: vercelSandboxProvider(),
         harness: scriptedAgent,
+        reviewer: scriptedReviewer,
         author: {
           name: 'aifactory-paulohenriquevn[bot]',
           email: 'aifactory@users.noreply.github.com',
@@ -126,7 +137,15 @@ describe('the factory against the real services', () => {
       .from(stageEvent)
       .where(eq(stageEvent.taskId, created.id))
       .orderBy(stageEvent.id)
-    expect(events.map((e) => e.stage)).toEqual(['sandbox', 'build', 'push', 'verify', 'pr', 'done'])
+    expect(events.map((e) => e.stage)).toEqual([
+      'sandbox',
+      'build',
+      'push',
+      'verify',
+      'review',
+      'pr',
+      'done',
+    ])
 
     // The branch is on GitHub, at the commit the sandbox reported, holding the agent's change.
     const { token } = await github.installationToken(REPO)

@@ -5,13 +5,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
-import { evidence, ingress, stageEvent, task } from '../db/schema'
+import { evidence, ingress, review, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { CheckRun, GithubApi } from '../github/pulls'
 
 import { FakeSandbox, type Reply } from './fake-sandbox'
 import type { CodingHarness } from './harness'
-import { runTask, type RunTaskDeps } from './run-task'
+import { mergeEgress, runTask, type RunTaskDeps } from './run-task'
 
 const TOKEN = 'ghs_installation_token_must_not_leak'
 const ANTHROPIC = 'sk-ant-key-must-not-leak'
@@ -22,7 +22,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table review, evidence, stage_event, task, ingress restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -63,20 +63,36 @@ const github: GithubApp & { asked: string[] } = {
 const PR_URL = 'https://github.com/paulo/app/pull/12'
 
 /** A GitHub that records what the factory asked of it. */
-const githubApi: GithubApi & { checkRuns: CheckRun[]; pulls: string[] } = {
+const githubApi: GithubApi & {
+  checkRuns: CheckRun[]
+  pulls: string[]
+  drafts: boolean[]
+  comments: string[]
+} = {
   checkRuns: [],
   pulls: [],
+  drafts: [],
+  comments: [],
   async createCheckRun(_repo, _token, check) {
     this.checkRuns.push(check)
   },
   async openPullRequest(_repo, _token, pull) {
     this.pulls.push(pull.head)
+    this.drafts.push(pull.draft ?? false)
     return { number: 12, url: PR_URL }
   },
+  async commentOnIssue(_repo, _token, _issue, body) {
+    this.comments.push(body)
+  },
 }
+/** Whether the checkout holds work nobody committed yet; any agent that runs leaves some. */
+let dirty = true
 beforeEach(() => {
   githubApi.checkRuns = []
   githubApi.pulls = []
+  githubApi.drafts = []
+  githubApi.comments = []
+  dirty = true
 })
 
 /** What a real agent's harness contributes: the rule that signs its calls. */
@@ -90,6 +106,48 @@ const okHarness: CodingHarness = {
   run: async () => ({ ok: true, summary: 'added truncate', costUsd: 0.12 }),
 }
 
+const verdictJson = (verdict: 'approve' | 'changes', findings: object[] = [], summary = 'ok') =>
+  `Looked at it.\n${JSON.stringify({ verdict, summary, findings })}`
+
+/** A reviewer that answers from a script, one answer per review, and remembers its prompts. */
+function reviewerSaying(...answers: string[]): CodingHarness & { prompts: string[] } {
+  const prompts: string[] = []
+  return {
+    name: 'fake-reviewer',
+    egress: async () => [],
+    prompts,
+    run: async (_backend, input) => {
+      prompts.push(input.prompt)
+      return {
+        ok: true,
+        summary: answers[Math.min(prompts.length, answers.length) - 1],
+        costUsd: 0.01,
+      }
+    },
+  }
+}
+
+/** A builder that can be sent back: every pass leaves uncommitted work, as a real agent does. */
+function resumableBuilder(): CodingHarness & { resumed: string[] } {
+  const resumed: string[] = []
+  return {
+    name: 'fake-agent',
+    egress: agentEgress,
+    resumed,
+    run: async () => {
+      dirty = true
+      return { ok: true, summary: 'first pass', costUsd: 0.1, sessionId: 'sess-1' }
+    },
+    resume: async (_backend, sessionId, input) => {
+      dirty = true
+      resumed.push(`${sessionId}: ${input.prompt}`)
+      return { ok: true, summary: `pass ${resumed.length + 1}`, costUsd: 0.1, sessionId }
+    },
+  }
+}
+
+const approving = () => reviewerSaying(verdictJson('approve'))
+
 function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTaskDeps {
   return {
     db: getDb(),
@@ -97,6 +155,7 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
     githubApi,
     sandbox,
     harness: okHarness,
+    reviewer: approving(),
     pushRetryDelayMs: 0,
     author: { name: 'aifactory[bot]', email: 'bot@users.noreply.github.com' },
     fetchIssue: async () => ({
@@ -111,18 +170,23 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
 
 /** A sandbox that behaves like a repository the agent changed. */
 const changed = (extra?: (command: string) => Reply | undefined) => {
-  let committed = false
+  let commits = 0
   return (command: string) => {
     if (extra) {
       const reply = extra(command)
       if (reply) return reply
     }
-    if (command.includes('commit -F')) committed = true
+    if (command.includes('commit -F')) {
+      commits += 1
+      dirty = false
+    }
     if (command.includes('rev-parse --show-toplevel')) return { stdout: '/vercel/work\n' }
     if (command.includes('status --porcelain')) {
-      return { stdout: committed ? '' : ' M src/truncate.js\n' }
+      return { stdout: dirty ? ' M src/truncate.js\n' : '' }
     }
-    if (command.endsWith('rev-parse HEAD')) return { stdout: 'abc123def\n' }
+    if (command.endsWith('rev-parse HEAD')) {
+      return { stdout: commits <= 1 ? 'abc123def\n' : `abc123def${commits}\n` }
+    }
     return undefined
   }
 }
@@ -149,7 +213,15 @@ describe('runTask', () => {
       sha: 'abc123def',
       pullRequestUrl: PR_URL,
     })
-    expect(await stagesOf(id)).toEqual(['sandbox', 'build', 'push', 'verify', 'pr', 'done'])
+    expect(await stagesOf(id)).toEqual([
+      'sandbox',
+      'build',
+      'push',
+      'verify',
+      'review',
+      'pr',
+      'done',
+    ])
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
     expect(row.stage).toBe('done')
     expect(sandbox.backend.commands.some((c) => c.endsWith('push origin factory/7'))).toBe(true)
@@ -157,12 +229,14 @@ describe('runTask', () => {
     expect(sandbox.stopped).toBe(1)
   })
 
-  it('records the cost and the branch on the done stage', async () => {
+  it('records the whole cost and the branch on the done stage', async () => {
     const id = await seedTask()
     await runTask(deps(new FakeSandbox(changed())), id)
 
     const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
-    expect(done.detail).toMatchObject({ branch: 'factory/7', sha: 'abc123def', costUsd: 0.12 })
+    // The builder's 0.12 plus the reviewer's 0.01: the run's whole cost, not only the agent's.
+    expect(done.detail).toMatchObject({ branch: 'factory/7', sha: 'abc123def', attempts: 1 })
+    expect((done.detail as { costUsd: number }).costUsd).toBeCloseTo(0.13)
   })
 
   it('opens the pull request after green evidence for the pushed commit, and says so on GitHub', async () => {
@@ -534,5 +608,262 @@ describe('runTask', () => {
 
   it('throws for a task that does not exist', async () => {
     await expect(runTask(deps(new FakeSandbox()), 999)).rejects.toThrow(/does not exist/)
+  })
+})
+
+const reviewsOf = async (taskId: number) =>
+  getDb().select().from(review).where(eq(review.taskId, taskId)).orderBy(review.id)
+
+const finding = { severity: 'major', file: 'src/truncate.js', issue: 'max=0 is not rejected' }
+
+describe('runTask review loop', () => {
+  it('opens the pull request with the review in it when the reviewer approves', async () => {
+    const id = await seedTask()
+    const reviewer = reviewerSaying(verdictJson('approve', [], 'Does what the issue asks.'))
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'done', pullRequestUrl: PR_URL })
+    expect(await reviewsOf(id)).toMatchObject([
+      { round: 1, sha: 'abc123def', verdict: 'approve', reviewer: 'fake-reviewer' },
+    ])
+    expect(reviewer.prompts[0]).toContain('git diff abc123def...HEAD')
+    expect(reviewer.prompts[0]).toContain('Write truncate(text, max).')
+    expect(githubApi.drafts).toEqual([false])
+  })
+
+  it('sends the work back to the same session, then opens the pull request on the next approval', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const reviewer = reviewerSaying(
+      verdictJson('changes', [finding], 'max=0 slips through'),
+      verdictJson('approve'),
+    )
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done', sha: 'abc123def2' })
+    expect(builder.resumed).toHaveLength(1)
+    expect(builder.resumed[0]).toContain('sess-1:')
+    expect(builder.resumed[0]).toContain('max=0 is not rejected')
+    expect(await stagesOf(id)).toEqual([
+      'sandbox',
+      'build',
+      'push',
+      'verify',
+      'review',
+      'build',
+      'push',
+      'verify',
+      'review',
+      'pr',
+      'done',
+    ])
+    expect((await reviewsOf(id)).map((r) => [r.round, r.sha, r.verdict])).toEqual([
+      [1, 'abc123def', 'changes'],
+      [2, 'abc123def2', 'approve'],
+    ])
+    expect(githubApi.checkRuns.map((c) => c.headSha)).toEqual(['abc123def', 'abc123def2'])
+    expect(githubApi.pulls).toEqual(['factory/7'])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row.headSha).toBe('abc123def2')
+  })
+
+  it('hands the work to a person after three reviews that all ask for changes', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const reviewer = reviewerSaying(verdictJson('changes', [finding], 'still wrong'))
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'handoff', pullRequestUrl: PR_URL })
+    expect(result.status === 'handoff' && result.reason).toContain('after 3 attempts')
+    expect(builder.resumed).toHaveLength(2)
+    expect(reviewer.prompts).toHaveLength(3)
+    expect(githubApi.drafts).toEqual([true])
+    expect(githubApi.comments).toHaveLength(1)
+    expect(githubApi.comments[0]).toContain('draft pull request')
+    expect(githubApi.comments[0]).toContain('max=0 is not rejected')
+    const stages = await stagesOf(id)
+    expect(stages.slice(-2)).toEqual(['review', 'handoff'])
+    expect(stages).not.toContain('done')
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'handoff', pullRequestUrl: PR_URL })
+  })
+
+  it('hands over at once when the reviewer gives no verdict, and does not rework blindly', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const reviewer = reviewerSaying('Looks good to me, ship it.')
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'handoff' })
+    expect(builder.resumed).toHaveLength(0)
+    expect((await reviewsOf(id))[0]).toMatchObject({ verdict: 'invalid' })
+    expect(githubApi.drafts).toEqual([true])
+  })
+
+  it('does not take an approval that lists a blocking finding', async () => {
+    const id = await seedTask()
+    const reviewer = reviewerSaying(
+      verdictJson('approve', [{ severity: 'blocker', issue: 'leaks a key' }]),
+    )
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'handoff' })
+    expect(githubApi.drafts).toEqual([true])
+  })
+
+  it('treats a reviewer that fails as no approval', async () => {
+    const id = await seedTask()
+    const broken: CodingHarness = {
+      name: 'broken-reviewer',
+      egress: async () => [],
+      run: async () => ({ ok: false, summary: 'segfault' }),
+    }
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { reviewer: broken }), id)
+
+    expect(result).toMatchObject({ status: 'handoff' })
+    expect((await reviewsOf(id))[0].summary).toContain('the reviewer failed: segfault')
+  })
+
+  it('goes back to the builder with the failing output when the checks fail, then passes', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    let runs = 0
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (!c.endsWith('npm test')) return undefined
+        runs += 1
+        return runs === 1 ? { exitCode: 1, stdout: 'not ok 1 - rejects max below 1' } : undefined
+      }),
+    )
+
+    const result = await runTask(deps(sandbox, { harness: builder }), id)
+
+    expect(result).toMatchObject({ status: 'done', sha: 'abc123def2' })
+    expect(builder.resumed[0]).toContain('not ok 1 - rejects max below 1')
+    expect(githubApi.checkRuns.map((c) => c.conclusion)).toEqual(['failure', 'success'])
+    expect((await getDb().select().from(evidence)).map((e) => [e.sha, e.passed])).toEqual([
+      ['abc123def', false],
+      ['abc123def2', true],
+    ])
+    expect(await stagesOf(id)).not.toContain('failed')
+  })
+
+  it('fails at verify, with the attempts it took, when the checks never pass', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const sandbox = new FakeSandbox(
+      changed((c) => (c.endsWith('npm test') ? { exitCode: 1, stdout: 'not ok' } : undefined)),
+    )
+
+    const result = await runTask(deps(sandbox, { harness: builder }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'verify' })
+    expect(result.status === 'failed' && result.error).toContain('after 3 attempts')
+    expect(builder.resumed).toHaveLength(2)
+    expect(githubApi.pulls).toEqual([])
+  })
+
+  it('does not accept an approval when the agent changed the command the checks run', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (c.includes('show HEAD:package.json')) {
+          return { stdout: JSON.stringify({ scripts: { test: 'true' } }) }
+        }
+        if (c.includes(':package.json')) {
+          return { stdout: JSON.stringify({ scripts: { test: 'node --test' } }) }
+        }
+        return undefined
+      }),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'handoff' })
+    const [stored] = await reviewsOf(id)
+    expect(stored.verdict).toBe('changes')
+    expect((stored.findings as { issue: string }[]).map((f) => f.issue).join(' ')).toContain(
+      'the "test" script was changed',
+    )
+    expect(githubApi.drafts).toEqual([true])
+  })
+
+  it('throws away anything the reviewer wrote to the checkout', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    await runTask(deps(sandbox), id)
+
+    const commands = sandbox.backend.commands
+    const reviewed = commands.findIndex((c) => c.includes('reset --hard abc123def'))
+    expect(reviewed).toBeGreaterThan(-1)
+    expect(commands[reviewed + 1]).toContain('clean -fd')
+  })
+
+  it('stops a rework that changes nothing instead of reviewing the same commit again', async () => {
+    const id = await seedTask()
+    const lazy: CodingHarness = {
+      ...resumableBuilder(),
+      resume: async () => ({ ok: true, summary: 'nothing to do', sessionId: 'sess-1' }),
+    }
+    const reviewer = reviewerSaying(verdictJson('changes', [finding]))
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { harness: lazy, reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
+    expect(result.status === 'failed' && result.error).toContain('no change')
+  })
+
+  it("gives the sandbox both agents' firewall rules, and the reviewer's quota stop is a wait", async () => {
+    const id = await seedTask()
+    const reviewer: CodingHarness = {
+      name: 'codex',
+      egress: async () => [{ domain: 'chatgpt.com', headers: { authorization: 'Bearer c' } }],
+      run: async () => ({
+        ok: false,
+        summary: 'limit',
+        quota: { message: 'usage limit', resetsAt: 'tomorrow' },
+      }),
+    }
+    const sandbox = new FakeSandbox(changed())
+
+    const result = await runTask(deps(sandbox, { reviewer }), id)
+
+    expect(sandbox.specs[0].egress.map((r) => r.domain).sort()).toEqual([
+      'api.anthropic.com',
+      'chatgpt.com',
+      'github.com',
+      'registry.npmjs.org',
+    ])
+    expect(result).toMatchObject({ status: 'failed', stage: 'review' })
+    const failed = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
+    )[0]
+    expect(failed.detail).toMatchObject({ quota: true, resetsAt: 'tomorrow' })
+  })
+})
+
+describe('mergeEgress', () => {
+  it('keeps one rule per domain and refuses two ways to sign the same one', () => {
+    const same = { domain: 'a.example', headers: { authorization: 'x' } }
+    expect(mergeEgress([[same], [{ ...same }, { domain: 'b.example' }]])).toHaveLength(2)
+    expect(() =>
+      mergeEgress([[same], [{ domain: 'a.example', headers: { authorization: 'y' } }]]),
+    ).toThrow(/sign a.example differently/)
   })
 })

@@ -58,6 +58,12 @@ export function assertSessionId(id: string): string {
   return id
 }
 
+/**
+ * The longest answer a harness keeps. A reviewer's verdict is the last thing it writes, so this
+ * is generous; what is stored or shown is cut shorter by whoever uses it.
+ */
+export const SUMMARY_MAX = 20_000
+
 export const PROMPT_FILE = '/tmp/factory-prompt.md'
 
 export function buildPrompt(input: {

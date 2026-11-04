@@ -21,18 +21,23 @@ issue com a label "factory"
    sandbox isolado ----- clone, branch factory/<n>
         |
         v
-   agente (Claude Code ou Codex) implementa a issue
+   agente construtor (Claude Code ou Codex) implementa a issue
         |
         v
    a fábrica faz o commit e o push
         |
         v
    a fábrica roda os checks no commit enviado  --> tabela evidence
-        |
+        |-- falharam --> volta ao mesmo agente, com a saída que falhou (até 3 tentativas)
+        |-- passaram
         v
-   portão: todos os checks passaram neste SHA?
-        |-- não --> check run "failure", task em failed, nenhum PR
-        |-- sim --> check run "success" + pull request com "Closes #<n>"
+   revisor independente lê o diff, e a fábrica soma fatos do diff --> tabela review
+        |-- pede mudanças --> volta ao mesmo agente, com os achados (até 3 tentativas)
+        |-- aprova
+        v
+   check run "success" + pull request com "Closes #<n>"
+        |
+        |  (sem aprovação e sem tentativas: PR em rascunho + comentário na issue = handoff)
 ```
 
 O agente escreve código. Quem commita, envia, verifica e abre o PR é a fábrica. Uma declaração do
@@ -49,9 +54,13 @@ Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `
 | `build`   | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                        |
 | `push`    | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).     |
 | `verify`  | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.     |
+| `review`  | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.      |
 | `pr`      | Se o portão abriu, cria o check run `aifactory/verify` e o pull request, ou devolve o que já estava aberto. |
-| `done`    | Guarda o SHA, a URL do PR e o custo.                                                                        |
+| `done`    | Guarda o SHA, a URL do PR, o número de tentativas e o custo total (construtor mais revisor).                |
+| `handoff` | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.       |
 | `failed`  | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                 |
+
+Depois de um retrabalho, a task volta a `build` e repete `push`, `verify` e `review`: o histórico mostra cada tentativa.
 
 O job `run-task` não tenta de novo sozinho (`maxAttempts: 1`): repetir gastaria o orçamento do
 agente na mesma issue. Uma task que falha fica em `failed` para uma pessoa olhar.
@@ -100,8 +109,52 @@ comando, SHA, código de saída real, fim da saída e duração.
 O resultado também aparece no GitHub como o check run `aifactory/verify`. O corpo do PR traz
 `Closes #<n>`, os checks e, dentro de um bloco recolhido, o que o agente disse.
 
-Limite conhecido: um agente pode editar o próprio script de teste para sempre passar. O review
-independente do M4 deve pegar isso.
+Um agente pode editar o próprio script de teste para sempre passar. A fábrica checa isso (ver
+"Review independente e tentativas") e o revisor lê o diff.
+
+## Review independente e tentativas
+
+Um PR só abre com duas coisas: evidência verde para o SHA enviado **e** a aprovação de um revisor
+que não escreveu o código.
+
+**O revisor** é um agente (o mesmo registro do construtor) rodado numa sessão nova, sem acesso à
+conversa do construtor. Ele recebe a issue e o comando `git diff <base>...HEAD`, é instruído a não
+alterar nada e termina com um objeto JSON: `verdict` (`approve` ou `changes`), `summary` e
+`findings`, cada um com `severity` (`blocker`, `major`, `minor`), `file` e `issue`. Tudo o que ele
+escrever no checkout é descartado (`git reset --hard` e `git clean -fd` no SHA enviado).
+
+O padrão é o revisor ser o próprio agente do construtor, numa sessão limpa. Isso é uma segunda
+leitura, não uma segunda opinião. Para uma opinião de verdade, use outro agente:
+`FACTORY_REVIEWER=codex`, ou o label `reviewer:codex` na issue. O sandbox recebe as regras de
+firewall dos dois agentes, e dois agentes não podem assinar o mesmo domínio de formas diferentes.
+
+**Leitura do veredito.** Uma resposta sem veredito, com uma palavra que não seja `approve` ou
+`changes`, ou uma aprovação que lista um achado `blocker` ou `major`, vale como `invalid`: sem
+aprovação. Quando o revisor se contradiz, a fábrica não escolhe a leitura mais gentil.
+
+**Fatos do diff.** Duas coisas que um agente pode entortar e um revisor pode deixar passar são
+checadas sem modelo e valem como achados que impedem a aprovação:
+
+- o script `test` do `package.json` mudou entre a base e o commit (os checks passariam a rodar outra
+  coisa), ou o diff toca `.github/`: achado `blocker`;
+- um arquivo de teste foi apagado: achado `major`.
+
+**Tentativas.** São no máximo 3, contadas juntas para checks e review.
+
+| Situação                                            | O que acontece                                                                               |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Checks falham, há tentativa e o agente sabe retomar | Volta à mesma sessão do construtor com a saída que falhou                                    |
+| Checks falham, sem tentativa ou sem como retomar    | `failed` em `verify`, sem PR, com o número de tentativas                                     |
+| Revisor pede mudanças, há tentativa                 | Volta à mesma sessão com os achados                                                          |
+| Revisor pede mudanças na 3ª tentativa               | `handoff`: PR em rascunho (título `[needs a person]`) e comentário na issue com o que sobrou |
+| Veredito inválido, ou revisor que falha             | `handoff` na hora: não há o que devolver ao construtor                                       |
+| Retrabalho que não muda nada                        | `failed` em `push`: revisar o mesmo commit de novo não adiantaria                            |
+| Cota do revisor esgotada                            | `failed` em `review` com `quota: true`                                                       |
+
+O retomar usa `claude -p --resume <id>` ou `codex exec resume <id>`, na mesma sessão e no mesmo
+sandbox. O retrabalho gera um novo commit (`<título>: address feedback (attempt n)`), e os checks
+rodam de novo no SHA novo, com um novo check run. O PR traz o veredito do revisor e os achados que
+restaram.
 
 ## Claude Code
 
@@ -214,7 +267,8 @@ O agente de uma task vem, nesta ordem, de:
 2. `FACTORY_HARNESS`;
 3. o padrão, `claude-code`.
 
-Dois labels de agentes diferentes, ou um nome desconhecido, fazem a task falhar no estágio
+O revisor segue a mesma regra com `reviewer:<nome>` e `FACTORY_REVIEWER`; sem nenhum dos dois, é o agente
+do construtor. Dois labels de agentes diferentes, ou um nome desconhecido, fazem a task falhar no estágio
 `sandbox`, antes de criar o sandbox: rodar o agente errado em silêncio custaria dinheiro. Cada agente
 só precisa da sua credencial quando uma task o pede.
 
@@ -294,6 +348,7 @@ responde `/api/health` mesmo sem as credenciais.
 - Uma task por issue. Repor a label não reexecuta.
 - Um repositório de cada vez no sentido de operação: não há onboarding de repositórios.
 - O servidor e o túnel rodam como processos da sessão de trabalho, sem supervisor.
-- Não há pergunta ao humano, review independente, painel nem merge. Estão no M4 a M6.
+- Não há pergunta ao humano (o `waiting` do M4), painel nem merge. Estão no M4 a M6.
+- Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.
 - O Codex ainda não completou uma issue do início ao fim, por causa da cota da conta usada.
 - A sessão do Vercel Sandbox no plano Hobby termina em 45 minutos.

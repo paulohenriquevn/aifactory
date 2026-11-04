@@ -4,6 +4,7 @@ import {
   assertSessionId,
   detectQuota,
   PROMPT_FILE,
+  SUMMARY_MAX,
   type CodingHarness,
   type HarnessInput,
   type HarnessResult,
@@ -93,7 +94,7 @@ export function parseClaudeResult(exitCode: number, stdout: string, stderr: stri
       total_cost_usd?: number
       session_id?: string
     }
-    const summary = String(parsed.result ?? '').slice(0, 4000)
+    const summary = String(parsed.result ?? '').slice(0, SUMMARY_MAX)
     const ok = exitCode === 0 && parsed.is_error !== true
     const quota = ok ? undefined : detectQuota(summary)
     return {

@@ -10,6 +10,7 @@ import {
   assertSessionId,
   detectQuota,
   PROMPT_FILE,
+  SUMMARY_MAX,
   type CodingHarness,
   type HarnessInput,
   type HarnessResult,
@@ -274,7 +275,7 @@ export function parseCodexResult(exitCode: number, stdout: string, stderr: strin
   const quota = ok ? undefined : detectQuota(text)
   return {
     ok,
-    summary: (ok ? summary : `codex failed: ${text || `exit ${exitCode}`}`).slice(0, 4000),
+    summary: (ok ? summary : `codex failed: ${text || `exit ${exitCode}`}`).slice(0, SUMMARY_MAX),
     ...(sessionId ? { sessionId } : {}),
     ...(quota ? { quota } : {}),
   }

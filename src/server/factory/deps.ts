@@ -22,6 +22,13 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
   const registry = harnessRegistry(env)
   const fallback = env.FACTORY_HARNESS || DEFAULT_HARNESS
   const pick = (labels: string[]) => pickHarness(registry, fallback, labels)
+  // The reviewer defaults to the builder's own agent in a fresh session. A different agent is a
+  // real second opinion, so FACTORY_REVIEWER or a `reviewer:<name>` label can name one.
+  const reviewerName = env.FACTORY_REVIEWER
+  const pickReviewer = (labels: string[]) =>
+    reviewerName || labels.some((l) => /^reviewer:/i.test(l))
+      ? pickHarness(registry, reviewerName ?? fallback, labels, 'reviewer')
+      : undefined
   return {
     db: getDb(),
     github: createGithubApp({
@@ -30,6 +37,7 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
     }),
     sandbox: vercelSandboxProvider(),
     harness: pick,
+    reviewer: pickReviewer,
     author: { name: `${slug}[bot]`, email: `${slug}[bot]@users.noreply.github.com` },
   }
 }

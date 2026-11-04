@@ -22,13 +22,23 @@ describe('pickHarness', () => {
     )
     expect(() =>
       pickHarness(registry, 'claude-code', ['harness:codex', 'harness:claude-code']),
-    ).toThrow(/more than one agent/)
+    ).toThrow(/more than one harness/)
   })
 
   it('refuses an unknown agent and lists the known ones', () => {
     expect(() => pickHarness(registry, 'claude-code', ['harness:gemini'])).toThrow(
       /unknown agent "gemini" \(known: claude-code, codex\)/,
     )
+  })
+
+  it('picks the reviewer from its own label, apart from the builder', () => {
+    expect(
+      pickHarness(registry, 'claude-code', ['harness:codex', 'reviewer:claude-code'], 'reviewer')
+        .name,
+    ).toBe('claude-code')
+    expect(() =>
+      pickHarness(registry, 'claude-code', ['reviewer:codex', 'reviewer:claude-code'], 'reviewer'),
+    ).toThrow(/more than one reviewer/)
   })
 
   it('only needs the credential of the agent it builds', () => {

@@ -16,8 +16,9 @@ export type GithubApi = {
   openPullRequest(
     repo: string,
     token: string,
-    pull: { head: string; title: string; body: string },
+    pull: { head: string; title: string; body: string; draft?: boolean },
   ): Promise<PullRequest>
+  commentOnIssue(repo: string, token: string, issueNumber: number, body: string): Promise<void>
 }
 
 /** Runs on the factory host with an installation token, never in the sandbox. */
@@ -81,13 +82,30 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
         await ensure(
           await call(repo, token, '/pulls', {
             method: 'POST',
-            body: JSON.stringify({ head: pull.head, base, title: pull.title, body: pull.body }),
+            body: JSON.stringify({
+              head: pull.head,
+              base,
+              title: pull.title,
+              body: pull.body,
+              draft: pull.draft ?? false,
+            }),
           }),
           `opening a pull request on ${repo}`,
           [201],
         )
       ).json()) as { number: number; html_url: string }
       return { number: created.number, url: created.html_url }
+    },
+
+    async commentOnIssue(repo, token, issueNumber, body) {
+      await ensure(
+        await call(repo, token, `/issues/${issueNumber}/comments`, {
+          method: 'POST',
+          body: JSON.stringify({ body }),
+        }),
+        `commenting on ${repo}#${issueNumber}`,
+        [201],
+      )
     },
   }
 }

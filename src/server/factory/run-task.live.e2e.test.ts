@@ -115,7 +115,15 @@ describe.skipIf(!live)('the factory with the real agent', () => {
       .from(stageEvent)
       .where(eq(stageEvent.taskId, created.id))
       .orderBy(stageEvent.id)
-    expect(events.map((e) => e.stage)).toEqual(['sandbox', 'build', 'push', 'verify', 'pr', 'done'])
+    expect(events.map((e) => e.stage)).toEqual([
+      'sandbox',
+      'build',
+      'push',
+      'verify',
+      'review',
+      'pr',
+      'done',
+    ])
     const done = events.at(-1)!.detail as { costUsd?: number }
     console.log(JSON.stringify({ event: 'live_cost', costUsd: done.costUsd }))
 
@@ -147,5 +155,106 @@ describe.skipIf(!live)('the factory with the real agent', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  }, 1_700_000)
+  it('sends the work back to the same Claude Code session when the reviewer asks for a change', async () => {
+    const db = getDb()
+    await getPool().query(
+      'truncate table review, evidence, stage_event, task, ingress restart identity cascade',
+    )
+    await deleteBranch()
+    const [delivery] = await db
+      .insert(ingress)
+      .values({
+        deliveryId: 'live-rework',
+        event: 'issues',
+        payload: {},
+        outcome: 'task_created',
+        code: 'issue_labeled',
+        reason: 'live',
+      })
+      .returning({ id: ingress.id })
+    const [created] = await db
+      .insert(task)
+      .values({
+        ingressId: delivery.id,
+        repository: REPO,
+        issueNumber: ISSUE,
+        issueTitle: 'Add a truncate(text, max) helper',
+      })
+      .returning({ id: task.id })
+
+    // The reviewer is scripted so the change it asks for is known; the builder is the real agent.
+    const answers = [
+      {
+        verdict: 'changes',
+        summary: 'One case is not tested.',
+        findings: [
+          {
+            severity: 'major',
+            file: 'src/truncate.test.js',
+            issue:
+              "Add a test named 'returns text unchanged when it is exactly max long' for truncate('abcde', 5).",
+          },
+        ],
+      },
+      { verdict: 'approve', summary: 'The missing test is there.', findings: [] },
+    ]
+    let asked = 0
+    const reviewer = {
+      name: 'scripted-reviewer',
+      egress: async () => [],
+      run: async () => ({ ok: true, summary: JSON.stringify(answers[Math.min(asked++, 1)]) }),
+    }
+
+    const result = await runTask(
+      {
+        db,
+        github: github!,
+        sandbox: vercelSandboxProvider(),
+        harness: (labels) =>
+          pickHarness(
+            harnessRegistry(process.env),
+            process.env.FACTORY_HARNESS ?? DEFAULT_HARNESS,
+            labels,
+          ),
+        reviewer,
+        author: {
+          name: 'aifactory-paulohenriquevn[bot]',
+          email: 'aifactory@users.noreply.github.com',
+        },
+      },
+      created.id,
+    )
+    console.log(JSON.stringify({ event: 'live_rework', status: result.status }))
+    expect(result).toMatchObject({ status: 'done' })
+
+    const events = await db
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, created.id))
+      .orderBy(stageEvent.id)
+    expect(events.map((e) => e.stage)).toEqual([
+      'sandbox',
+      'build',
+      'push',
+      'verify',
+      'review',
+      'build',
+      'push',
+      'verify',
+      'review',
+      'pr',
+      'done',
+    ])
+    // Two commits on the branch, the second made by the resumed session, and the test exists.
+    const commits = (await (await api('/commits?sha=factory/1&per_page=5')).json()) as {
+      sha: string
+      commit: { message: string }
+    }[]
+    expect(commits[0].commit.message).toContain('address feedback')
+    const file = (await (await api('/contents/src/truncate.test.js?ref=factory/1')).json()) as {
+      content: string
+    }
+    expect(Buffer.from(file.content, 'base64').toString()).toContain('exactly max long')
   }, 1_700_000)
 })

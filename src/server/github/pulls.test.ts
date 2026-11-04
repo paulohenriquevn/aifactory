@@ -76,8 +76,29 @@ describe('openPullRequest', () => {
     const result = await createGithubApi(fetch).openPullRequest('o/r', 'tok', pull)
 
     expect(result).toEqual({ number: 5, url: 'https://github.com/o/r/pull/5' })
-    expect(calls.at(-1)?.body).toEqual({ head: 'factory/1', base: 'trunk', title: 'T', body: 'B' })
+    expect(calls.at(-1)?.body).toEqual({
+      head: 'factory/1',
+      base: 'trunk',
+      title: 'T',
+      body: 'B',
+      draft: false,
+    })
     expect(calls[0].url).toContain('head=o:factory%2F1')
+  })
+
+  it('opens a draft when asked to', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls': { status: 200, body: [] },
+      'GET /': { status: 200, body: { default_branch: 'main' } },
+      'POST /pulls': {
+        status: 201,
+        body: { number: 6, html_url: 'https://github.com/o/r/pull/6' },
+      },
+    })
+
+    await createGithubApi(fetch).openPullRequest('o/r', 'tok', { ...pull, draft: true })
+
+    expect((calls.at(-1)?.body as { draft: boolean }).draft).toBe(true)
   })
 
   it('returns the pull request that is already open instead of opening another', async () => {
@@ -92,5 +113,22 @@ describe('openPullRequest', () => {
 
     expect(result.number).toBe(3)
     expect(calls.some((c) => c.method === 'POST')).toBe(false)
+  })
+})
+
+describe('commentOnIssue', () => {
+  it('posts the comment on the issue and throws when GitHub refuses', async () => {
+    const ok = fakeFetch({ 'POST /issues/7/comments': { status: 201 } })
+    await createGithubApi(ok.fetch).commentOnIssue('o/r', 'tok', 7, 'hello')
+    expect(ok.calls[0]).toMatchObject({
+      method: 'POST',
+      url: '/issues/7/comments',
+      body: { body: 'hello' },
+    })
+
+    const refused = fakeFetch({ 'POST /issues/7/comments': { status: 403 } })
+    await expect(
+      createGithubApi(refused.fetch).commentOnIssue('o/r', 'tok', 7, 'x'),
+    ).rejects.toThrow(/403/)
   })
 })

@@ -16,8 +16,10 @@ export const TASK_STAGES = [
   'build',
   'push',
   'verify',
+  'review',
   'pr',
   'done',
+  'handoff',
   'failed',
 ] as const
 export type TaskStage = (typeof TASK_STAGES)[number]
@@ -88,5 +90,23 @@ export const evidence = pgTable('evidence', {
   /** The tail of stdout and stderr. */
   output: text('output').notNull(),
   durationMs: integer('duration_ms').notNull(),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * What an independent reviewer decided about one commit. `invalid` is an answer the factory could
+ * not read as a verdict, which counts as no approval.
+ */
+export const review = pgTable('review', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  round: integer('round').notNull(),
+  sha: text('sha').notNull(),
+  reviewer: text('reviewer').notNull(),
+  verdict: text('verdict', { enum: ['approve', 'changes', 'invalid'] }).notNull(),
+  summary: text('summary').notNull(),
+  findings: jsonb('findings').notNull(),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })
