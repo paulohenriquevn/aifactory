@@ -16,6 +16,7 @@ export default defineConfig({
           name: 'unit',
           include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
           exclude: ['src/**/*.integration.test.ts', 'src/**/*.e2e.test.ts'],
+          setupFiles: ['src/test/quiet-jsdom-css.ts'],
         },
       },
       {

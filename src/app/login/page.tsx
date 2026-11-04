@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react'
 
+import { Button, Input } from '@usetheo/ui'
+
 import { post } from '../lib/api'
 
 export default function LoginPage() {
@@ -24,27 +26,23 @@ export default function LoginPage() {
     <form onSubmit={submit} className="mx-auto mt-16 max-w-sm space-y-3">
       <h1 className="text-xl font-semibold">Sign in</h1>
       <label className="block text-sm">
-        <span className="text-slate-700">Panel token</span>
-        <input
+        <span className="text-foreground">Panel token</span>
+        <Input
           type="password"
           autoComplete="current-password"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+          className="mt-1 w-full"
         />
       </label>
       {error ? (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       ) : null}
-      <button
-        type="submit"
-        disabled={busy || token === ''}
-        className="rounded bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50"
-      >
+      <Button type="submit" disabled={busy || token === ''}>
         Sign in
-      </button>
+      </Button>
     </form>
   )
 }

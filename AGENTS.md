@@ -16,6 +16,7 @@ it is the right place for what someone needs to know before changing code here.
 | What                 | Command                                                   |
 | -------------------- | --------------------------------------------------------- |
 | Run in development   | `npm run dev`                                             |
+| Publish a change     | `scripts/deploy.sh` (build, restart the service)          |
 | Build for production | `npm run build`                                           |
 | Serve the build      | `npm start`                                               |
 | Tests (unit)         | `npm test`                                                |
@@ -39,7 +40,7 @@ src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   panel/            what the panel shows and does: queries, actions, owner session, event stream
-  crons/            defineCron files (`poll-answers`, `watch-main`, `supervise`)
+  crons/            defineCron files (`poll-answers`, `watch-main`, `supervise`, `catch-up`)
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
   factory/          one task end to end: sandbox, agent, push, stage history

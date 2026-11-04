@@ -76,8 +76,8 @@ local inspecionado em 2026-11-03.
 | M6a   | Pré-release e release                                          | A fábrica gera uma pré-release para todo commit com checks verdes que chegou a um PR; um humano (painel) ou um agente (modo `auto`) promove a release, com o merge preso ao SHA entregue             | Concluído    |
 | M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Concluído    |
 | M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Concluído    |
-| M8    | Operação contínua                                              | A fábrica volta sozinha depois de um reboot, recupera webhooks perdidos e tem backup restaurável do banco                                                                                            | Não iniciado |
-| M9    | Painel com os componentes do TheoKit UI                        | O painel usa `@usetheo/ui` e `@theokit/ui`, com quadro e lista, painel lateral e tela cheia                                                                                                          | Não iniciado |
+| M8    | Operação contínua                                              | A fábrica volta sozinha depois de um reboot, recupera webhooks perdidos e tem backup restaurável do banco                                                                                            | Concluído    |
+| M9    | Painel com os componentes do TheoKit UI                        | O painel usa `@usetheo/ui` e `@theokit/ui`, com quadro e lista, painel lateral e tela cheia                                                                                                          | Concluído    |
 | M10   | Repositórios e configurações                                   | Só repositórios habilitados geram task; agentes, checks, domínios e release por repositório; primeiro projeto real                                                                                   | Não iniciado |
 | M11   | Novo job pelo painel                                           | O painel abre a issue com a label e a task nasce pelo caminho normal do webhook                                                                                                                      | Não iniciado |
 | M12   | Transcrição ao vivo                                            | O painel mostra o que o agente faz enquanto faz, e o transcript fica gravado                                                                                                                         | Não iniciado |
@@ -155,8 +155,9 @@ Critérios de aceite:
 - Os testes de interface de hoje passam sem mudar uma asserção de comportamento.
 - Alternar para a lista mostra as mesmas tasks do quadro, e a escolha continua depois de recarregar.
 - Abrir uma task com `?full=1` mostra o detalhe em tela cheia, e Esc volta ao quadro.
-- Os pares de cor usados pelo painel passam na auditoria de contraste WCAG AA da própria biblioteca
-  (`auditColorScale`).
+- Os pares de cor que o painel escreve à mão passam em 4,5 de contraste (3 para texto sobre um controle
+  preenchido), nos modos claro e escuro. A auditoria da própria biblioteca não cobre esses pares
+  (`muted-foreground` sobre o cartão, `destructive`, links), então o teste mede os que o painel usa.
 
 ### M10: repositórios e configurações
 
@@ -331,14 +332,12 @@ Critérios de aceite:
   continua respondendo 200.
 - O Paulo abre o painel no celular, fora da rede de casa, e vê a Inbox.
 
-### Decisões que dependem do Paulo
+### Decisões do Paulo
 
-- O OK para os serviços `systemd --user` (M8).
-- Cloudflare Access ou Tailscale (M14).
-- Se o Novo job precisa de imagens já no começo (M11); o padrão é não ter.
-- Por quanto tempo guardar o transcript (M12); o padrão previsto é 30 dias, com o conteúdo de cada evento
-  limitado a 8 KB.
-- Se uma mensagem "Orientar" deve gastar uma das três tentativas (M13); o padrão previsto é não gastar.
+Em 2026-11-04 o Paulo aceitou todas as recomendações: o OK para os serviços `systemd --user` (M8), o
+Cloudflare Access para o acesso de fora (M14), sem imagens no Novo job por enquanto (M11), 30 dias de
+retenção do transcript com o conteúdo de cada evento limitado a 8 KB (M12), e uma mensagem "Orientar" que
+não gasta uma das três tentativas (M13). Ficou para fazer M8 e M9 juntos, depois o M10.
 
 ### Fora desta rodada
 
@@ -617,6 +616,33 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
 - Decisões do dono em 2026-11-04: com as duas credenciais do Claude definidas, vale a assinatura
   (`FACTORY_CLAUDE_AUTH=api-key` escolhe a chave), e o modo `auto` de release não exige aprovação do
   commit no painel, só as recusas de `release()`.
+- M8, operação contínua: o servidor e o túnel viraram unidades `systemd --user`
+  (`ops/systemd/`, `scripts/install-services.sh`), com `linger` ligado, `Restart=always` e um
+  `scripts/deploy.sh` que compila e reinicia só o servidor. O Postgres ganhou `restart: unless-stopped`,
+  um volume nomeado (antes os dados estavam num volume anônimo, que um `compose down -v` apagaria) e a
+  porta presa a `127.0.0.1` (antes ficava em todas as interfaces, com a senha de desenvolvimento). A
+  migração dos dados passou por um dump e uma restauração, com as contagens conferidas, e o volume
+  antigo ficou como rede de segurança. Backup diário (`scripts/backup.mjs`, 14 dias, modo 600) com
+  verificação de restauração, vista falhando de propósito (uma contagem adulterada). O cron `catch-up`
+  pede de novo os webhooks que o GitHub não conseguiu entregar. Ao vivo: com o servidor parado, a label
+  foi posta numa issue, o servidor voltou, e o cron fez uma task, uma só, que chegou a `done` em 42
+  segundos pelo servidor do systemd. O teste ao vivo achou um defeito que os testes não achavam: os ids
+  de entrega do GitHub passam de 2^53, o JavaScript os arredondava e o GitHub respondia 404; hoje são
+  lidos como texto, com um teste que usa um id grande de verdade. Matar o servidor e o túnel com
+  `kill -9` os trouxe de volta, e o Postgres voltou depois de o processo dele morrer. Não foi feito um
+  reboot de verdade da máquina: o `linger`, o Docker habilitado e as unidades habilitadas cobrem o
+  caminho, mas ele não foi exercitado.
+- M9, painel com os componentes do TheoKit UI: `@usetheo/ui` (estrutura: `Button`, `Badge`, `Card`,
+  `Table`, `Sheet`, `Input`, `Textarea`, `EmptyState`) e `@theokit/ui` (`ThemeProvider`, `ThemeSwitcher`)
+  no lugar do Tailwind escrito à mão, com os tokens do tema. Quadro ou lista (a escolha fica guardada),
+  painel lateral da task (`?task=7`), tela cheia (`?task=7&full=1`, Esc volta ao quadro) e o endereço
+  `/tasks/7` mantido. Um achado de contraste: o `text-primary` dos links dava 2,9 sobre o cartão no
+  modo escuro e o `text-success` 3,5 no claro, então os links viraram `text-foreground` sublinhado, e um
+  teste falha se um desses tons voltar como texto. Outro achado: cada recurso da página abria o seu
+  próprio `EventSource`, e o navegador só aceita seis conexões por host, então hoje há uma conexão só,
+  compartilhada. Ficou para o M10 o filtro por repositório (não há o que filtrar com um só). O
+  `RunStatusPill` e o `AgentTimeline` não entraram: o primeiro trocaria o texto dos estágios que os
+  testes e a pessoa já leem, e o segundo espera o transcript do M12.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Button } from '@usetheo/ui'
 import { Link } from 'react-router'
 
 import type { FindingView, HealthReport } from '../../shared/panel'
@@ -50,33 +51,32 @@ function FindingRow({ finding, onDone }: { finding: FindingView; onDone: () => v
   }
 
   return (
-    <li className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+    <li className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="font-medium">
-          <span className="mr-2 rounded bg-amber-200 px-1.5 py-0.5 text-xs uppercase">
+          <span className="mr-2 rounded bg-warning/30 px-1.5 py-0.5 text-xs uppercase">
             {finding.kind}
           </span>
           {KIND[finding.subject]}
         </span>
-        <span className="text-xs text-slate-500">since {ago(finding.firstSeenAt)}</span>
+        <span className="text-xs text-muted-foreground">since {ago(finding.firstSeenAt)}</span>
       </div>
       {finding.taskId !== null ? (
         <div className="mt-1 text-xs">
-          <Link to={`/tasks/${finding.taskId}`} className="text-blue-700 underline">
+          <Link
+            to={`/tasks/${finding.taskId}`}
+            className="text-foreground underline underline-offset-2"
+          >
             {finding.taskTitle ?? `Task ${finding.taskId}`}
           </Link>
         </div>
       ) : null}
-      <p className="mt-1 text-slate-700">{finding.detail}</p>
-      <button
-        type="button"
-        onClick={() => void resolve()}
-        className="mt-2 rounded border border-slate-300 bg-white px-3 py-1 text-xs hover:bg-slate-100"
-      >
+      <p className="mt-1 text-foreground">{finding.detail}</p>
+      <Button size="sm" variant="secondary" className="mt-2" onClick={() => void resolve()}>
         {todo.label}
-      </button>
+      </Button>
       {message ? (
-        <p role="status" className="mt-2 text-red-700">
+        <p role="status" className="mt-2 text-destructive">
           {message}
         </p>
       ) : null}
@@ -92,15 +92,17 @@ export default function HealthPage() {
   return (
     <div className="space-y-8">
       <h1 className="text-xl font-semibold">Health</h1>
-      {report.error ? <p className="text-sm text-red-700">{report.error}</p> : null}
+      {report.error ? <p className="text-sm text-destructive">{report.error}</p> : null}
       {!data ? (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
           <section aria-label="Findings">
             <h2 className="mb-2 text-sm font-semibold">Findings</h2>
             {data.findings.length === 0 ? (
-              <p className="text-sm text-slate-500">Nothing is wrong with the factory right now.</p>
+              <p className="text-sm text-muted-foreground">
+                Nothing is wrong with the factory right now.
+              </p>
             ) : (
               <ul className="space-y-2">
                 {data.findings.map((f) => (
@@ -112,22 +114,22 @@ export default function HealthPage() {
 
           <section aria-label="Cost">
             <h2 className="mb-2 text-sm font-semibold">Cost</h2>
-            <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+            <dl className="grid grid-cols-4 gap-3 text-sm">
               {[
                 ['Last 24 hours', money(data.cost.last24HoursUsd)],
                 ['Last 7 days', money(data.cost.last7DaysUsd)],
                 ['All time', money(data.cost.totalUsd)],
                 [`Per task (${data.cost.tasks})`, money(data.cost.avgPerTaskUsd)],
               ].map(([label, value]) => (
-                <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
-                  <dt className="text-xs text-slate-500">{label}</dt>
+                <div key={label} className="rounded-lg border border-border bg-card p-3">
+                  <dt className="text-xs text-muted-foreground">{label}</dt>
                   <dd className="mt-1 text-lg font-semibold">{value}</dd>
                 </div>
               ))}
             </dl>
             {data.cost.groups.length > 0 ? (
               <table className="mt-4 w-full text-left text-sm">
-                <thead className="text-xs text-slate-500">
+                <thead className="text-xs text-muted-foreground">
                   <tr>
                     <th className="py-1 pr-3">Agent</th>
                     <th className="py-1 pr-3">Role</th>
@@ -140,18 +142,18 @@ export default function HealthPage() {
                 </thead>
                 <tbody>
                   {data.cost.groups.map((g) => (
-                    <tr key={`${g.harness}-${g.role}`} className="border-t border-slate-200">
+                    <tr key={`${g.harness}-${g.role}`} className="border-t border-border">
                       <td className="py-1 pr-3 font-medium">{g.harness}</td>
                       <td className="py-1 pr-3">{g.role}</td>
                       <td className="py-1 pr-3">{g.runs}</td>
                       <td className="py-1 pr-3">
                         {g.reportedRuns === 0 ? (
-                          <span className="text-slate-500">not reported</span>
+                          <span className="text-muted-foreground">not reported</span>
                         ) : (
                           money(g.costUsd)
                         )}
                         {g.reportedRuns > 0 && g.reportedRuns < g.runs ? (
-                          <span className="text-xs text-slate-500">
+                          <span className="text-xs text-muted-foreground">
                             {' '}
                             ({g.reportedRuns} of {g.runs} reported)
                           </span>
@@ -165,7 +167,7 @@ export default function HealthPage() {
                 </tbody>
               </table>
             ) : (
-              <p className="mt-3 text-sm text-slate-500">No agent has run yet.</p>
+              <p className="mt-3 text-sm text-muted-foreground">No agent has run yet.</p>
             )}
           </section>
         </>

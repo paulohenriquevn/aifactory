@@ -1,31 +1,41 @@
+import { Badge } from '@usetheo/ui'
+
 import type { Stage } from '../../shared/panel'
 import { stageLabel } from '../lib/format'
 
-const TONE: Record<Stage, string> = {
-  intake: 'bg-slate-100 text-slate-700',
-  sandbox: 'bg-blue-100 text-blue-800',
-  build: 'bg-blue-100 text-blue-800',
-  push: 'bg-blue-100 text-blue-800',
-  verify: 'bg-blue-100 text-blue-800',
-  review: 'bg-indigo-100 text-indigo-800',
-  pr: 'bg-blue-100 text-blue-800',
-  waiting: 'bg-amber-100 text-amber-900',
-  done: 'bg-emerald-100 text-emerald-800',
-  released: 'bg-violet-100 text-violet-800',
-  handoff: 'bg-orange-100 text-orange-900',
-  failed: 'bg-red-100 text-red-800',
+type Variant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'destructive'
+
+const TONE: Record<Stage, Variant> = {
+  intake: 'default',
+  sandbox: 'primary',
+  build: 'primary',
+  push: 'primary',
+  verify: 'primary',
+  review: 'primary',
+  pr: 'primary',
+  waiting: 'warning',
+  done: 'success',
+  released: 'accent',
+  handoff: 'warning',
+  failed: 'destructive',
 }
 
 export function StageBadge({ stage }: { stage: Stage }) {
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${TONE[stage]}`}>
+    <Badge variant={TONE[stage]} className="whitespace-nowrap">
       {stageLabel(stage)}
-    </span>
+    </Badge>
   )
 }
 
 export function Pass({ ok }: { ok: boolean }) {
   return (
-    <span className={ok ? 'text-emerald-700' : 'text-red-700'}>{ok ? 'passed' : 'failed'}</span>
+    <span className="text-foreground">
+      <span
+        aria-hidden
+        className={`mr-1.5 inline-block size-2 rounded-full ${ok ? 'bg-success' : 'bg-destructive'}`}
+      />
+      {ok ? 'passed' : 'failed'}
+    </span>
   )
 }

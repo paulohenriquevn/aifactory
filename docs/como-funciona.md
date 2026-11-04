@@ -517,20 +517,44 @@ responde `/api/health` mesmo sem as credenciais.
 
 ## Operando
 
-1. Suba o Postgres (`docker compose up -d`), aplique as migrations (`pnpm db:migrate`) e inicie o
-   servidor (`pnpm build && pnpm start`). O worker de jobs roda no mesmo processo.
-2. Exponha só o webhook e o health check com o Cloudflare Tunnel (README, "Exposição pública").
-3. Ponha a label `factory` numa issue de um repositório onde o App está instalado.
-4. Acompanhe os estágios:
+1. Suba o Postgres (`docker compose up -d`) e instale os serviços (`scripts/install-services.sh`).
+   Eles sobem sozinhos no boot, sem login, e voltam se caírem. O worker de jobs roda no mesmo processo
+   do servidor.
+2. O túnel do Cloudflare expõe só o webhook e o health check (README, "Exposição pública").
+3. Para publicar uma mudança, `scripts/deploy.sh`: compila e reinicia o servidor, sem tocar no túnel.
+4. Ponha a label `factory` numa issue de um repositório onde o App está instalado.
+5. Acompanhe os estágios:
 
    ```sql
    select stage, at, left(detail::text, 200) from stage_event where task_id = 1 order by id;
    select name, sha, passed, exit_code from evidence where task_id = 1;
    ```
 
-5. Para testar sem esperar um webhook: `pnpm test:e2e` usa um agente roteirizado contra os serviços
+6. Para testar sem esperar um webhook: `pnpm test:e2e` usa um agente roteirizado contra os serviços
    reais, e `FACTORY_LIVE=1 pnpm test:e2e -t "real agent"` usa o Claude Code de verdade (centavos).
    Com as duas credenciais no `.env.local`, o teste usa a assinatura; para testar a chave, acrescente `FACTORY_CLAUDE_AUTH=api-key`.
+
+### Serviços, backup e webhooks perdidos
+
+Três unidades `systemd --user` (`ops/systemd/`, instaladas por `scripts/install-services.sh`):
+`aifactory.service` (servidor, que espera o Postgres, aplica as migrations e serve o build),
+`aifactory-tunnel.service` (o `cloudflared`) e `aifactory-backup.timer` (backup diário às 03:30). O
+`linger` fica ligado, então tudo sobe no boot sem abrir uma sessão. O Postgres usa `restart:
+unless-stopped`, com os dados num volume nomeado (`aifactory_pgdata`) e a porta ligada só a
+`127.0.0.1`. Logs: `journalctl --user -u aifactory`.
+
+**Backup.** `node scripts/backup.mjs` faz o `pg_dump` dentro do contêiner, grava em
+`~/backups/aifactory/` com modo 600, confere que o arquivo pode ser lido e apaga os de mais de 14 dias
+(pela data no nome). `node scripts/backup.mjs --check` restaura o mais recente num banco descartável e
+compara as contagens de `task`, `evidence`, `stage_event`, `ingress`, `question` e `decision` com as
+medidas logo antes e logo depois do dump (as tabelas só crescem, então a contagem restaurada tem de
+ficar entre as duas).
+
+**Webhook perdido.** O cron `catch-up` (a cada 5 minutos) lê o log de entregas da App no GitHub e pede de
+novo as que falharam, enquanto o servidor ou o túnel estavam fora. Uma entrega é deixada em paz se alguma
+tentativa dela foi aceita, se a fábrica já a gravou ou se já foi pedida três vezes. O GitHub guarda três
+dias. Os ids de entrega passam do que um número do JavaScript guarda sem arredondar, então são lidos
+como texto.
 
 ## Quando algo falha
 
@@ -550,7 +574,8 @@ responde `/api/health` mesmo sem as credenciais.
 
 - Uma task por issue. Repor a label não reexecuta, nem depois de uma task que falhou por falta de resposta.
 - Um repositório de cada vez no sentido de operação: não há onboarding de repositórios.
-- O servidor e o túnel rodam como processos da sessão de trabalho, sem supervisor.
+- O Postgres reinicia sozinho se o processo dele morrer, mas o reinício no boot depende do Docker estar
+  habilitado (está) e não foi exercitado com um reboot de verdade.
 - O vigia só olha o commit de merge de cada release, não a `main` inteira.
 - O painel é local e tem um dono só, com um token.
 - A resposta é lida por sondagem a cada minuto, não por evento.

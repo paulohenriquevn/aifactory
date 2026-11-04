@@ -141,3 +141,90 @@ describe('GitHub App installation tokens', () => {
     expect(String((error as Error).message)).not.toContain('PRIVATE KEY')
   })
 })
+
+describe('the delivery log', () => {
+  const row = (id: number | string, guid: string, status: number) => ({
+    id,
+    guid,
+    delivered_at: '2026-11-04T12:00:00Z',
+    status_code: status,
+    event: 'issues',
+  })
+
+  it('reads deliveries with the App key, and follows the next page up to the limit', async () => {
+    const calls: { url: string; auth: string }[] = []
+    const fetch: FetchLike = async (url, init) => {
+      calls.push({
+        url,
+        auth: String(Object.entries(init?.headers ?? {}).find(([k]) => k === 'authorization')?.[1]),
+      })
+      const second = url.includes('cursor=2')
+      return Response.json([second ? row(3, 'c', 200) : row(1, 'a', 502)], {
+        headers: second
+          ? {}
+          : {
+              link: '<https://api.github.com/app/hook/deliveries?per_page=100&cursor=2>; rel="next"',
+            },
+      })
+    }
+
+    const found = await app(fetch).hookDeliveries()
+
+    expect(found.map((d) => [d.id, d.guid, d.statusCode])).toEqual([
+      ['1', 'a', 502],
+      ['3', 'c', 200],
+    ])
+    expect(found[0].deliveredAt).toEqual(new Date('2026-11-04T12:00:00Z'))
+    expect(calls.map((c) => c.url)).toEqual([
+      'https://api.github.com/app/hook/deliveries?per_page=100',
+      'https://api.github.com/app/hook/deliveries?per_page=100&cursor=2',
+    ])
+    expect(calls.every((c) => c.auth.startsWith('Bearer '))).toBe(true)
+  })
+
+  it('keeps a delivery id that is too big for a number exactly as GitHub wrote it', async () => {
+    const fetch: FetchLike = async () =>
+      new Response(
+        '[{"id":3852181270593298432,"guid":"g","delivered_at":"2026-11-04T12:00:00Z","status_code":502,"event":"issues"}]',
+      )
+    const [found] = await app(fetch).hookDeliveries()
+    expect(found.id).toBe('3852181270593298432')
+    expect(String(Number('3852181270593298432'))).not.toBe('3852181270593298432')
+  })
+
+  it('stops at the page limit even when GitHub offers more', async () => {
+    let served = 0
+    const fetch: FetchLike = async () => {
+      served += 1
+      return Response.json([row(served, `g${served}`, 200)], {
+        headers: { link: '<https://api.github.com/app/hook/deliveries?cursor=x>; rel="next"' },
+      })
+    }
+    expect(await app(fetch).hookDeliveries({ pages: 2 })).toHaveLength(2)
+    expect(served).toBe(2)
+  })
+
+  it('says what GitHub answered when it cannot list', async () => {
+    const fetch: FetchLike = async () => Response.json({}, { status: 401 })
+    await expect(app(fetch).hookDeliveries()).rejects.toThrow(
+      'GitHub answered 401 listing deliveries',
+    )
+  })
+
+  it('asks GitHub to send a delivery again, and checks it was accepted', async () => {
+    const seen: { url: string; method: string }[] = []
+    const ok: FetchLike = async (url, init) => {
+      seen.push({ url, method: init?.method ?? 'GET' })
+      return new Response('{}', { status: 202 })
+    }
+    await app(ok).redeliver('77')
+    expect(seen).toEqual([
+      { url: 'https://api.github.com/app/hook/deliveries/77/attempts', method: 'POST' },
+    ])
+    await expect(app(ok).redeliver('7/../x')).rejects.toThrow('not a delivery id')
+    const refused: FetchLike = async () => new Response('{}', { status: 422 })
+    await expect(app(refused).redeliver('77')).rejects.toThrow(
+      'GitHub answered 422 redelivering 77',
+    )
+  })
+})

@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+import { Button, Textarea } from '@usetheo/ui'
+
 import type { TaskDetail } from '../../shared/panel'
 import { post } from '../lib/api'
 
@@ -36,18 +38,17 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
   if (!hasPullRequest && !canRetry && !canRelease) return null
 
   return (
-    <section aria-label="Actions" className="rounded-lg border border-slate-200 bg-white p-4">
+    <section aria-label="Actions" className="rounded-lg border border-border bg-card p-4">
       <h2 className="mb-3 text-sm font-semibold">What do you want to do?</h2>
       <div className="flex flex-wrap items-center gap-2">
         {hasPullRequest ? (
-          <button
-            type="button"
+          <Button
+            size="sm"
             disabled={busy || task.approved}
             onClick={() => void run('approve', undefined, 'Approved at this commit.')}
-            className="rounded bg-emerald-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
             {task.approved ? 'Approved' : 'Approve this commit'}
-          </button>
+          </Button>
         ) : null}
         {canRelease ? (
           <span className="flex items-center gap-1">
@@ -55,14 +56,15 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
               aria-label="Version bump"
               value={bump}
               onChange={(e) => setBump(e.target.value as typeof bump)}
-              className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="h-8 rounded-lg border border-border bg-card px-2 text-sm text-foreground"
             >
               <option value="patch">patch</option>
               <option value="minor">minor</option>
               <option value="major">major</option>
             </select>
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="accent"
               disabled={busy}
               onClick={() => {
                 if (
@@ -73,15 +75,15 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
                   void run('release', { bump }, 'Released.')
                 }
               }}
-              className="rounded bg-violet-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
             >
               Release
-            </button>
+            </Button>
           </span>
         ) : null}
         {canRetry ? (
-          <button
-            type="button"
+          <Button
+            size="sm"
+            variant="secondary"
             disabled={busy}
             onClick={() => {
               if (
@@ -92,36 +94,35 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
                 void run('retry', undefined, 'Started again.')
               }
             }}
-            className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50"
           >
             Try again
-          </button>
+          </Button>
         ) : null}
       </div>
       {hasPullRequest ? (
         <div className="mt-4">
           <label className="block text-sm">
-            <span className="text-slate-700">Ask for changes</span>
-            <textarea
+            <span className="text-foreground">Ask for changes</span>
+            <Textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={3}
               placeholder="What should change? The agent continues from the branch it pushed."
-              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              className="mt-1 w-full"
             />
           </label>
-          <button
-            type="button"
+          <Button
+            size="sm"
+            className="mt-2"
             disabled={busy || note.trim() === ''}
             onClick={() => void run('changes', { note }, 'Sent back to the agent.')}
-            className="mt-2 rounded bg-slate-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
           >
             Send back
-          </button>
+          </Button>
         </div>
       ) : null}
       {message ? (
-        <p role="status" className="mt-3 text-sm text-slate-700">
+        <p role="status" className="mt-3 text-sm text-foreground">
           {message}
         </p>
       ) : null}

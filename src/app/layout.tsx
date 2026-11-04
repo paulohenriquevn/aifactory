@@ -1,5 +1,7 @@
 import './globals.css'
 
+import { ThemeProvider, ThemeSwitcher, builtinThemes } from '@theokit/ui'
+import { Button } from '@usetheo/ui'
 import { useEffect } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 
@@ -9,7 +11,7 @@ import { post } from './lib/api'
 import { useResource } from './lib/live'
 
 const link = ({ isActive }: { isActive: boolean }) =>
-  `rounded px-3 py-1.5 text-sm ${isActive ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-200'}`
+  `rounded-lg px-3 py-1.5 text-sm ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`
 
 /** The frame of every page: the nav, and the way to the login for someone who is not signed in. */
 export default function RootLayout() {
@@ -28,46 +30,51 @@ export default function RootLayout() {
   const wrong = health.data?.findings.length ?? 0
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3">
-          <span className="font-semibold">aifactory</span>
-          {me.data?.owner ? (
-            <>
-              <nav className="flex gap-1" aria-label="Main">
-                <NavLink to="/" end className={link}>
-                  Board
-                </NavLink>
-                <NavLink to="/inbox" className={link}>
-                  Inbox{waiting > 0 ? ` (${waiting})` : ''}
-                </NavLink>
-                <NavLink to="/health" className={link}>
-                  Health{wrong > 0 ? ` (${wrong})` : ''}
-                </NavLink>
-              </nav>
-              <button
-                type="button"
-                className="ml-auto text-sm text-slate-600 hover:text-slate-900"
-                onClick={() =>
-                  void post('/api/panel/logout').then(() => {
-                    me.reload()
-                    void navigate('/login')
-                  })
-                }
-              >
-                Sign out
-              </button>
-            </>
-          ) : null}
-        </div>
-      </header>
-      <main className="mx-auto max-w-7xl px-4 py-6">
-        {me.data?.owner || onLogin ? (
-          <Outlet />
-        ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
-        )}
-      </main>
-    </div>
+    <ThemeProvider themes={builtinThemes} defaultTheme="violet-forge" defaultMode="dark">
+      <div className="min-h-screen bg-background text-foreground">
+        <header className="border-b border-border bg-card">
+          <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3">
+            <span className="font-semibold">aifactory</span>
+            {me.data?.owner ? (
+              <>
+                <nav className="flex gap-1" aria-label="Main">
+                  <NavLink to="/" end className={link}>
+                    Board
+                  </NavLink>
+                  <NavLink to="/inbox" className={link}>
+                    Inbox{waiting > 0 ? ` (${waiting})` : ''}
+                  </NavLink>
+                  <NavLink to="/health" className={link}>
+                    Health{wrong > 0 ? ` (${wrong})` : ''}
+                  </NavLink>
+                </nav>
+                <div className="ml-auto flex items-center gap-2">
+                  <ThemeSwitcher showModeToggle />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      void post('/api/panel/logout').then(() => {
+                        me.reload()
+                        void navigate('/login')
+                      })
+                    }
+                  >
+                    Sign out
+                  </Button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </header>
+        <main className="mx-auto max-w-7xl px-4 py-6">
+          {me.data?.owner || onLogin ? (
+            <Outlet />
+          ) : (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          )}
+        </main>
+      </div>
+    </ThemeProvider>
   )
 }

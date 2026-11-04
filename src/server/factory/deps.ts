@@ -27,6 +27,14 @@ export function releaseModeFromEnv(env: NodeJS.ProcessEnv): ReleaseMode {
   return mode
 }
 
+/** The App, signed with its own key. */
+export function githubAppFromEnv(env: NodeJS.ProcessEnv = process.env) {
+  return createGithubApp({
+    appId: required(env, 'GITHUB_APP_ID'),
+    privateKey: readFileSync(required(env, 'GITHUB_APP_PRIVATE_KEY_PATH'), 'utf8'),
+  })
+}
+
 export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
   const slug = required(env, 'GITHUB_APP_SLUG')
   const registry = harnessRegistry(env)
@@ -41,10 +49,7 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
       : undefined
   return {
     db: getDb(),
-    github: createGithubApp({
-      appId: required(env, 'GITHUB_APP_ID'),
-      privateKey: readFileSync(required(env, 'GITHUB_APP_PRIVATE_KEY_PATH'), 'utf8'),
-    }),
+    github: githubAppFromEnv(env),
     sandbox: vercelSandboxProvider(),
     harness: pick,
     releaseMode: releaseModeFromEnv(env),

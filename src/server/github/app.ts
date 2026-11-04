@@ -4,6 +4,25 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
 export type InstallationToken = { token: string; expiresAt: Date }
 
+/** One try by GitHub to deliver a webhook to us, as the App's delivery log lists it. */
+export type HookDelivery = {
+  /** A string: GitHub's delivery ids are 64-bit, and a JavaScript number cannot hold them exactly. */
+  id: string
+  /** The `X-GitHub-Delivery` header: the same for every redelivery of one event. */
+  guid: string
+  deliveredAt: Date
+  statusCode: number
+  event: string
+}
+
+/** What the App can do with its own key, with no repository involved. */
+export type AppHooks = {
+  /** The App's recent webhook deliveries, newest first. */
+  hookDeliveries(options?: { pages?: number }): Promise<HookDelivery[]>
+  /** Asks GitHub to send a delivery again. */
+  redeliver(deliveryId: string): Promise<void>
+}
+
 export type GithubApp = {
   /**
    * A short-lived token limited to one repository. There is no way to ask for a token without a
@@ -36,7 +55,7 @@ const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const base64url = (value: unknown) =>
   Buffer.from(typeof value === 'string' ? value : JSON.stringify(value)).toString('base64url')
 
-export function createGithubApp(options: GithubAppOptions): GithubApp {
+export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks {
   const { appId, privateKey, apiUrl = 'https://api.github.com' } = options
   const fetchImpl: FetchLike = options.fetch ?? ((url, init) => fetch(url, init))
   const now = options.now ?? Date.now
@@ -66,6 +85,43 @@ export function createGithubApp(options: GithubAppOptions): GithubApp {
   }
 
   return {
+    async hookDeliveries({ pages = 3 } = {}) {
+      const found: HookDelivery[] = []
+      let path: string | undefined = '/app/hook/deliveries?per_page=100'
+      for (let page = 0; path && page < pages; page++) {
+        const response = await call(path)
+        if (!response.ok) throw new Error(`GitHub answered ${response.status} listing deliveries`)
+        // The ids go through as text before parsing: past 2^53 a number is rounded, and the rounded id
+        // is one GitHub has never heard of.
+        const text = (await response.text()).replace(/"id"\s*:\s*(\d+)/g, '"id":"$1"')
+        const rows = JSON.parse(text) as {
+          id: string
+          guid: string
+          delivered_at: string
+          status_code: number
+          event: string
+        }[]
+        for (const r of rows) {
+          found.push({
+            id: r.id,
+            guid: r.guid,
+            deliveredAt: new Date(r.delivered_at),
+            statusCode: r.status_code,
+            event: r.event,
+          })
+        }
+        const next = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get('link') ?? '')
+        path = next ? next[1].replace(apiUrl, '') : undefined
+      }
+      return found
+    },
+    async redeliver(deliveryId) {
+      if (!/^\d+$/.test(deliveryId)) throw new Error(`not a delivery id: ${deliveryId}`)
+      const response = await call(`/app/hook/deliveries/${deliveryId}/attempts`, { method: 'POST' })
+      if (response.status !== 202) {
+        throw new Error(`GitHub answered ${response.status} redelivering ${deliveryId}`)
+      }
+    },
     async installationToken(repo) {
       if (!REPO.test(repo)) {
         throw new Error(`repository must be written owner/name, got ${JSON.stringify(repo)}`)

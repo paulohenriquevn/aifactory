@@ -261,3 +261,13 @@ export const finding = pgTable('finding', {
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
 })
+
+/**
+ * A webhook the factory asked GitHub to send again, so a delivery that keeps failing is tried a few
+ * times and then left alone, instead of every five minutes for as long as GitHub keeps it.
+ */
+export const webhookRedelivery = pgTable('webhook_redelivery', {
+  guid: text('guid').primaryKey(),
+  attempts: integer('attempts').notNull().default(0),
+  lastAt: timestamp('last_at', { withTimezone: true }).notNull().defaultNow(),
+})

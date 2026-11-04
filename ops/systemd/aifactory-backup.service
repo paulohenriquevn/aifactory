@@ -1,0 +1,8 @@
+[Unit]
+Description=aifactory database backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@NODE_BIN@/node scripts/backup.mjs

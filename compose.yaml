@@ -1,18 +1,25 @@
 # Local Postgres for development and the integration suite.
 #   docker compose up -d
 #   DATABASE_URL=postgres://factory:factory@localhost:54329/factory pnpm test:integration
+# The port is bound to this machine only: the password is a development one.
 # The suites use `factory_test` on the same server (created for you), never the factory's own database.
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: factory
       POSTGRES_PASSWORD: factory
       POSTGRES_DB: factory
     ports:
-      - '54329:5432'
+      - '127.0.0.1:54329:5432'
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U factory']
       interval: 2s
       timeout: 3s
       retries: 15
+
+volumes:
+  pgdata:

@@ -4,6 +4,33 @@ import type { StreamEvent } from '../../shared/panel'
 
 import { ApiError, get } from './api'
 
+type Listener = (event: StreamEvent) => void
+
+const listeners = new Set<Listener>()
+let source: EventSource | undefined
+
+/**
+ * One stream for the whole page. Every resource on the page listens to it, instead of each opening
+ * its own: a browser allows only six connections to one host, and a stream that never ends holds one.
+ */
+export function subscribe(listener: Listener): () => void {
+  listeners.add(listener)
+  if (!source && typeof EventSource !== 'undefined') {
+    source = new EventSource('/api/panel/stream')
+    source.onmessage = (message) => {
+      const event = JSON.parse(message.data) as StreamEvent
+      for (const each of listeners) each(event)
+    }
+  }
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) {
+      source?.close()
+      source = undefined
+    }
+  }
+}
+
 export type Resource<T> = {
   data: T | undefined
   error: string | undefined
@@ -45,21 +72,17 @@ export function useResource<T>(
     alive.current = true
     reload()
     const timer = setInterval(reload, everyMs)
-    let source: EventSource | undefined
-    if (typeof EventSource !== 'undefined') {
-      source = new EventSource('/api/panel/stream')
-      let pending: ReturnType<typeof setTimeout> | undefined
-      source.onmessage = (message) => {
-        const event = JSON.parse(message.data) as StreamEvent
-        if (only !== undefined && event.taskId !== only) return
-        clearTimeout(pending)
-        pending = setTimeout(reload, 150)
-      }
-    }
+    let pending: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = subscribe((event) => {
+      if (only !== undefined && event.taskId !== only) return
+      clearTimeout(pending)
+      pending = setTimeout(reload, 150)
+    })
     return () => {
       alive.current = false
       clearInterval(timer)
-      source?.close()
+      clearTimeout(pending)
+      unsubscribe()
     }
   }, [reload, only, everyMs])
 

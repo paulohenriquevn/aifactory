@@ -24,7 +24,7 @@ e mutação.
 
 ```bash
 pnpm install
-docker compose up -d                 # Postgres 17 na porta 54329
+docker compose up -d                 # Postgres 17 na porta 54329 (só em 127.0.0.1)
 cp .env.example .env                 # DATABASE_URL já aponta para o Compose
 pnpm db:migrate                      # cria as tabelas ingress e task
 pnpm dev

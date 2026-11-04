@@ -1,0 +1,13 @@
+[Unit]
+Description=aifactory server (issues to verified pull requests)
+After=network-online.target
+
+[Service]
+WorkingDirectory=@ROOT@
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@ROOT@/scripts/run-server.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

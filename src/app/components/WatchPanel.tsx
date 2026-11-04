@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+import { Button } from '@usetheo/ui'
+
 import type { WatchView } from '../../shared/panel'
 import { post } from '../lib/api'
 import { ago, shortSha } from '../lib/format'
@@ -38,41 +40,37 @@ export function WatchPanel({ watches, onDone }: { watches: WatchView[]; onDone: 
             key={w.id}
             className={`rounded-lg border p-3 text-sm ${
               w.status === 'red' && !w.acknowledged
-                ? 'border-red-200 bg-red-50'
-                : 'border-slate-200 bg-white'
+                ? 'border-destructive/40 bg-destructive/10'
+                : 'border-border bg-card'
             }`}
           >
             <div className="flex flex-wrap items-center gap-3">
               <span className="font-medium">{WORDS[w.status]}</span>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-muted-foreground">
                 {w.tag ?? 'release'} · merge {shortSha(w.sha)} · {ago(w.endedAt ?? w.startedAt)}
               </span>
             </div>
-            {w.detail ? <p className="mt-1 text-slate-700">{w.detail}</p> : null}
+            {w.detail ? <p className="mt-1 text-foreground">{w.detail}</p> : null}
             {w.status === 'red' ? (
               <div className="mt-2 flex flex-wrap items-center gap-3">
                 {w.revertUrl ? (
                   <a
                     href={w.revertUrl}
-                    className="text-blue-700 underline"
+                    className="text-foreground underline underline-offset-2"
                     target="_blank"
                     rel="noreferrer"
                   >
                     Revert pull request
                   </a>
                 ) : (
-                  <span className="text-red-700">No revert pull request could be opened.</span>
+                  <span className="text-destructive">No revert pull request could be opened.</span>
                 )}
                 {w.acknowledged ? (
-                  <span className="text-slate-500">dealt with</span>
+                  <span className="text-muted-foreground">dealt with</span>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => void handled(w.id)}
-                    className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100"
-                  >
+                  <Button size="sm" variant="secondary" onClick={() => void handled(w.id)}>
                     I dealt with it
-                  </button>
+                  </Button>
                 )}
               </div>
             ) : null}
@@ -80,7 +78,7 @@ export function WatchPanel({ watches, onDone }: { watches: WatchView[]; onDone: 
         ))}
       </ul>
       {message ? (
-        <p role="status" className="mt-2 text-sm text-slate-700">
+        <p role="status" className="mt-2 text-sm text-foreground">
           {message}
         </p>
       ) : null}
