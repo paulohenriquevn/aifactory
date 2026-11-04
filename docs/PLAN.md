@@ -350,6 +350,9 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   (`loop`) tem 11, e o baseline de CRAP ficou vazio. O comportamento não mudou: os 142 testes de
   integração, o e2e roteirizado e os testes ao vivo (Claude real, retrabalho com `--resume`, pergunta
   com snapshot e retomada) passaram sem alterar uma asserção.
+- Decisões do dono em 2026-11-04: com as duas credenciais do Claude definidas, vale a assinatura
+  (`FACTORY_CLAUDE_AUTH=api-key` escolhe a chave), e o modo `auto` de release não exige aprovação do
+  commit no painel, só as recusas de `release()`.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

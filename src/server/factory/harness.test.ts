@@ -108,18 +108,16 @@ describe('claudeCredentialFromEnv', () => {
     })
     expect(
       claudeCredentialFromEnv({ ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 't' }).kind,
-    ).toBe('api-key')
+    ).toBe('subscription')
   })
 
-  it('lets FACTORY_CLAUDE_AUTH pick when both are set', () => {
+  it('lets FACTORY_CLAUDE_AUTH pick the API key when both are set', () => {
     const env = { ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 't' }
-    expect(claudeCredentialFromEnv({ ...env, FACTORY_CLAUDE_AUTH: 'subscription' }).secret).toBe(
-      't',
-    )
+    expect(claudeCredentialFromEnv({ ...env, FACTORY_CLAUDE_AUTH: 'api-key' }).secret).toBe('k')
   })
 
   it('names what is missing instead of picking something else', () => {
-    expect(() => claudeCredentialFromEnv({})).toThrow(/ANTHROPIC_API_KEY.*CLAUDE_CODE_OAUTH_TOKEN/)
+    expect(() => claudeCredentialFromEnv({})).toThrow(/CLAUDE_CODE_OAUTH_TOKEN.*ANTHROPIC_API_KEY/)
     expect(() =>
       claudeCredentialFromEnv({ ANTHROPIC_API_KEY: 'k', FACTORY_CLAUDE_AUTH: 'subscription' }),
     ).toThrow(/setup-token/)

@@ -229,6 +229,8 @@ sobe). Quem a faz:
 - um agente, quando o modo permite. `FACTORY_RELEASE_MODE` é `manual` (padrão: só humanos), `trial` (a
   fábrica registra que "um agente teria liberado", sem liberar) ou `auto` (a fábrica libera um commit com
   checks verdes e review aprovado). Trabalho entregue a uma pessoa nunca é liberado sozinho.
+  No modo `auto` a liberação não espera aprovação no painel (decisão do dono): valem só as recusas
+  abaixo.
 
 `release()` recusa, dizendo por quê, quando:
 
@@ -374,7 +376,7 @@ não rodar nenhum comando git que escreva e não editar nada em `.github/`.
 | `api-key`      | `ANTHROPIC_API_KEY`       | `x-api-key` no firewall             | cobrado na chave                       |
 | `subscription` | `CLAUDE_CODE_OAUTH_TOKEN` | `Authorization: Bearer` no firewall | sai da cota da assinatura (ver abaixo) |
 
-Com as duas definidas, vale a chave. `FACTORY_CLAUDE_AUTH=api-key|subscription` escolhe. Se a
+Com as duas definidas, vale a assinatura. `FACTORY_CLAUDE_AUTH=api-key|subscription` escolhe o contrário. Se a
 escolhida estiver faltando, a fábrica diz o que falta em vez de usar a outra.
 
 No modo `subscription`, o `total_cost_usd` que o CLI informa é um valor equivalente: nada é
@@ -528,7 +530,7 @@ responde `/api/health` mesmo sem as credenciais.
 
 5. Para testar sem esperar um webhook: `pnpm test:e2e` usa um agente roteirizado contra os serviços
    reais, e `FACTORY_LIVE=1 pnpm test:e2e -t "real agent"` usa o Claude Code de verdade (centavos).
-   Para testar com a assinatura, acrescente `FACTORY_CLAUDE_AUTH=subscription`.
+   Com as duas credenciais no `.env.local`, o teste usa a assinatura; para testar a chave, acrescente `FACTORY_CLAUDE_AUTH=api-key`.
 
 ## Quando algo falha
 

@@ -33,7 +33,8 @@ export function anthropicEgress(credential: ClaudeCredential): {
 
 /**
  * Picks the credential from the environment. `FACTORY_CLAUDE_AUTH` chooses when both are set;
- * otherwise whichever exists is used, and a missing credential is an error that names both.
+ * otherwise the subscription token wins over the API key, and a missing credential is an error
+ * that names both.
  */
 export function claudeCredentialFromEnv(env: NodeJS.ProcessEnv): ClaudeCredential {
   const apiKey = env.ANTHROPIC_API_KEY
@@ -42,13 +43,13 @@ export function claudeCredentialFromEnv(env: NodeJS.ProcessEnv): ClaudeCredentia
   if (wanted !== undefined && wanted !== 'api-key' && wanted !== 'subscription') {
     throw new Error(`FACTORY_CLAUDE_AUTH must be api-key or subscription, got ${wanted}`)
   }
-  const kind = wanted ?? (apiKey ? 'api-key' : token ? 'subscription' : undefined)
+  const kind = wanted ?? (token ? 'subscription' : apiKey ? 'api-key' : undefined)
   const secret = kind === 'api-key' ? apiKey : token
   if (!kind || !secret) {
     throw new Error(
       kind === 'subscription'
         ? 'CLAUDE_CODE_OAUTH_TOKEN is not set (run `claude setup-token`)'
-        : 'ANTHROPIC_API_KEY is not set (or set CLAUDE_CODE_OAUTH_TOKEN for a subscription)',
+        : 'CLAUDE_CODE_OAUTH_TOKEN is not set (run `claude setup-token`), and neither is ANTHROPIC_API_KEY',
     )
   }
   return { kind, secret }
