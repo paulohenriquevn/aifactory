@@ -169,6 +169,9 @@ describe('repositories', () => {
     })
     expect(manage.getAttribute('href')).toBe('https://github.com/settings/installations/9')
     expect(screen.queryByRole('link', { name: 'Install the App' })).toBeNull()
+    expect(
+      screen.getByRole('link', { name: 'Install on another account' }).getAttribute('href'),
+    ).toBe('https://github.com/apps/x/installations/new')
     expect(screen.getByText(/already reaches every repository of paulo/)).toBeDefined()
     expect(screen.getByText(/signed in as any other account, GitHub answers 404/)).toBeDefined()
   })

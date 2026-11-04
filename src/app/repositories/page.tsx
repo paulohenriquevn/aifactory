@@ -206,14 +206,14 @@ export default function RepositoriesPage() {
                 : `Choose which repositories the App reaches (${i.account})`}
             </a>
           ))}
-          {data && data.installations.length === 0 && data.installUrl ? (
+          {data?.installUrl ? (
             <a
               href={data.installUrl}
               target="_blank"
               rel="noreferrer"
               className="text-sm text-foreground underline underline-offset-2"
             >
-              Install the App
+              {data.installations.length === 0 ? 'Install the App' : 'Install on another account'}
             </a>
           ) : null}
           <Button size="sm" variant="secondary" onClick={resource.reload}>
