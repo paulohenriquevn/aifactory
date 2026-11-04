@@ -4,9 +4,12 @@ Software factory que transforma issues do GitHub em pull requests verificadas, c
 programação em sandboxes na nuvem. É uma ferramenta pessoal, open source e single-tenant, com
 suporte a vários projetos.
 
-Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7. O M0
-(fundação) e o M1 (ingestão) estão concluídos, e o M2 (execução) funciona de ponta a ponta, inclusive com o
-Claude Code de verdade. Evidência com PR, review, painel e merge ainda não existem.
+Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7, e
+[como a fábrica funciona](docs/como-funciona.md) descreve o fluxo, o isolamento, a evidência e o
+uso do Claude Code e do Codex. Os marcos M0 a M3 estão concluídos: uma issue com a label `factory`
+chega a um pull request, aberto só com os checks verdes no commit enviado. O Claude Code funciona
+por chave de API ou por assinatura. O Codex foi verificado num spike e o harness é o próximo passo
+(M3b). Review, painel e merge ainda não existem.
 
 ## Rodando localmente
 
@@ -105,6 +108,7 @@ scripts/               registro e verificação do GitHub App (ADR 0004)
 spikes/vercel-sandbox/ scripts que verificam o Vercel Sandbox (ADR 0003); rodam com `.env.local`
 .theokit/             contexto de agente (THEO.md, rules, personalities), versionado
 docs/PLAN.md          plano, marcos e ponto de retomada
+docs/como-funciona.md  o fluxo da fábrica, o isolamento e os agentes
 docs/adr/             decisões de arquitetura
 theo.config.ts        configuração do TheoKit, inclusive o bloco `storage`
 ```
