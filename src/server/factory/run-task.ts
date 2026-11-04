@@ -8,7 +8,7 @@ import { fetchIssue as defaultFetchIssue, type Issue } from '../github/issues'
 import { createGithubApi, type GithubApi } from '../github/pulls'
 
 import { DEFAULT_CHECKS, gate, runChecks, type CheckResult, type CheckSpec } from './evidence'
-import { anthropicEgress, buildPrompt, type ClaudeCredential, type CodingHarness } from './harness'
+import { buildPrompt, type CodingHarness } from './harness'
 import {
   createIsolatedSandbox,
   type IsolatedSandbox,
@@ -20,9 +20,8 @@ export type RunTaskDeps = {
   db: Database
   github: GithubApp
   sandbox: IsolatedSandboxProvider
-  harness: CodingHarness
-  /** Held by the factory and attached by the sandbox firewall. Never passed into the sandbox. */
-  claude: ClaudeCredential
+  /** One agent for every task, or a function that chooses it from the issue's labels. */
+  harness: CodingHarness | ((labels: string[]) => CodingHarness)
   /** The commit author, so the pull request shows who wrote it. */
   author: { name: string; email: string }
   fetchIssue?: (repo: string, number: number, token: string, fetch?: FetchLike) => Promise<Issue>
@@ -44,6 +43,16 @@ const COMMIT_MESSAGE = '/tmp/factory-commit-message.txt'
 
 /** Thrown inside a stage so the run can report which stage failed. */
 class StageFailure extends Error {}
+
+/** The agent's account is out of quota. It is recorded as such, because waiting fixes it. */
+class QuotaStop extends StageFailure {
+  constructor(
+    message: string,
+    readonly resetsAt?: string,
+  ) {
+    super(message)
+  }
+}
 
 /**
  * Runs one task: reads the issue, starts an isolated sandbox, has the agent implement it, pushes
@@ -78,6 +87,12 @@ export async function runTask(
       token,
     )
 
+    // The agent comes from the issue's labels, and signs its own calls: its secret is read here, on
+    // the host, and becomes a firewall rule, so the sandbox never holds one.
+    const harness =
+      typeof deps.harness === 'function' ? deps.harness(issue.labels ?? []) : deps.harness
+    const agentEgress = await harness.egress()
+
     sandbox = await createIsolatedSandbox(deps.sandbox, {
       timeoutMs: timeouts.sandboxMs,
       egress: [
@@ -87,7 +102,7 @@ export async function runTask(
             authorization: `Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
           },
         },
-        anthropicEgress(deps.claude),
+        ...agentEgress,
         { domain: 'registry.npmjs.org' },
       ],
     })
@@ -103,10 +118,11 @@ export async function runTask(
       instanceId: INSTANCE,
     })
     await must(backend, `git -C ${repoDir} checkout -b ${branch}`)
+    await harness.prepare?.(backend)
 
     current = 'build'
-    await enterStage(db, taskId, 'build', { harness: deps.harness.name })
-    const result = await deps.harness.run(backend, {
+    await enterStage(db, taskId, 'build', { harness: harness.name })
+    const result = await harness.run(backend, {
       cwd: repoDir,
       timeoutMs: timeouts.agentMs,
       prompt: buildPrompt({
@@ -117,6 +133,12 @@ export async function runTask(
         branch,
       }),
     })
+    if (result.quota) {
+      throw new QuotaStop(
+        `the ${harness.name} quota ran out${result.quota.resetsAt ? `, resets ${result.quota.resetsAt}` : ''}: ${result.quota.message}`,
+        result.quota.resetsAt,
+      )
+    }
     if (!result.ok) throw new StageFailure(`the agent did not finish: ${result.summary}`)
 
     current = 'push'
@@ -124,6 +146,7 @@ export async function runTask(
       branch,
       costUsd: result.costUsd,
       agentSummary: result.summary,
+      sessionId: result.sessionId,
     })
     const changes = await must(backend, `git -C ${repoDir} status --porcelain`)
     if (changes.stdout.trim() === '') {
@@ -214,7 +237,11 @@ export async function runTask(
       : error instanceof Error
         ? error.message
         : String(error)
-    await enterStage(db, taskId, 'failed', { failedAt: current, error: message })
+    await enterStage(db, taskId, 'failed', {
+      failedAt: current,
+      error: message,
+      ...(error instanceof QuotaStop ? { quota: true, resetsAt: error.resetsAt } : {}),
+    })
     return { status: 'failed', stage: current, error: message }
   } finally {
     await sandbox?.stop().catch(() => {})

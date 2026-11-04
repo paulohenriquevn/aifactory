@@ -64,7 +64,7 @@ local inspecionado em 2026-11-03.
 | M1    | Ingestão                                                       | Uma issue com label `factory` gera exatamente uma task em `intake`; repetir o delivery não duplica                                                                                                | Concluído    |
 | M2    | Execução                                                       | Uma task de repositório de teste envia a branch `factory/<n>` e registra os estágios em ordem em `stage_event`                                                                                    | Concluído    |
 | M3    | Evidência + PR                                                 | PR só abre com evidência verde no head SHA; teste demonstra que uma declaração do agente sem evidência não abre PR                                                                                | Concluído    |
-| M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                         | Não iniciado |
+| M3b   | Vários agentes de código                                       | Claude Code e Codex rodam a mesma task pelo mesmo `CodingHarness`, por chave ou assinatura, com o segredo fora do sandbox; trocar o agente é configuração                                         | Em andamento |
 | M4    | Review + `waiting`                                             | Reprovação retorna ao build; após três rodadas, encaminha ao humano. Pergunta vira comentário na issue e resposta retoma a execução da mesma sessão do agente, num sandbox restaurado de snapshot | Não iniciado |
 | M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel                                                                                  | Não iniciado |
 | M6    | Merge + vigia                                                  | `trial` registra “would merge” sem executar; `auto` faz merge preso ao SHA; main vermelha gera PR de revert                                                                                       | Não iniciado |
@@ -76,10 +76,14 @@ explicitada antes do M6.
 
 ## Agentes de código e autenticação
 
-Estado em 2026-11-04: só o Claude Code roda, por chave de API (testado ao vivo) ou por
-assinatura (`CLAUDE_CODE_OAUTH_TOKEN`, coberto por testes de unidade e ainda sem teste ao
-vivo). O objetivo é Claude Code e Codex desde o início, e um terceiro agente deve custar um
-arquivo.
+Estado em 2026-11-04: o contrato `CodingHarness` (`egress`, `prepare`, `run`, `resume`, com
+`sessionId` e sinal de cota no resultado) está implementado, com o Claude Code e o Codex como
+harnesses e um registro que escolhe o agente por label `harness:<nome>`, `FACTORY_HARNESS` ou o
+padrão. O Claude Code roda do início ao fim por chave de API e por assinatura. O Codex instala,
+autentica pelo firewall e lê a parada por cota numa execução real da fábrica; falta uma execução que
+complete uma issue, que depende da cota da conta do ChatGPT (libera em 2026-11-05 11:48). O
+M3b fecha com essa execução, com a renovação do token do Codex exercitada contra a OpenAI e com o
+login dedicado `~/.codex-factory-1`. Um terceiro agente deve custar um arquivo.
 
 **Contrato do harness.** `CodingHarness` hoje só tem `run`. Para suportar vários agentes e o
 `waiting` do M4, cada harness passa a declarar:

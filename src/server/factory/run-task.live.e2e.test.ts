@@ -14,7 +14,7 @@ import { storageFromUrl } from '../db/config'
 import { ingress, stageEvent, task } from '../db/schema'
 import { createGithubApp } from '../github/app'
 
-import { claudeCodeHarness, claudeCredentialFromEnv } from './harness'
+import { DEFAULT_HARNESS, harnessRegistry, pickHarness } from './harness-registry'
 import { runTask } from './run-task'
 import { vercelSandboxProvider } from './vercel-sandbox'
 
@@ -82,14 +82,17 @@ describe.skipIf(!live)('the factory with the real agent', () => {
       })
       .returning({ id: task.id })
 
-    const claude = claudeCredentialFromEnv(process.env)
     const result = await runTask(
       {
         db,
         github: github!,
         sandbox: vercelSandboxProvider(),
-        harness: claudeCodeHarness(claude.kind),
-        claude,
+        harness: (labels) =>
+          pickHarness(
+            harnessRegistry(process.env),
+            process.env.FACTORY_HARNESS ?? DEFAULT_HARNESS,
+            labels,
+          ),
         author: {
           name: 'aifactory-paulohenriquevn[bot]',
           email: 'aifactory@users.noreply.github.com',

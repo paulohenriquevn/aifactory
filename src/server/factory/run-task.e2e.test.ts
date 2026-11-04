@@ -35,6 +35,7 @@ const github = createGithubApp({
 /** The issue asks for `truncate(text, max)`; this plays the agent that writes it. */
 const scriptedAgent: CodingHarness = {
   name: 'scripted-agent',
+  egress: async () => [],
   async run(backend, { cwd }) {
     await backend.uploadFile(
       `${cwd}/src/truncate.js`,
@@ -111,7 +112,6 @@ describe('the factory against the real services', () => {
         github,
         sandbox: vercelSandboxProvider(),
         harness: scriptedAgent,
-        claude: { kind: 'api-key', secret: 'not-used-by-the-scripted-agent' },
         author: {
           name: 'aifactory-paulohenriquevn[bot]',
           email: 'aifactory@users.noreply.github.com',

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
+import { buildPrompt } from './harness'
 import {
   anthropicEgress,
-  buildPrompt,
   claudeCodeHarness,
   claudeCredentialFromEnv,
   parseClaudeResult,
-} from './harness'
+} from './harness-claude'
 import { FakeSandbox } from './fake-sandbox'
 
 describe('parseClaudeResult', () => {
@@ -50,7 +50,7 @@ describe('claudeCodeHarness', () => {
     }))
     const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
 
-    const result = await claudeCodeHarness().run(backend, {
+    const result = await claudeCodeHarness({ kind: 'api-key', secret: 'k' }).run(backend, {
       prompt: 'PROMPT',
       cwd: '/vercel/work',
       timeoutMs: 5,
@@ -71,7 +71,11 @@ describe('claudeCodeHarness with a subscription', () => {
     const sandbox = new FakeSandbox(() => ({ stdout: JSON.stringify({ result: 'ok' }) }))
     const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
 
-    await claudeCodeHarness('subscription').run(backend, { prompt: 'P', cwd: '/w', timeoutMs: 5 })
+    await claudeCodeHarness({ kind: 'subscription', secret: 't' }).run(backend, {
+      prompt: 'P',
+      cwd: '/w',
+      timeoutMs: 5,
+    })
 
     const [command] = sandbox.backend.commands
     expect(command).toContain('CLAUDE_CODE_OAUTH_TOKEN=placeholder-not-a-secret')
@@ -122,6 +126,38 @@ describe('claudeCredentialFromEnv', () => {
     expect(() => claudeCredentialFromEnv({ FACTORY_CLAUDE_AUTH: 'oauth' })).toThrow(
       /api-key or subscription/,
     )
+  })
+})
+
+describe('claudeCodeHarness resume and quota', () => {
+  const id = '7db0be59-83ce-4961-a568-391f7b5c0327'
+
+  it('resumes the same session and refuses an id that is not a UUID', async () => {
+    const sandbox = new FakeSandbox(() => ({
+      stdout: JSON.stringify({ result: 'ok', session_id: id }),
+    }))
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+    const harness = claudeCodeHarness({ kind: 'api-key', secret: 'k' })
+    const input = { prompt: 'P', cwd: '/w', timeoutMs: 5 }
+
+    const first = await harness.run(backend, input)
+    await harness.resume?.(backend, first.sessionId!, input)
+
+    expect(first.sessionId).toBe(id)
+    expect(sandbox.backend.commands.at(-1)).toContain(`--resume ${id}`)
+    await expect(harness.resume?.(backend, '$(reboot)', input)).rejects.toThrow(/UUID/)
+  })
+
+  it('reads a usage limit as a quota stop', () => {
+    const result = parseClaudeResult(
+      1,
+      JSON.stringify({ is_error: true, result: "You've hit your limit · resets 3pm" }),
+      '',
+    )
+    expect(result.quota).toMatchObject({ resetsAt: '3pm' })
+    expect(
+      parseClaudeResult(1, JSON.stringify({ is_error: true, result: 'Invalid API key' }), '').quota,
+    ).toBeUndefined()
   })
 })
 

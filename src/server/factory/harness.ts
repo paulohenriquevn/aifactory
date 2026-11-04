@@ -1,5 +1,7 @@
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 
+import type { EgressRule } from './sandbox'
+
 export type HarnessInput = {
   prompt: string
   /** Directory of the checked-out repository inside the sandbox. */
@@ -7,99 +9,56 @@ export type HarnessInput = {
   timeoutMs: number
 }
 
-export type HarnessResult = { ok: boolean; summary: string; costUsd?: number }
+/** The agent stopped because its account's quota ran out: a wait, not a flaw in the work. */
+export type QuotaStop = { message: string; resetsAt?: string }
 
-/** An external coding agent, run inside a sandbox. */
+export type HarnessResult = {
+  ok: boolean
+  summary: string
+  costUsd?: number
+  /** What `resume` needs to continue this conversation. */
+  sessionId?: string
+  quota?: QuotaStop
+}
+
+/**
+ * An external coding agent, run inside a sandbox. A new agent is one file that implements this: the
+ * orchestrator never names a specific one.
+ */
 export interface CodingHarness {
   readonly name: string
+  /**
+   * The firewall rules that sign this agent's calls. The secret lives here, on the factory host,
+   * and the sandbox only ever gets a placeholder, so this is the one place a credential is read.
+   */
+  egress(): Promise<EgressRule[]>
+  /** Installs and configures the agent in a fresh sandbox, when it is not already there. */
+  prepare?(backend: SandboxBackend): Promise<void>
   run(backend: SandboxBackend, input: HarnessInput): Promise<HarnessResult>
+  /** Continues a conversation `run` started, in the same sandbox or one restored from a snapshot. */
+  resume?(backend: SandboxBackend, sessionId: string, input: HarnessInput): Promise<HarnessResult>
 }
 
-const PROMPT_FILE = '/tmp/factory-prompt.md'
+/** The text an unattended agent sends back when the account's limit was reached. */
+const QUOTA = /usage limit|hit your (usage )?limit|limit reached|rate.?limit(ed| exceeded)/i
+const RESETS = /(?:try again at|resets?(?: at)?)\s+([^.|\n]{3,40})/i
 
-/**
- * How Claude Code pays for its requests: a Console API key, or the owner's subscription through
- * the one-year token `claude setup-token` prints. Either way the secret stays with the factory.
- */
-export type ClaudeCredential = { kind: 'api-key' | 'subscription'; secret: string }
-
-/**
- * The firewall rule that signs Claude Code's requests. An API key travels as `x-api-key`; the
- * subscription token as the bearer token Claude Code itself sends for it.
- */
-export function anthropicEgress(credential: ClaudeCredential): {
-  domain: string
-  headers: Record<string, string>
-} {
-  const headers: Record<string, string> =
-    credential.kind === 'api-key'
-      ? { 'x-api-key': credential.secret }
-      : { authorization: `Bearer ${credential.secret}` }
-  return { domain: 'api.anthropic.com', headers }
+/** Reads a quota stop out of an agent's own words, or returns nothing when it is another error. */
+export function detectQuota(text: string): QuotaStop | undefined {
+  if (!QUOTA.test(text)) return undefined
+  const resetsAt = RESETS.exec(text)?.[1]?.trim()
+  return { message: text.trim().slice(0, 300), ...(resetsAt ? { resetsAt } : {}) }
 }
 
-/**
- * Picks the credential from the environment. `FACTORY_CLAUDE_AUTH` chooses when both are set;
- * otherwise whichever exists is used, and a missing credential is an error that names both.
- */
-export function claudeCredentialFromEnv(env: NodeJS.ProcessEnv): ClaudeCredential {
-  const apiKey = env.ANTHROPIC_API_KEY
-  const token = env.CLAUDE_CODE_OAUTH_TOKEN
-  const wanted = env.FACTORY_CLAUDE_AUTH
-  if (wanted !== undefined && wanted !== 'api-key' && wanted !== 'subscription') {
-    throw new Error(`FACTORY_CLAUDE_AUTH must be api-key or subscription, got ${wanted}`)
-  }
-  const kind = wanted ?? (apiKey ? 'api-key' : token ? 'subscription' : undefined)
-  const secret = kind === 'api-key' ? apiKey : token
-  if (!kind || !secret) {
-    throw new Error(
-      kind === 'subscription'
-        ? 'CLAUDE_CODE_OAUTH_TOKEN is not set (run `claude setup-token`)'
-        : 'ANTHROPIC_API_KEY is not set (or set CLAUDE_CODE_OAUTH_TOKEN for a subscription)',
-    )
-  }
-  return { kind, secret }
+/** Session ids are UUIDs. One is put in a shell command, so anything else is refused. */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function assertSessionId(id: string): string {
+  if (!SESSION_ID.test(id)) throw new Error(`session id must be a UUID, got ${JSON.stringify(id)}`)
+  return id
 }
 
-/**
- * Claude Code in headless mode. The secret never enters the sandbox: the environment carries a
- * placeholder, and the firewall attaches the real one on the way out. Permissions are
- * skipped because the sandbox is the boundary (a microVM with an explicit egress allowlist and no
- * secrets), and a headless run has nobody to answer a prompt.
- */
-export function claudeCodeHarness(auth: ClaudeCredential['kind'] = 'api-key'): CodingHarness {
-  const variable = auth === 'api-key' ? 'ANTHROPIC_API_KEY' : 'CLAUDE_CODE_OAUTH_TOKEN'
-  return {
-    name: 'claude-code',
-    async run(backend, { prompt, cwd, timeoutMs }) {
-      await backend.uploadFile(PROMPT_FILE, prompt)
-      // `cwd` is a path the factory built (see run-task), never text from the issue.
-      const result = await backend.execute(
-        `cd ${cwd} && ${variable}=placeholder-not-a-secret CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p --output-format json --dangerously-skip-permissions < ${PROMPT_FILE}`,
-        { timeoutMs },
-      )
-      return parseClaudeResult(result.exitCode, result.stdout, result.stderr)
-    },
-  }
-}
-
-export function parseClaudeResult(exitCode: number, stdout: string, stderr: string): HarnessResult {
-  try {
-    const parsed = JSON.parse(stdout) as {
-      is_error?: boolean
-      result?: string
-      total_cost_usd?: number
-    }
-    return {
-      ok: exitCode === 0 && parsed.is_error !== true,
-      summary: String(parsed.result ?? '').slice(0, 4000),
-      costUsd: parsed.total_cost_usd,
-    }
-  } catch {
-    const tail = (stderr || stdout).trim().slice(-1000)
-    return { ok: false, summary: `claude exited ${exitCode} without a JSON result: ${tail}` }
-  }
-}
+export const PROMPT_FILE = '/tmp/factory-prompt.md'
 
 export function buildPrompt(input: {
   repo: string

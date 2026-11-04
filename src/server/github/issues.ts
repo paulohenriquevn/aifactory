@@ -1,6 +1,6 @@
 import type { FetchLike } from './app'
 
-export type Issue = { number: number; title: string; body: string }
+export type Issue = { number: number; title: string; body: string; labels: string[] }
 
 /** Reads an issue with an installation token. Runs on the factory host, never in the sandbox. */
 export async function fetchIssue(
@@ -19,6 +19,16 @@ export async function fetchIssue(
   if (!response.ok) {
     throw new Error(`GitHub answered ${response.status} reading ${repo}#${number}`)
   }
-  const data = (await response.json()) as { number: number; title: string; body: string | null }
-  return { number: data.number, title: data.title, body: data.body ?? '' }
+  const data = (await response.json()) as {
+    number: number
+    title: string
+    body: string | null
+    labels?: { name: string }[]
+  }
+  return {
+    number: data.number,
+    title: data.title,
+    body: data.body ?? '',
+    labels: (data.labels ?? []).map((l) => l.name),
+  }
 }

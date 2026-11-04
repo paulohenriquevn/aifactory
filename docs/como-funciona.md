@@ -3,11 +3,11 @@
 Este documento descreve a fábrica como ela está hoje, com o Claude Code e com o Codex. Onde algo
 ainda não existe, o texto diz. O plano e os marcos ficam em [PLAN.md](PLAN.md).
 
-| Agente      | Estado em 2026-11-04                                                                                               |
-| ----------- | ------------------------------------------------------------------------------------------------------------------ |
-| Claude Code | Funciona do webhook ao pull request, por chave de API ou por assinatura. Testado ao vivo nos dois modos.           |
-| Codex       | Verificado em um spike (instala, autentica pelo firewall). O harness ainda não existe e é o primeiro item do M3b.  |
-| Outros      | O contrato `CodingHarness` foi pensado para aceitar mais um agente com um arquivo. Nenhum outro está implementado. |
+| Agente      | Estado em 2026-11-04                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code | Funciona do webhook ao pull request, por chave de API ou por assinatura. Testado ao vivo nos dois modos.                                   |
+| Codex       | Implementado. Instala, autentica pelo firewall e lê a parada por cota numa execução real. Falta uma execução que complete (cota da conta). |
+| Outros      | Um agente novo é um arquivo que implementa `CodingHarness` e uma linha no registro. Nenhum outro está implementado.                        |
 
 ## Visão geral
 
@@ -61,7 +61,7 @@ agente na mesma issue. Uma task que falha fica em `failed` para uma pessoa olhar
 A fábrica só roda um agente dentro de um sandbox com uma lista explícita de domínios de saída.
 Lista vazia, `*` ou endereço IP fazem a execução ser recusada (`IsolationRefused`).
 
-O sandbox é um microVM do Vercel Sandbox. Ele alcança apenas:
+O sandbox é um microVM do Vercel Sandbox. Ele alcança apenas (a linha do agente depende de qual roda):
 
 | Domínio              | Para quê              | O firewall injeta                                                  |
 | -------------------- | --------------------- | ------------------------------------------------------------------ |
@@ -152,59 +152,93 @@ várias vezes em 2026 e devem ser relidas antes de depender delas.
 
 ## Codex
 
-**Estado:** só o spike existe. A fábrica ainda não roda o Codex, e a implementação do harness é o
-primeiro item do M3b.
+**Estado:** implementado e verificado até a chamada ao modelo. Uma execução que completa uma issue
+ainda não foi vista, porque a conta do ChatGPT usada estava sem cota até 2026-11-05 11:48.
 
-O que o spike de 2026-11-04 mostrou, num sandbox real com saída apenas para `registry.npmjs.org` e
-`chatgpt.com`:
+O que foi verificado numa execução real da fábrica (2026-11-04), com saída apenas para
+`github.com`, `registry.npmjs.org` e `chatgpt.com`:
 
-- `npm i -g @openai/codex` instala o `codex` 0.166 no sandbox.
-- Um `auth.json` com tokens de mentira (assinatura trocada, `refresh_token` falso) é aceito pelo
-  CLI, e o firewall injetando `Authorization: Bearer` com o access token real basta para a
-  autenticação: o servidor respondeu com a mensagem de limite de uso da conta e a hora da
-  liberação, o que só acontece com a conta autenticada.
-- O access token dura 10 dias. O token de renovação pode ficar só no host, que renova a cada poucos
-  dias, e nunca entra no sandbox.
+- O sandbox instala `@openai/codex@0.166.0` por npm (versão fixa, para uma nova release não mudar o
+  comportamento de uma execução).
+- Recebe um `auth.json` de placeholder: as claims que o Codex lê (plano, conta), tokens com a
+  assinatura trocada e um `refresh_token` falso. O token real nunca entra.
+- O firewall injeta `Authorization: Bearer` com o access token real, e o servidor da OpenAI
+  respondeu autenticado.
+- A resposta de limite de uso foi lida como parada por cota: a task terminou em `failed` com
+  `quota: true` e `resetsAt: "Nov 5th, 2026 11:48 AM"` no detalhe, em vez de um erro genérico.
 - A conexão por WebSocket falha com "Attack attempt detected", porque o cabeçalho não é injetado no
-  upgrade. O Codex cai para HTTPS depois de cinco tentativas. Desligar o WebSocket na configuração
-  evita a demora.
-- Uma execução completa ficou pendente: a conta estava sem cota até 2026-11-05 11:48.
+  upgrade, e o Codex cai para HTTPS depois de cinco tentativas. Isso soma alguns segundos por
+  execução. A versão 0.166 não tem chave de configuração conhecida para desligar o WebSocket.
 
-### Como será o harness do Codex
+### Como o harness funciona
 
-- `codex exec` sem interface, com o prompt por arquivo, como no Claude Code.
-- Domínios de saída: `chatgpt.com` (login do ChatGPT) ou `api.openai.com` (chave
-  `OPENAI_API_KEY`), mais `github.com` e `registry.npmjs.org`.
-- Com chave de API, o caminho é o mesmo do Claude: placeholder no ambiente e firewall assinando.
-- Com login do ChatGPT, o sandbox recebe um `auth.json` com placeholders e o firewall assina com o
-  access token.
+1. `egress()` lê o login no host e devolve a regra de firewall: `api.openai.com` com a chave de API,
+   ou `chatgpt.com` com o access token da assinatura.
+2. `prepare()` instala o Codex no sandbox e grava o `auth.json` de placeholder (assinatura) ou nada
+   (chave de API, que vai como `OPENAI_API_KEY=placeholder-not-a-secret`).
+3. `run()` executa `codex exec --json --dangerously-bypass-approvals-and-sandbox -` com o prompt
+   lido de um arquivo. O sandbox do próprio Codex fica desligado porque o microVM é a fronteira.
+4. A saída é uma linha de JSON por evento. A fábrica guarda o `thread_id` (para `resume`), a última
+   mensagem do agente como resumo e distingue falha comum de parada por cota.
 
-### Login dedicado do Codex
+O Codex não informa custo em dólar, então `costUsd` fica vazio.
 
-O `auth.json` do Codex tem um token de renovação que rotaciona. Se o Codex do Paulo e a fábrica
-compartilharem o mesmo login, o primeiro que renovar invalida o outro. Por isso a fábrica usa um
-login só dela:
+### Credencial e login dedicado
+
+| Modo           | Variável                      | Como a chamada é assinada                   |
+| -------------- | ----------------------------- | ------------------------------------------- |
+| `api-key`      | `OPENAI_API_KEY`              | `Authorization: Bearer` em `api.openai.com` |
+| `subscription` | login em `FACTORY_CODEX_HOME` | `Authorization: Bearer` em `chatgpt.com`    |
+
+Com as duas, vale a chave; `FACTORY_CODEX_AUTH=api-key|subscription` escolhe. O login da assinatura
+fica em `~/.codex-factory-1` por padrão:
 
 ```bash
 CODEX_HOME=~/.codex-factory-1 codex login --device-auth
 ```
 
-Cada execução simultânea do Codex precisa do seu próprio login (`~/.codex-factory-2` e assim por
-diante). O Claude por token não tem essa restrição. A OpenAI recomenda não usar login de assinatura
-em repositório público.
+O `auth.json` do Codex tem um token de renovação que rotaciona. Se o Codex do uso diário e a
+fábrica compartilharem o mesmo login, o primeiro que renovar invalida o outro, por isso a fábrica
+tem um login só dela. O access token dura 10 dias. A fábrica o renova no host quando faltam menos
+de 2 dias, e grava o token novo no mesmo arquivo. Se a renovação for recusada, a task diz como
+fazer o login de novo. Cada execução simultânea do Codex por assinatura precisa do seu login
+(`~/.codex-factory-2` e assim por diante); o Claude por token não tem essa restrição. A renovação
+foi coberta por teste de unidade e ainda não foi exercitada contra a OpenAI. A OpenAI recomenda não
+usar login de assinatura em repositório público.
+
+## Escolhendo o agente
+
+O agente de uma task vem, nesta ordem, de:
+
+1. um label `harness:<nome>` na issue (`harness:codex`, `harness:claude-code`);
+2. `FACTORY_HARNESS`;
+3. o padrão, `claude-code`.
+
+Dois labels de agentes diferentes, ou um nome desconhecido, fazem a task falhar no estágio
+`sandbox`, antes de criar o sandbox: rodar o agente errado em silêncio custaria dinheiro. Cada agente
+só precisa da sua credencial quando uma task o pede.
+
+## Cota esgotada
+
+Quando o agente informa que o limite da conta acabou (Claude: "limit reached", Codex: "usage
+limit"), a task termina em `failed` com `quota: true` e, quando a mensagem traz, `resetsAt`. Nada é
+enviado e nenhum PR abre. O motivo fica claro no detalhe do estágio, e a task pode ser repetida
+depois do horário. Tratar isso como uma espera que retoma sozinha entra com o `waiting` do M4.
 
 ## O contrato para outros agentes
 
-`CodingHarness` hoje tem `name` e `run(backend, input)`, e o resultado é `{ ok, summary, costUsd }`.
-Para aceitar vários agentes e o `waiting` do M4, cada harness vai declarar também:
+Um agente é um arquivo que implementa `CodingHarness` (`src/server/factory/harness.ts`) e uma linha
+em `harness-registry.ts`:
 
-- `egress(credential)`: as regras de firewall que assinam as chamadas daquele agente;
-- as variáveis de ambiente com placeholder;
-- `resume(sessionId)`, e o resultado passa a devolver o `sessionId` e um sinal de limite de cota;
-- um nome registrado, escolhido por configuração, por label da issue (como `harness:codex`) ou pelo
-  padrão. O reviewer do M4 pode usar um agente diferente do builder.
+- `name`;
+- `egress()`: as regras de firewall que assinam as chamadas do agente. É o único lugar onde a
+  credencial é lida;
+- `prepare(backend)` (opcional): instala e configura o agente num sandbox novo;
+- `run(backend, { prompt, cwd, timeoutMs })`, que devolve `{ ok, summary, costUsd?, sessionId?, quota? }`;
+- `resume(backend, sessionId, input)` (opcional): continua uma conversa. O id é validado como UUID
+  antes de entrar numa linha de shell.
 
-Adicionar um agente deve custar um arquivo, sem mexer no orquestrador (`runTask`).
+O orquestrador (`runTask`) não conhece nenhum agente pelo nome.
 
 ## Configuração
 
@@ -261,5 +295,5 @@ responde `/api/health` mesmo sem as credenciais.
 - Um repositório de cada vez no sentido de operação: não há onboarding de repositórios.
 - O servidor e o túnel rodam como processos da sessão de trabalho, sem supervisor.
 - Não há pergunta ao humano, review independente, painel nem merge. Estão no M4 a M6.
-- Só o Claude Code roda. O Codex depende do M3b.
+- O Codex ainda não completou uma issue do início ao fim, por causa da cota da conta usada.
 - A sessão do Vercel Sandbox no plano Hobby termina em 45 minutos.
