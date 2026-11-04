@@ -193,14 +193,25 @@ export default function RepositoriesPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Repositories</h1>
         <div className="flex gap-2">
-          {data?.installUrl ? (
+          {data?.installations.map((i) => (
+            <a
+              key={i.account}
+              href={i.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-foreground underline underline-offset-2"
+            >
+              Choose which repositories the App reaches ({i.account})
+            </a>
+          ))}
+          {data && data.installations.length === 0 && data.installUrl ? (
             <a
               href={data.installUrl}
               target="_blank"
               rel="noreferrer"
               className="text-sm text-foreground underline underline-offset-2"
             >
-              Give the App access to more repositories
+              Install the App
             </a>
           ) : null}
           <Button size="sm" variant="secondary" onClick={resource.reload}>
@@ -211,6 +222,12 @@ export default function RepositoriesPage() {
       {resource.error ? <p className="text-sm text-destructive">{resource.error}</p> : null}
       {data?.error ? (
         <Alert intent="warning" title="GitHub could not be asked" description={data.error} />
+      ) : null}
+      {data?.owner ? (
+        <p className="text-sm text-muted-foreground">
+          The App is private. Open the links above signed in to GitHub as {data.owner}: any other
+          account sees &ldquo;private GitHub App&rdquo;.
+        </p>
       ) : null}
       {data ? (
         data.repositories.length === 0 ? (

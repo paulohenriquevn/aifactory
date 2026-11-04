@@ -23,6 +23,16 @@ const delivery = (statusCode: number): HookDelivery => ({
 })
 
 const app = (over: Partial<AppHooks & AppRepos> = {}): AppHooks & AppRepos => ({
+  installations: async () => [
+    {
+      id: 1,
+      account: 'paulo',
+      type: 'User',
+      selection: 'all',
+      url: 'https://github.com/settings/installations/1',
+    },
+  ],
+  owner: async () => 'paulo',
   installationRepositories: async () => [{ fullName: 'o/a', private: true, defaultBranch: 'main' }],
   hookDeliveries: async () => [delivery(200)],
   redeliver: async () => {},
@@ -46,9 +56,7 @@ describe('the setup report', () => {
       ['repositories', 'ok'],
     ])
     expect(item(report, 'github').detail).toBe('It reaches 1 repository.')
-    expect(item(report, 'github').link?.href).toBe(
-      'https://github.com/apps/my-app/installations/new',
-    )
+    expect(item(report, 'github').link?.href).toBe('https://github.com/settings/installations/1')
     expect(item(report, 'claude').detail).toBe('Paid by your subscription.')
     expect(item(report, 'repositories').detail).toBe('2 enabled.')
   })
@@ -64,12 +72,12 @@ describe('the setup report', () => {
   it('sends the owner to the install page when the App reaches no repository', async () => {
     const report = await setupReport({
       env: full,
-      github: app({ installationRepositories: async () => [] }),
+      github: app({ installationRepositories: async () => [], installations: async () => [] }),
       enabledRepositories: 0,
     })
     expect(item(report, 'github')).toMatchObject({
       status: 'missing',
-      detail: 'The App is not installed on any repository yet.',
+      detail: expect.stringContaining('The App is not installed on any repository yet.'),
       link: { href: 'https://github.com/apps/my-app/installations/new' },
     })
     expect(item(report, 'repositories')).toMatchObject({
@@ -162,5 +170,55 @@ describe('the setup report', () => {
       enabledRepositories: 1,
     })
     expect(JSON.stringify(report)).not.toMatch(/SECRET|VERCEL_TOKEN=|prj|team/)
+  })
+})
+
+describe('the link to choose repositories', () => {
+  it('opens the installation page of the account the App is on, not the install page a private App refuses', async () => {
+    const report = await setupReport({ env: full, github: app(), enabledRepositories: 1 })
+    expect(item(report, 'github').link).toEqual({
+      label: 'Choose which repositories it reaches',
+      href: 'https://github.com/settings/installations/1',
+    })
+  })
+
+  it('falls back to the install page when the installations cannot be read', async () => {
+    const report = await setupReport({
+      env: full,
+      github: app({
+        installations: async () => {
+          throw new Error('no')
+        },
+      }),
+      enabledRepositories: 1,
+    })
+    expect(item(report, 'github').link?.href).toBe(
+      'https://github.com/apps/my-app/installations/new',
+    )
+  })
+
+  it('tells who must sign in to install a private App that is not installed yet', async () => {
+    const report = await setupReport({
+      env: full,
+      github: app({ installationRepositories: async () => [], installations: async () => [] }),
+      enabledRepositories: 0,
+    })
+    expect(item(report, 'github').detail).toContain('only paulo can install it')
+    expect(item(report, 'github').link?.href).toBe(
+      'https://github.com/apps/my-app/installations/new',
+    )
+
+    const unknown = await setupReport({
+      env: full,
+      github: app({
+        installationRepositories: async () => [],
+        installations: async () => [],
+        owner: async () => {
+          throw new Error('no')
+        },
+      }),
+      enabledRepositories: 0,
+    })
+    expect(item(unknown, 'github').detail).toContain('only its owner can install it')
   })
 })

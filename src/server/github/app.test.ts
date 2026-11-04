@@ -229,6 +229,13 @@ describe('the delivery log', () => {
   })
 })
 
+const INSTALLATION = {
+  id: 77,
+  account: { login: 'paulo', type: 'User' },
+  repository_selection: 'all',
+  html_url: 'https://github.com/settings/installations/77',
+}
+
 describe('the repositories the App reaches', () => {
   const repo = (name: string, priv = false) => ({
     full_name: name,
@@ -245,7 +252,7 @@ describe('the repositories the App reaches', () => {
         auth: headers.authorization,
         body: init?.body && JSON.parse(String(init.body)),
       })
-      if (url.endsWith('/app/installations')) return Response.json([{ id: 77 }])
+      if (url.endsWith('/app/installations')) return Response.json([INSTALLATION])
       if (url.endsWith('/access_tokens'))
         return Response.json({ token: 'ghs_list' }, { status: 201 })
       const page = Number(new URL(url).searchParams.get('page'))
@@ -310,7 +317,7 @@ describe('how long the repository list is kept', () => {
     const fetch: FetchLike = async (url) => {
       if (url.endsWith('/app/installations')) {
         installationCalls += 1
-        return Response.json([{ id: 5 }])
+        return Response.json([INSTALLATION])
       }
       if (url.endsWith('/access_tokens')) return Response.json({ token: 't' }, { status: 201 })
       return Response.json({
@@ -344,5 +351,57 @@ describe('how long the repository list is kept', () => {
     await expect(github.installationRepositories()).rejects.toThrow('502')
     fail = false
     expect(await github.installationRepositories()).toEqual([])
+  })
+})
+
+describe('where the App is installed and who owns it', () => {
+  it('reads each installation with its account and the page where its repositories are chosen', async () => {
+    const fetch: FetchLike = async () =>
+      Response.json([
+        {
+          id: 1,
+          account: { login: 'paulo', type: 'User' },
+          repository_selection: 'all',
+          html_url: 'https://github.com/settings/installations/1',
+        },
+        {
+          id: 2,
+          account: { login: 'acme', type: 'Organization' },
+          repository_selection: 'selected',
+          html_url: 'https://github.com/organizations/acme/settings/installations/2',
+        },
+      ])
+    expect(await app(fetch).installations()).toEqual([
+      {
+        id: 1,
+        account: 'paulo',
+        type: 'User',
+        selection: 'all',
+        url: 'https://github.com/settings/installations/1',
+      },
+      {
+        id: 2,
+        account: 'acme',
+        type: 'Organization',
+        selection: 'selected',
+        url: 'https://github.com/organizations/acme/settings/installations/2',
+      },
+    ])
+  })
+
+  it('says what GitHub answered when it cannot list them or read the owner', async () => {
+    const failing: FetchLike = async () => Response.json({}, { status: 401 })
+    await expect(app(failing).installations()).rejects.toThrow(
+      'GitHub answered 401 listing installations',
+    )
+    await expect(app(failing).owner()).rejects.toThrow('GitHub answered 401 reading the App')
+  })
+
+  it('names the account that owns the App', async () => {
+    const fetch: FetchLike = async (url) => {
+      expect(url).toBe('https://api.github.com/app')
+      return Response.json({ owner: { login: 'paulo' } })
+    }
+    expect(await app(fetch).owner()).toBe('paulo')
   })
 })

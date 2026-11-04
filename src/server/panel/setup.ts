@@ -66,6 +66,8 @@ export async function setupReport({
   } else {
     try {
       const reached = await github.installationRepositories()
+      const where = await github.installations().catch(() => [])
+      const owner = await github.owner().catch(() => undefined)
       items.push(
         reached.length > 0
           ? {
@@ -73,15 +75,21 @@ export async function setupReport({
               label: 'GitHub App',
               status: 'ok',
               detail: `It reaches ${reached.length} repositor${reached.length === 1 ? 'y' : 'ies'}.`,
-              ...(install
-                ? { link: { label: 'Change which repositories it reaches', href: install } }
+              // The page of the account it is installed on, which a private App's owner can always open.
+              ...(where[0] || install
+                ? {
+                    link: {
+                      label: 'Choose which repositories it reaches',
+                      href: where[0]?.url ?? install!,
+                    },
+                  }
                 : {}),
             }
           : {
               id: 'github',
               label: 'GitHub App',
               status: 'missing',
-              detail: 'The App is not installed on any repository yet.',
+              detail: `The App is not installed on any repository yet. It is private, so only ${owner ?? 'its owner'} can install it: sign in to GitHub as that account first.`,
               ...(install
                 ? { link: { label: 'Install it and choose repositories', href: install } }
                 : {}),

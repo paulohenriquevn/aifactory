@@ -40,6 +40,7 @@ beforeEach(async () => {
   world.added = []
   world.failOn = undefined
   world.queued = []
+  world.ownerFails = false
 })
 afterAll(() => getStorageManager().dispose())
 
@@ -50,6 +51,17 @@ const world = {
   labels: [] as string[],
   milestones: [] as string[],
   added: [] as { issue: number; labels: string[] }[],
+  installations: [
+    {
+      id: 9,
+      account: 'paulo',
+      type: 'User' as const,
+      selection: 'all' as const,
+      url: 'https://github.com/settings/installations/9',
+    },
+  ],
+  owner: 'paulo' as string,
+  ownerFails: false,
   failOn: undefined as number | undefined,
   queued: [] as number[],
   tokens: [] as string[],
@@ -87,6 +99,13 @@ const deps = (): WorkDeps => ({
       if (world.listing) throw world.listing
       return world.reachable
     },
+    async installations() {
+      return world.installations
+    },
+    async owner() {
+      if (world.ownerFails) throw new Error('no')
+      return world.owner
+    },
   },
   issues,
   installUrl: 'https://github.com/apps/x/installations/new',
@@ -111,6 +130,21 @@ describe('the repositories page', () => {
       ['paulo/other', false, true],
     ])
     expect(view.repositories[1]).toMatchObject({ private: false, defaultBranch: 'trunk' })
+  })
+
+  it('says where the App is installed and who owns it, so a private App is opened by its owner', async () => {
+    const view = await listRepositories(deps())
+    expect(view.installations).toEqual([
+      { account: 'paulo', selection: 'all', url: 'https://github.com/settings/installations/9' },
+    ])
+    expect(view.owner).toBe('paulo')
+  })
+
+  it('still lists the repositories when the owner cannot be read', async () => {
+    world.ownerFails = true
+    const view = await listRepositories(deps())
+    expect(view.owner).toBeNull()
+    expect(view.repositories).toHaveLength(2)
   })
 
   it('enables a repository under the name GitHub gives it, whatever case was asked for', async () => {

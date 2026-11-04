@@ -231,8 +231,12 @@ export type RepositoriesView = {
   repositories: RepositoryView[]
   /** The agents the owner can pick for a repository. */
   agents: string[]
-  /** Where GitHub lets the owner choose which repositories the App reaches. */
+  /** Where GitHub lets the owner install the App on another account. */
   installUrl: string | null
+  /** The accounts the App is installed on, each with the page where its repositories are chosen. */
+  installations: { account: string; selection: 'all' | 'selected'; url: string }[]
+  /** The account that owns the App. A private App can only be installed by it. */
+  owner: string | null
   /** Set when GitHub could not be asked, so the list is only what is already saved. */
   error: string | null
 }

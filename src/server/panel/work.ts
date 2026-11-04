@@ -88,9 +88,11 @@ async function reachable(deps: WorkDeps): Promise<ReachableRepository[] | Error>
 
 /** The repositories the App reaches, merged with what the owner saved about each. */
 export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView> {
-  const [found, saved] = await Promise.all([
+  const [found, saved, installations, owner] = await Promise.all([
     reachable(deps),
     deps.db.select().from(repository).orderBy(asc(repository.fullName)),
+    deps.github.installations().catch(() => []),
+    deps.github.owner().catch(() => null),
   ])
   const byName = new Map(saved.map((r) => [r.fullName.toLowerCase(), r]))
   const view = (
@@ -126,6 +128,12 @@ export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView
     repositories,
     agents: deps.agents,
     installUrl: deps.installUrl ?? null,
+    installations: installations.map(({ account, selection, url }) => ({
+      account,
+      selection,
+      url,
+    })),
+    owner,
     error: found instanceof Error ? found.message : null,
   }
 }

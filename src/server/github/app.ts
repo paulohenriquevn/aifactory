@@ -26,10 +26,24 @@ export type AppHooks = {
 /** A repository the App can reach, which is not the same as one the factory may work in. */
 export type ReachableRepository = { fullName: string; private: boolean; defaultBranch: string }
 
+/** Where the App is installed: one account, and the GitHub page where its repositories are chosen. */
+export type AppInstallation = {
+  id: number
+  account: string
+  type: 'User' | 'Organization'
+  selection: 'all' | 'selected'
+  /** The account's page for this installation, where the owner changes which repositories it reaches. */
+  url: string
+}
+
 /** The one place a token is not limited to a repository: it can only read the list of them. */
 export type AppRepos = {
-  /** Repositories the installation covers, and where to install or change that. */
+  /** Repositories the installations cover. */
   installationRepositories(): Promise<ReachableRepository[]>
+  /** The accounts the App is installed on. */
+  installations(): Promise<AppInstallation[]>
+  /** The account that owns the App. A private App can only be installed by it. */
+  owner(): Promise<string>
 }
 
 export type GithubApp = {
@@ -73,6 +87,7 @@ export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks
   const now = options.now ?? Date.now
   const cache = new Map<string, InstallationToken>()
   let listed: { at: number; repositories: ReachableRepository[] } | undefined
+  let installed: { at: number; installations: AppInstallation[] } | undefined
 
   function appJwt(): string {
     const seconds = Math.floor(now() / 1000)
@@ -97,14 +112,38 @@ export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks
     })
   }
 
+  async function listInstallations(): Promise<AppInstallation[]> {
+    if (installed && now() - installed.at < LIST_TTL_MS) return installed.installations
+    const response = await call('/app/installations')
+    if (!response.ok) throw new Error(`GitHub answered ${response.status} listing installations`)
+    const rows = (await response.json()) as {
+      id: number
+      account: { login: string; type: string }
+      repository_selection: string
+      html_url: string
+    }[]
+    const installations = rows.map((r): AppInstallation => ({
+      id: r.id,
+      account: r.account.login,
+      type: r.account.type === 'Organization' ? 'Organization' : 'User',
+      selection: r.repository_selection === 'all' ? 'all' : 'selected',
+      url: r.html_url,
+    }))
+    installed = { at: now(), installations }
+    return installations
+  }
+
   return {
+    installations: listInstallations,
+    async owner() {
+      const response = await call('/app')
+      if (!response.ok) throw new Error(`GitHub answered ${response.status} reading the App`)
+      return ((await response.json()) as { owner: { login: string } }).owner.login
+    },
     async installationRepositories() {
       // The list is walked page by page, so a page that asks twice in a row is answered from memory.
       if (listed && now() - listed.at < LIST_TTL_MS) return listed.repositories
-      const installed = await call('/app/installations')
-      if (!installed.ok)
-        throw new Error(`GitHub answered ${installed.status} listing installations`)
-      const installations = (await installed.json()) as { id: number }[]
+      const installations = await listInstallations()
       const found: ReachableRepository[] = []
       for (const { id } of installations) {
         // Reading names and visibility needs metadata and nothing else, and this token never writes.

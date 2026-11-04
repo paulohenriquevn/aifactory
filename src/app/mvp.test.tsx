@@ -72,6 +72,10 @@ const repos = (over: Partial<RepositoriesView> = {}): RepositoriesView => ({
   ],
   agents: ['claude-code', 'codex'],
   installUrl: 'https://github.com/apps/x/installations/new',
+  installations: [
+    { account: 'paulo', selection: 'all', url: 'https://github.com/settings/installations/9' },
+  ],
+  owner: 'paulo',
   error: null,
   ...over,
 })
@@ -160,11 +164,14 @@ describe('repositories', () => {
     expect(screen.getByText('paulo/other')).toBeDefined()
     expect(screen.getByText('enabled')).toBeDefined()
     expect(screen.getByText('public')).toBeDefined()
+    const manage = screen.getByRole('link', {
+      name: 'Choose which repositories the App reaches (paulo)',
+    })
+    expect(manage.getAttribute('href')).toBe('https://github.com/settings/installations/9')
+    expect(screen.queryByRole('link', { name: 'Install the App' })).toBeNull()
     expect(
-      screen
-        .getByRole('link', { name: 'Give the App access to more repositories' })
-        .getAttribute('href'),
-    ).toBe('https://github.com/apps/x/installations/new')
+      screen.getByText(/The App is private\. Open the links above signed in to GitHub as paulo/),
+    ).toBeDefined()
   })
 
   it('enables a repository through the API, with the header the server asks for', async () => {
