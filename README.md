@@ -5,9 +5,8 @@ programação em sandboxes na nuvem. É uma ferramenta pessoal, open source e si
 suporte a vários projetos.
 
 Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7. O M0
-(fundação) e o M1 (ingestão) estão concluídos, e o M2 (execução) funciona de ponta a ponta com um
-agente roteirizado. Falta rodar com o Claude Code de verdade, que depende de uma chave da
-Anthropic. Review, painel e merge ainda não existem.
+(fundação) e o M1 (ingestão) estão concluídos, e o M2 (execução) funciona de ponta a ponta, inclusive com o
+Claude Code de verdade. Evidência com PR, review, painel e merge ainda não existem.
 
 ## Rodando localmente
 
@@ -55,7 +54,8 @@ pnpm lint
 pnpm format:check
 pnpm test               # unidade
 pnpm test:integration   # exige Postgres e DATABASE_URL exportada
-pnpm test:e2e           # GitHub, Vercel Sandbox e Postgres reais; exige o .env.local e gasta um pouco
+pnpm test:e2e           # GitHub, Vercel Sandbox e Postgres reais; exige o .env.local
+FACTORY_LIVE=1 pnpm test:e2e -t "real agent"   # com o Claude Code de verdade; custa centavos
 pnpm db:generate        # drizzle-kit: gera migrations a partir do schema
 pnpm db:migrate
 ```

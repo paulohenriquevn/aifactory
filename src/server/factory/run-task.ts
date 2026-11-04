@@ -25,6 +25,8 @@ export type RunTaskDeps = {
   author: { name: string; email: string }
   fetchIssue?: (repo: string, number: number, token: string, fetch?: FetchLike) => Promise<Issue>
   timeouts?: { sandboxMs: number; agentMs: number }
+  /** Wait between push attempts. */
+  pushRetryDelayMs?: number
 }
 
 export type RunResult =
@@ -112,7 +114,11 @@ export async function runTask(
     if (!result.ok) throw new StageFailure(`the agent did not finish: ${result.summary}`)
 
     current = 'push'
-    await enterStage(db, taskId, 'push', { branch })
+    await enterStage(db, taskId, 'push', {
+      branch,
+      costUsd: result.costUsd,
+      agentSummary: result.summary,
+    })
     const changes = await must(backend, `git -C ${repoDir} status --porcelain`)
     if (changes.stdout.trim() === '') {
       throw new StageFailure('the agent made no change to the repository')
@@ -124,7 +130,14 @@ export async function runTask(
     const git = `GIT_CONFIG_GLOBAL=${GITCONFIG} git -C ${repoDir}`
     await must(backend, `${git} add -A`)
     await must(backend, `${git} commit -F ${COMMIT_MESSAGE}`)
-    await must(backend, `${git} push origin ${branch}`)
+    // What is about to leave the sandbox, kept so a refused push can be explained.
+    const files = (await must(backend, `${git} diff --name-status HEAD~1 HEAD`)).stdout.trim()
+    try {
+      await pushWithRetry(backend, `${git} push origin ${branch}`, deps.pushRetryDelayMs ?? 2_000)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new StageFailure(`${reason}\ncommit being pushed:\n${files.slice(0, 1500)}`)
+    }
     const sha = (await must(backend, `${git} rev-parse HEAD`)).stdout.trim()
 
     await enterStage(db, taskId, 'done', { branch, sha, costUsd: result.costUsd })
@@ -139,6 +152,24 @@ export async function runTask(
     return { status: 'failed', stage: current, error: message }
   } finally {
     await sandbox?.stop().catch(() => {})
+  }
+}
+
+const PUSH_ATTEMPTS = 3
+
+/**
+ * Pushes the same commit up to three times. GitHub now and then answers a push with an internal
+ * `fatal error in commit_refs` that a second try does not repeat (seen once in three live pushes), and
+ * the push is idempotent: it sends one commit to one branch the run created. Only the push is retried.
+ */
+async function pushWithRetry(backend: SandboxBackend, command: string, delayMs: number) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await must(backend, command)
+    } catch (error) {
+      if (attempt >= PUSH_ATTEMPTS) throw error
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
   }
 }
 

@@ -69,6 +69,7 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
     sandbox,
     harness: okHarness,
     anthropicApiKey: ANTHROPIC,
+    pushRetryDelayMs: 0,
     author: { name: 'aifactory[bot]', email: 'bot@users.noreply.github.com' },
     fetchIssue: async () => ({
       number: 7,
@@ -250,6 +251,70 @@ describe('runTask', () => {
       error: 'the job lease expired before the run finished',
     })
     expect(sandbox.stopped).toBeGreaterThanOrEqual(1)
+  })
+
+  it('explains a refused push with the commit that was being pushed, and keeps the agent cost', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (c.includes('diff --name-status'))
+          return { stdout: 'A\tsrc/truncate.js\nA\t.github/workflows/x.yml\n' }
+        if (c.includes('push origin'))
+          return { exitCode: 1, stderr: '! [remote rejected] factory/7 -> factory/7 (failure)' }
+        return undefined
+      }),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
+    const error = result.status === 'failed' ? result.error : ''
+    expect(error).toContain('remote rejected')
+    expect(error).toContain('commit being pushed:')
+    expect(error).toContain('.github/workflows/x.yml')
+    const pushed = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'push')))[0]
+    expect(pushed.detail).toMatchObject({
+      branch: 'factory/7',
+      costUsd: 0.12,
+      agentSummary: 'added truncate',
+    })
+  })
+
+  it('pushes again when GitHub answers the first push with a transient error', async () => {
+    const id = await seedTask()
+    let pushes = 0
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (!c.includes('push origin')) return undefined
+        pushes += 1
+        return pushes === 1
+          ? { exitCode: 1, stderr: 'remote: fatal error in commit_refs' }
+          : undefined
+      }),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'done', branch: 'factory/7' })
+    expect(pushes).toBe(2)
+  })
+
+  it('gives up after three failed pushes and says why', async () => {
+    const id = await seedTask()
+    let pushes = 0
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (!c.includes('push origin')) return undefined
+        pushes += 1
+        return { exitCode: 1, stderr: 'remote: permission denied' }
+      }),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
+    expect(pushes).toBe(3)
+    expect(result.status === 'failed' && result.error).toContain('permission denied')
   })
 
   it('throws for a task that does not exist', async () => {
