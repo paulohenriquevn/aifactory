@@ -53,6 +53,7 @@ describe('the setup report', () => {
       ['sandbox', 'ok'],
       ['claude', 'ok'],
       ['codex', 'warn'],
+      ['assistant', 'warn'],
       ['repositories', 'ok'],
     ])
     expect(item(report, 'github').detail).toBe('It reaches 1 repository.')
@@ -220,5 +221,42 @@ describe('the link to choose repositories', () => {
       enabledRepositories: 0,
     })
     expect(item(unknown, 'github').detail).toContain('only its owner can install it')
+  })
+})
+
+describe('the writing assistant', () => {
+  const assistant = async (env: NodeJS.ProcessEnv) =>
+    item(
+      await setupReport({ env: { ...full, ...env }, github: app(), enabledRepositories: 1 }),
+      'assistant',
+    )
+
+  it('is on when the key of its provider is set, and does not block when it is not', async () => {
+    expect(await assistant({ ANTHROPIC_API_KEY: 'k' })).toMatchObject({ status: 'ok' })
+    const off = await assistant({ ANTHROPIC_API_KEY: '' })
+    expect(off).toMatchObject({ status: 'warn' })
+    expect(off.detail).toContain('ANTHROPIC_API_KEY')
+    const report = await setupReport({
+      env: { ...full, ANTHROPIC_API_KEY: '' },
+      github: app(),
+      enabledRepositories: 1,
+    })
+    expect(report.ready).toBe(true)
+  })
+
+  it('follows the model the owner chose, and says when it cannot tell', async () => {
+    expect(
+      (await assistant({ FACTORY_ASSIST_MODEL: 'openrouter/x/y', OPENROUTER_API_KEY: 'k' })).status,
+    ).toBe('ok')
+    const missing = await assistant({ FACTORY_ASSIST_MODEL: 'openai/gpt', ANTHROPIC_API_KEY: 'k' })
+    expect(missing.detail).toContain('OPENAI_API_KEY')
+    expect((await assistant({ FACTORY_ASSIST_MODEL: 'mystery/model' })).detail).toContain(
+      '"mystery"',
+    )
+  })
+
+  it('never carries the key', async () => {
+    const shown = await assistant({ ANTHROPIC_API_KEY: 'sk-ant-VERY-SECRET' })
+    expect(JSON.stringify(shown)).not.toContain('VERY-SECRET')
   })
 })

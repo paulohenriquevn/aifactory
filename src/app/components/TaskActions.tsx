@@ -5,6 +5,8 @@ import { Button, Textarea } from '@usetheo/ui'
 import type { TaskDetail } from '../../shared/panel'
 import { post } from '../lib/api'
 
+import { Assist } from './Assist'
+
 /**
  * What a person can do about a task right now. Each button asks the server, which checks the task's
  * stage again, so a stale page cannot do something the task no longer allows.
@@ -111,6 +113,13 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
               className="mt-1 w-full"
             />
           </label>
+          <Assist
+            kind="changes"
+            text={note}
+            repository={task.repository}
+            context={`Pull request for the issue "${task.title}" (#${task.issueNumber}) in ${task.repository}`}
+            onUse={(p) => setNote(p.text)}
+          />
           <Button
             size="sm"
             className="mt-2"

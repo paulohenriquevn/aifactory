@@ -47,3 +47,18 @@ describe('domains as text', () => {
     expect(formatDomains(['a.com', 'b.com'])).toBe('a.com\nb.com')
   })
 })
+
+describe('checks as text, at their edges', () => {
+  it('takes a one-word command as its own name', () => {
+    expect(parseChecks('make')).toEqual([{ name: 'make', command: 'make' }])
+  })
+
+  it('ignores spaces around the name and the colon', () => {
+    expect(parseChecks('unit : pnpm test')).toEqual([{ name: 'unit', command: 'pnpm test' }])
+    expect(parseChecks('  unit:pnpm test  ')).toEqual([{ name: 'unit', command: 'pnpm test' }])
+  })
+
+  it('does not take a line that starts with a colon for a name', () => {
+    expect(parseChecks(':rest')).toEqual([{ name: 'rest', command: ':rest' }])
+  })
+})

@@ -53,6 +53,9 @@ export default function RootLayout() {
                   <NavLink to="/health" className={link}>
                     Health{wrong > 0 ? ` (${wrong})` : ''}
                   </NavLink>
+                  <NavLink to="/setup" className={link}>
+                    Setup
+                  </NavLink>
                 </nav>
                 <div className="ml-auto flex items-center gap-2">
                   <ThemeSwitcher showModeToggle />

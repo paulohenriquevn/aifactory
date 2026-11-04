@@ -59,6 +59,9 @@ describe('the layout', () => {
     expect(screen.getByRole('link', { name: 'Board' })).toBeDefined()
     await waitFor(() => expect(screen.getByRole('link', { name: 'Inbox (2)' })).toBeDefined())
     expect(screen.getByRole('link', { name: 'Health (3)' })).toBeDefined()
+    for (const name of ['Plans', 'Repositories', 'Setup']) {
+      expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(`/${name.toLowerCase()}`)
+    }
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeDefined()
   })
 

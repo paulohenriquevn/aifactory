@@ -658,6 +658,23 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   `[planId]`), e a lista de 120 repositórios levava 4,5 segundos, então ficou guardada por 15. O GitHub
   Projects ficou de fora: uma App não alcança o Project de uma conta pessoal. Falta do M10: a receita
   `.factory/setup.json` (hoje o dono ajusta no painel) e o primeiro projeto que não seja o playground.
+- Assistente de escrita (2026-11-04, a pedido do Paulo: em todos os textarea um agente que faça da
+  fábrica um super agente especializado nela, com a premissa de que o dono não precisa ser programador).
+  Sob toda caixa de texto do painel há um botão ("Help me say it", "Improve this" ou "Set this up for me")
+  que chama um agente do TheoKit: `assist` escreve o objetivo de um plano, o job, cada issue e o pedido de
+  mudanças, e `assist-setup` lê o projeto e preenche os checks e os domínios. O dono diz o que quer e o
+  agente escreve o que a fábrica precisa, na língua do dono, sem fazer pergunta; nada muda até "Use this",
+  e dá para pedir outra versão em palavras. O que a fábrica é vive em `.theokit/THEO.md`. Ao vivo, no
+  Chrome do dono: "quero um site onde meus clientes marcam hora comigo" virou um objetivo com o que o site
+  deve ter, em português; o setup do `usetheokit/theodot` leu o CI e devolveu os checks. Três achados que os
+  testes não davam: (1) o SDK dá a todo agente um shell próprio, e o assistente roda no processo do
+  servidor, então um gancho `pre_tool_call` recusa tudo fora da lista (um pedido de `touch` pelo shell não
+  criou o arquivo); (2) o framework entrega a chamada de ferramenta como uma parte `dynamic-tool` com
+  `toolName`, não como `tool-propose`, e a página não mostrava a sugestão até isso ser lido do fluxo real;
+  (3) o menu não tinha o link do Setup, porque uma troca de texto no layout não casou e não avisou. O
+  assistente usa a chave `ANTHROPIC_API_KEY` da fábrica (uma assinatura não serve a isto), custa cerca de
+  um centavo por ajuda, e a página Setup mostra se está ligado. Um teste falha se uma caixa de texto ficar
+  sem assistente.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

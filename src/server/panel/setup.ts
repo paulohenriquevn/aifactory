@@ -14,6 +14,40 @@ export type SetupInput = {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
+const PROVIDER_KEYS: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  openai: 'OPENAI_API_KEY',
+}
+
+/** The helper under every text box calls a model with the factory's own key, which a subscription cannot be. */
+export function assistantItem(env: NodeJS.ProcessEnv): SetupItem {
+  const model = env.FACTORY_ASSIST_MODEL || 'anthropic/claude-sonnet-4-6'
+  const provider = model.split('/')[0]
+  const key = PROVIDER_KEYS[provider]
+  if (!key) {
+    return {
+      id: 'assistant',
+      label: 'Writing assistant',
+      status: 'warn',
+      detail: `FACTORY_ASSIST_MODEL names a provider this page does not know ("${provider}"), so it cannot say whether the key is set.`,
+    }
+  }
+  return env[key]
+    ? {
+        id: 'assistant',
+        label: 'Writing assistant',
+        status: 'ok',
+        detail: 'The helper under each text box is on.',
+      }
+    : {
+        id: 'assistant',
+        label: 'Writing assistant',
+        status: 'warn',
+        detail: `The helper under each text box needs ${key} on the server. Everything else works without it, but you would have to write the requests yourself.`,
+      }
+}
+
 function agentItems(env: NodeJS.ProcessEnv): SetupItem[] {
   const items: SetupItem[] = []
   try {
@@ -160,6 +194,7 @@ export async function setupReport({
     for (const a of agents) a.status = 'missing'
   }
   items.push(...agents)
+  items.push(assistantItem(env))
   items.push(
     enabledRepositories > 0
       ? {

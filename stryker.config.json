@@ -17,7 +17,11 @@
     "src/server/factory/plan.ts:1-76",
     "src/server/factory/repo-config.ts:20-23",
     "src/server/factory/repo-config.ts:40-60",
-    "src/server/panel/work.ts:44-80"
+    "src/server/panel/work.ts:44-80",
+    "src/app/lib/assist.ts",
+    "src/server/agents/hooks/only-tools.ts",
+    "src/server/factory/repo-reader.ts:1-50",
+    "src/app/lib/repo-form.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

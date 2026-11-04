@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router'
 
 import type { PlanItemView, PlanView } from '../../../shared/panel'
 import { post, put } from '../../lib/api'
+import { Assist } from '../../components/Assist'
 import { money } from '../../lib/format'
 import { useResource } from '../../lib/live'
 
@@ -214,6 +215,17 @@ export default function PlanPage() {
                   onChange={(ev) => change(e.key, { body: ev.target.value })}
                   className="w-full"
                 />
+                {!e.locked ? (
+                  <Assist
+                    kind="issue"
+                    text={e.body}
+                    repository={plan.repository}
+                    context={`Title: ${e.title}`}
+                    onUse={(p) =>
+                      change(e.key, { body: p.text, ...(p.title ? { title: p.title } : {}) })
+                    }
+                  />
+                ) : null}
                 {item?.issueNumber ? (
                   <div className="flex items-center gap-3">
                     <a

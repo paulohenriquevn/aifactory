@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router'
 
 import type { PlanView, RepositoriesView } from '../../shared/panel'
 import { post } from '../lib/api'
+import { Assist } from '../components/Assist'
 import { money } from '../lib/format'
 import { useResource } from '../lib/live'
 
@@ -95,6 +96,7 @@ export default function PlansPage() {
               className="mt-1 w-full"
             />
           </label>
+          <Assist kind="goal" text={goal} repository={chosen} onUse={(p) => setGoal(p.text)} />
           <div className="flex items-center gap-3">
             <Button
               size="sm"

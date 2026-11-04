@@ -402,6 +402,44 @@ própria página, e nada é criado no GitHub até o dono pedir.
 O GitHub Projects não é usado. Uma App de GitHub não alcança um Project de uma conta pessoal (só os de
 uma organização, com outra permissão), e o quadro do painel já mostra o estado de cada trabalho.
 
+## O assistente sob cada caixa de texto
+
+A premissa é que o dono não precisa ser programador: ele diz o que quer, com as palavras dele, e a
+fábrica escreve o que ela precisa. Sob **toda** caixa de texto do painel há um botão que chama o
+assistente da fábrica:
+
+| Caixa                               | O que o assistente faz                                                                                   |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| O objetivo de um plano              | Transforma "quero um site onde meus clientes marcam hora" num objetivo claro, com o que o site deve ter. |
+| A descrição de um job               | Escreve o título e o corpo da issue, terminando em "Done when:" com coisas que dá para conferir.         |
+| Cada issue de um plano              | Reescreve a descrição para a issue se sustentar sozinha, sem mudar o sentido.                            |
+| Pedir mudanças num PR               | Transforma "ficou estranho com número negativo" numa instrução precisa para o agente que constrói.       |
+| Checks e domínios de um repositório | Lê como o projeto é construído e testado e preenche os dois campos.                                      |
+
+O assistente responde na língua em que o dono escreveu, nunca faz pergunta (escolhe o mais sensato e diz
+nas notas o que supôs), e **nada muda até o dono apertar "Use this"**. Dá para pedir outra versão em
+palavras ("mais curto", "sem a parte do e-mail") ou dispensar.
+
+**Como é feito.** São dois agentes do TheoKit, um arquivo cada: `assist` (escreve, não lê nada) e
+`assist-setup` (o único que lê um repositório, e só os arquivos que dizem como ele é construído e
+testado: `package.json`, `pyproject.toml`, `requirements*.txt`, `Makefile`, o README, os workflows do CI;
+código-fonte e segredos são recusados, porque o que ele lê vai para o provedor do modelo). O que a fábrica
+é (o fluxo, o que faz um bom pedido, o que o sandbox tem) está em `.theokit/THEO.md`, que o framework
+junta a toda conversa. A resposta volta pela ferramenta `propose`, e a página lê os argumentos dela.
+
+**Limites de segurança.** Só o dono conversa com o assistente (a política de cada agente é a mesma das
+rotas do painel). O SDK dá a todo agente ferramentas próprias (um shell, acesso a arquivos), e o
+assistente roda dentro do processo do servidor, que guarda as credenciais da fábrica: por isso um gancho
+`pre_tool_call` (`hooks/only-tools.ts`) recusa qualquer ferramenta que não esteja na lista de cada
+agente. Verificado ao vivo: um pedido para rodar `touch` por um shell não criou o arquivo. Um texto
+vindo do repositório é dado, nunca instrução.
+
+**Modelo e custo.** O assistente chama o provedor direto, com a chave da própria fábrica
+(`ANTHROPIC_API_KEY`), porque o token de uma assinatura serve a um agente de código num sandbox e não a
+isto. Cada ajuda custa em torno de um centavo (uns 3 mil tokens de entrada e 350 de saída no objetivo de
+teste). `FACTORY_ASSIST_MODEL` troca o modelo (`anthropic/…`, `openrouter/…` ou `openai/…`, com a chave do
+provedor). Sem a chave, o resto da fábrica funciona e a página Setup avisa na linha "Writing assistant".
+
 ## Claude Code
 
 O harness roda `claude -p --output-format json --dangerously-skip-permissions` com o prompt lido

@@ -4,6 +4,8 @@ import { useState } from 'react'
 import type { RepositoriesView } from '../../shared/panel'
 import { get, post } from '../lib/api'
 
+import { Assist } from './Assist'
+
 /** One issue, written here, opened on GitHub, and started if asked. The task comes back through the webhook. */
 export type CreatedJob = { number: number; url: string; started: boolean }
 
@@ -103,6 +105,15 @@ export function NewJob({ onCreated }: { onCreated: (job: CreatedJob) => void }) 
                   className="mt-1 w-full"
                 />
               </label>
+              <Assist
+                kind="job"
+                text={body.trim() === '' ? title : body}
+                repository={chosen}
+                onUse={(p) => {
+                  if (p.title) setTitle(p.title)
+                  setBody(p.text)
+                }}
+              />
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"

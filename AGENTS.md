@@ -79,6 +79,11 @@ reads that file, not a convention.
   turns an issue into a task only in a repository the owner enabled in the panel (`repository.enabled`).
   Listing what the App reaches is the one place a token is not limited to a repository, and it can only read
   metadata.
+- **An agent that runs in the server process may call only the tools it declares.** The SDK gives every agent
+  a shell and file access of its own, and the assistants run where the factory's credentials are, so each one
+  carries `.hooks(onlyTools([...]))`. A new agent without it is a shell on the host.
+- **Every text box in the panel has an `<Assist>`.** `src/app/every-box.test.ts` fails when a file with a
+  textarea has none. The premise is that the owner never has to be a programmer.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;
   `.policy('public')` is for the webhook and the probes. The panel never goes through the tunnel.
 - **The factory delivers by pre-release and never releases on its own account.** A pre-release (a tag

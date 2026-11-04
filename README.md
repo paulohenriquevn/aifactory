@@ -33,6 +33,10 @@ com o token de `FACTORY_PANEL_TOKEN`.
 4. O botão New job no quadro abre uma issue avulsa.
 5. Acompanhe no quadro, aprove, peça mudanças e faça o release.
 
+Em toda caixa de texto há um botão "Help me say it" (ou "Set this up for me", nos checks de um
+repositório): diga o que quer com as suas palavras e o assistente escreve o que a fábrica precisa. Nada muda
+até você apertar "Use this". Precisa de `ANTHROPIC_API_KEY` no servidor.
+
 Detalhes em [como a fábrica funciona](docs/como-funciona.md#do-zero-ao-primeiro-pr-pelo-painel).
 
 ## Rodando localmente

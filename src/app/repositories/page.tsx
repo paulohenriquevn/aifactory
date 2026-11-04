@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import type { RepositoriesView, RepositoryView } from '../../shared/panel'
+import { Assist } from '../components/Assist'
 import { put } from '../lib/api'
 import { useResource } from '../lib/live'
 import { formatChecks, formatDomains, parseChecks, parseDomains } from '../lib/repo-form'
@@ -50,6 +51,15 @@ function Settings({
 
   return (
     <div className="mt-3 space-y-3 border-t border-border pt-3 text-sm">
+      <Assist
+        kind="setup"
+        text={checks}
+        repository={repo.fullName}
+        onUse={(p) => {
+          setChecks(p.text)
+          if (p.domains) setDomains(formatDomains(p.domains))
+        }}
+      />
       <label className="block">
         <span className="text-foreground">Checks, one per line as name: command</span>
         <Textarea
