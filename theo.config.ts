@@ -2,7 +2,7 @@ import { config } from 'theokit'
 
 import { storageFromEnv } from './src/server/db/config'
 import { LOCK_SECONDS } from './src/server/factory/lease'
-import { jobBackend } from './src/server/jobs/backend'
+import { jobBackend } from './src/server/factory/job-backend'
 
 /**
  * The project has two surfaces, and one of them is the whole backend.

@@ -2,7 +2,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 
 import { getPool } from '../db'
 import * as schema from '../db/schema'
-import { jobBackend } from '../jobs/backend'
+import { jobBackend } from './job-backend'
 
 import type { PollDeps } from './waiting'
 
