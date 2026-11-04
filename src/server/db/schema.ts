@@ -184,3 +184,36 @@ export const delivery = pgTable('delivery', {
   actor: text('actor').notNull(),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+/**
+ * A release under watch. After the factory (or a person through it) merges a pull request, the
+ * checks on the merge commit are watched. If they turn red the factory opens a pull request that
+ * reverts the merge, and goes no further: a person decides whether to merge it.
+ */
+export const watch = pgTable('watch', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  repository: text('repository').notNull(),
+  /** The merge commit on the default branch. */
+  sha: text('sha').notNull(),
+  /** The pull request that was merged, which is what a revert undoes. */
+  pullRequestNumber: integer('pull_request_number').notNull(),
+  /** The release tag, when there is one, for the notes. */
+  tag: text('tag'),
+  status: text('status', {
+    // `reverting` is a red main whose revert is still being opened, so it is not shown as red yet.
+    enum: ['watching', 'reverting', 'green', 'red', 'silent'],
+  })
+    .notNull()
+    .default('watching'),
+  /** The revert pull request, once the factory opened one. */
+  revertUrl: text('revert_url'),
+  /** Why the watch ended the way it did: the failing checks, a refused revert, a silent main. */
+  detail: text('detail'),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  /** When a person said they dealt with a red main, so it leaves the inbox. */
+  acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+})

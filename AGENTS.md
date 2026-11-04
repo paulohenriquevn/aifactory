@@ -38,7 +38,7 @@ src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   panel/            what the panel shows and does: queries, actions, owner session, event stream
-  crons/            defineCron files (`poll-answers`)
+  crons/            defineCron files (`poll-answers`, `watch-main`)
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
   factory/          one task end to end: sandbox, agent, push, stage history
@@ -79,6 +79,9 @@ reads that file, not a convention.
   marked as one, no change to the default branch) is always allowed. A release (merge and final tag)
   goes through `release()` in `factory/deliver.ts`, with its refusals, and only a person or, in
   `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it.
+- **The factory opens a revert and never merges it.** `watch-main` may open a pull request that
+  reverts a release when its merge commit goes red. Nothing in `factory/watch.ts` calls a merge, and a
+  test fails if it does.
 - **Commits carry no co-author trailer.**
 - **Validate at the boundary.** A route validates input with Zod once, then trusts it.
 - **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`

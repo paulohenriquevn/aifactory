@@ -241,7 +241,36 @@ O merge é fixado ao SHA entregue: se um push cair entre olhar e mergear, o GitH
 juntar o que ninguém viu, e a task volta a `done`. Se o merge acontece mas a release não pôde ser criada,
 a task fica `released` com o erro registrado, porque o merge não se desfaz.
 
-O que esta etapa ainda não faz é vigiar a `main` depois do release (M6b).
+Depois do release, o vigia olha a `main` (a próxima seção).
+
+## O vigia da `main`
+
+Depois de um release, o merge está na branch padrão, e a fábrica continua olhando para ele. Cada release
+registra uma vigília sobre o commit de merge, e um cron (`watch-main`) lê, a cada minuto, os check runs e
+os statuses desse commit:
+
+| O que ele vê                                                                                       | O que acontece                                                          |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Um check falhou (`failure`, `timed_out`, `action_required`, `startup_failure`, ou status com erro) | Vermelho na hora, sem esperar os outros checks: abre o PR de revert.    |
+| Tudo terminou bem                                                                                  | A vigília termina `green`.                                              |
+| Algo ainda roda, ou nada reportou ainda                                                            | Continua olhando.                                                       |
+| Passou a janela de 60 minutos sem veredito                                                         | Termina `silent`, dizendo se nenhum check reportou ou se ainda rodavam. |
+
+Uma run cancelada ou ignorada não conta como falha. A falta de qualquer check não é verde: ninguém disse
+que o commit está bom, então a vigília espera e, no fim, diz que não houve sinal.
+
+**O PR de revert.** A fábrica o abre com a mutação `revertPullRequest` do GitHub, que desfaz o PR mergeado,
+e o corpo diz o que quebrou (os checks que falharam, o commit, o release). **Ela só o abre. Nenhum caminho do
+código o mergeia**, e um teste falha se o vigia chamar um merge. Quem decide é uma pessoa, porque um revert
+também pode estar errado, por exemplo quando commits posteriores se apoiaram no que ele desfaz.
+
+A vigília passa por `reverting` enquanto o PR é aberto, e só então vira `red`. Assim a caixa de entrada não
+diz "nenhum revert foi aberto" no meio do caminho. Se o GitHub recusar o revert (por conflito, digamos), a
+vigília fica `red` sem link, com o motivo, e o painel diz que não há revert.
+
+No painel, a task liberada ganha a seção "Default branch after the release", com o estado da vigília, o link
+do revert e o botão "I dealt with it", que tira o caso da caixa de entrada sem mexer em nada no GitHub. Uma
+`main` vermelha aparece na caixa de entrada e no cartão da task.
 
 ## O painel
 
@@ -476,7 +505,7 @@ responde `/api/health` mesmo sem as credenciais.
 - Uma task por issue. Repor a label não reexecuta, nem depois de uma task que falhou por falta de resposta.
 - Um repositório de cada vez no sentido de operação: não há onboarding de repositórios.
 - O servidor e o túnel rodam como processos da sessão de trabalho, sem supervisor.
-- Não há vigia da `main` depois de um release (M6b).
+- O vigia só olha o commit de merge de cada release, não a `main` inteira.
 - O painel é local e tem um dono só, com um token.
 - A resposta é lida por sondagem a cada minuto, não por evento.
 - Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.

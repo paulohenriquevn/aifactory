@@ -21,6 +21,9 @@ export function Card({ task }: { task: TaskCard }) {
           {money(task.costUsd)} · {ago(task.updatedAt)}
         </span>
       </div>
+      {task.mainRed ? (
+        <div className="mt-1 text-xs font-medium text-red-700">main is red after the release</div>
+      ) : null}
       {task.attempts > 1 ? (
         <div className="mt-1 text-xs text-slate-500">attempt {task.attempts} of 3</div>
       ) : null}

@@ -1,7 +1,16 @@
-import { asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { decision, delivery, evidence, question, review, stageEvent, task } from '../db/schema'
+import {
+  decision,
+  delivery,
+  evidence,
+  question,
+  review,
+  stageEvent,
+  task,
+  watch,
+} from '../db/schema'
 import {
   columnOf,
   type DecisionView,
@@ -14,6 +23,7 @@ import {
   type TaskCard,
   type TaskDetail,
   type TimelineEvent,
+  type WatchView,
 } from '../../shared/panel'
 
 type TaskRow = typeof task.$inferSelect
@@ -46,6 +56,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
     .from(delivery)
     .where(inArray(delivery.taskId, ids))
     .orderBy(asc(delivery.id))
+  const watched = await db.select().from(watch).where(inArray(watch.taskId, ids))
   const byTask = new Map(activity.map((a) => [a.taskId, a]))
   return rows.map((r) => {
     const seen = byTask.get(r.id)
@@ -66,6 +77,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
       preRelease: lastDelivery(delivered, r, 'prerelease'),
       release: lastDelivery(delivered, r, 'release'),
+      mainRed: watched.some((w) => w.taskId === r.id && w.status === 'red' && !w.acknowledgedAt),
     }
   })
 }
@@ -91,13 +103,14 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
   const [row] = await db.select().from(task).where(eq(task.id, id))
   if (!row) return undefined
   const [card] = await cards(db, [row])
-  const [events, checks, reviews, questions, decisions, deliveries] = await Promise.all([
+  const [events, checks, reviews, questions, decisions, deliveries, watches] = await Promise.all([
     db.select().from(stageEvent).where(eq(stageEvent.taskId, id)).orderBy(asc(stageEvent.id)),
     db.select().from(evidence).where(eq(evidence.taskId, id)).orderBy(asc(evidence.id)),
     db.select().from(review).where(eq(review.taskId, id)).orderBy(asc(review.id)),
     db.select().from(question).where(eq(question.taskId, id)).orderBy(asc(question.id)),
     db.select().from(decision).where(eq(decision.taskId, id)).orderBy(asc(decision.id)),
     db.select().from(delivery).where(eq(delivery.taskId, id)).orderBy(asc(delivery.id)),
+    db.select().from(watch).where(eq(watch.taskId, id)).orderBy(asc(watch.id)),
   ])
   return {
     task: card,
@@ -143,6 +156,17 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
       sha: d.sha,
       note: d.note,
       at: iso(d.at),
+    })),
+    watches: watches.map((w): WatchView => ({
+      id: w.id,
+      sha: w.sha,
+      tag: w.tag,
+      status: w.status,
+      revertUrl: w.revertUrl,
+      detail: w.detail,
+      startedAt: iso(w.startedAt),
+      endedAt: w.endedAt ? iso(w.endedAt) : null,
+      acknowledged: w.acknowledgedAt !== null,
     })),
     deliveries: deliveries.map((d): DeliveryView => ({
       id: d.id,
@@ -204,6 +228,31 @@ export async function inbox(db: Database): Promise<InboxItem[]> {
       })
     } else if (card.stage === 'done' && !card.approved) {
       items.push({ task: card, kind: 'review', summary: 'Pull request ready to review', at })
+    }
+  }
+  const red = await db
+    .select()
+    .from(watch)
+    .where(and(eq(watch.status, 'red'), isNull(watch.acknowledgedAt)))
+  if (red.length > 0) {
+    const owners = await cards(
+      db,
+      await db
+        .select()
+        .from(task)
+        .where(inArray(task.id, [...new Set(red.map((w) => w.taskId))])),
+    )
+    for (const w of red) {
+      const owner = owners.find((c) => c.id === w.taskId)
+      if (!owner) continue
+      items.push({
+        task: owner,
+        kind: 'main_red',
+        summary: `The default branch went red after ${w.tag ?? 'a release'}. ${
+          w.revertUrl ? 'A revert pull request is open.' : 'No revert pull request could be opened.'
+        } ${oneLine(w.detail ?? '')}`.trim(),
+        at: iso(w.endedAt ?? w.startedAt),
+      })
     }
   }
   return items.sort((a, b) => a.at.localeCompare(b.at))

@@ -50,6 +50,13 @@
       "when": 1793801437901,
       "tag": "0006_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793802762522,
+      "tag": "0007_watch",
+      "breakpoints": true
     }
   ]
 }

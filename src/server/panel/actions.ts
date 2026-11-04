@@ -1,7 +1,7 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { decision, stageEvent, task } from '../db/schema'
+import { decision, stageEvent, task, watch } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import { release as promote, ReleaseRefused } from '../factory/deliver'
 import type { GithubApi } from '../github/pulls'
@@ -138,4 +138,19 @@ export async function releaseTask(deps: ActionDeps, taskId: number, bump: Bump) 
     if (error instanceof ReleaseRefused) throw new ActionRefused(error.message)
     throw error
   }
+}
+
+/**
+ * Says a person dealt with a red default branch (merged the revert, fixed it another way), so it
+ * leaves the inbox. It changes nothing on GitHub.
+ */
+export async function acknowledgeWatch(deps: ActionDeps, watchId: number) {
+  const done = await deps.db
+    .update(watch)
+    .set({ acknowledgedAt: new Date() })
+    .where(and(eq(watch.id, watchId), eq(watch.status, 'red'), isNull(watch.acknowledgedAt)))
+    .returning({ id: watch.id })
+  if (done.length === 0)
+    throw new ActionRefused('there is no red default branch waiting for you here')
+  return { watchId }
 }

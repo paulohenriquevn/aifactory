@@ -74,7 +74,7 @@ local inspecionado em 2026-11-03.
 | M4b   | `waiting`                                                      | Pergunta do agente vira comentário na issue e a resposta de uma pessoa retoma a mesma sessão, num sandbox restaurado de snapshot                                                                     | Concluído    |
 | M5    | Painel + inbox                                                 | Board, timeline, custo e evidência em tempo real via SSE; aprovar, pedir mudanças e tentar novamente pelo painel (local, com um dono)                                                                | Concluído    |
 | M6a   | Pré-release e release                                          | A fábrica gera uma pré-release para todo commit com checks verdes que chegou a um PR; um humano (painel) ou um agente (modo `auto`) promove a release, com o merge preso ao SHA entregue             | Concluído    |
-| M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Não iniciado |
+| M6b   | Vigia da `main`                                                | Depois de um release, uma `main` vermelha gera um PR de revert (nunca um merge sozinho)                                                                                                              | Concluído    |
 | M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                      | Não iniciado |
 
 As aprovações de ferramentas com efeitos externos seguem a convenção do
@@ -306,7 +306,19 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   pessoa nunca é liberado sozinho. Pelo GitHub e pelo painel reais: uma issue virou PR em 47 segundos, a
   pré-release `pre/21-df799ca` apareceu apontando para o commit entregue com a `main` intacta, o release
   pelo painel mergeou, publicou `v0.1.0` como a última versão e levou a task a `released`, e um segundo
-  clique foi recusado. O que falta do plano antigo é o vigia da `main` (M6b).
+  clique foi recusado.
+- M6b: todo release registra uma vigília sobre o commit de merge na `main`, e um cron (`watch-main`, a
+  cada minuto) lê os check runs e os statuses desse commit. Falha vira vermelho na hora, sem esperar os
+  outros checks; run cancelada ou ignorada não conta; sem nenhum check é "sem sinal", não verde. Verde
+  encerra a vigília; passada a janela de 60 minutos sem veredito, ela termina como `silent`, dizendo se
+  nenhum check reportou ou se ainda estavam rodando. Vermelho abre um PR de revert pela mutação
+  `revertPullRequest` do GitHub (o PR sai com o corpo explicando o que quebrou) e **para aí**: nenhum
+  caminho do código mergeia esse PR, e o teste falha se o vigia chamar um merge. A vigília passa por
+  `reverting` enquanto o revert é aberto, para a caixa de entrada não dizer "nenhum revert" cedo demais,
+  e só então vira `red`. Um revert que o GitHub recusa (conflito, por exemplo) fica registrado e a caixa
+  de entrada avisa que não há revert. A pessoa dá o caso por tratado pelo painel. Pelo GitHub real: o
+  release de uma task, um check run falho no commit de merge, e 25 segundos depois o PR de revert aberto
+  pelo bot, com a `main` ainda no commit do release.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 

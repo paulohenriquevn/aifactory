@@ -39,6 +39,12 @@ export type PullRequestState = {
   merged: boolean
 }
 
+export type CommitChecks = {
+  checkRuns: { name: string; status: string; conclusion: string | null }[]
+  /** The combined state of the older commit statuses. `none` when there are no statuses at all. */
+  statuses: 'success' | 'failure' | 'error' | 'pending' | 'none'
+}
+
 export type PullRequest = { number: number; url: string }
 
 export type GithubApi = {
@@ -66,6 +72,17 @@ export type GithubApi = {
     sha: string,
     method: 'merge' | 'squash',
   ): Promise<{ sha: string }>
+  /** The check runs and commit statuses a commit has so far. */
+  commitChecks(repo: string, token: string, sha: string): Promise<CommitChecks>
+  /**
+   * Opens a pull request that reverts a merged one. It only opens it: nothing here merges it.
+   */
+  revertPullRequest(
+    repo: string,
+    token: string,
+    number: number,
+    revert: { title: string; body: string },
+  ): Promise<PullRequest>
   /** Deletes a branch, which also closes a pull request that was open from it. A missing branch is fine. */
   deleteBranch(repo: string, token: string, branch: string): Promise<void>
   /** Posts a comment and returns its id. */
@@ -240,6 +257,66 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
         )
       ).json()) as { sha: string }
       return { sha: merged.sha }
+    },
+
+    async commitChecks(repo, token, sha) {
+      const runs = (await (
+        await ensure(
+          await call(repo, token, `/commits/${sha}/check-runs?per_page=100`),
+          `reading the check runs of ${sha.slice(0, 7)} on ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        check_runs: { name: string; status: string; conclusion: string | null }[]
+      }
+      const combined = (await (
+        await ensure(
+          await call(repo, token, `/commits/${sha}/status`),
+          `reading the statuses of ${sha.slice(0, 7)} on ${repo}`,
+          [200],
+        )
+      ).json()) as { state: 'success' | 'failure' | 'error' | 'pending'; total_count: number }
+      return {
+        checkRuns: runs.check_runs.map((r) => ({
+          name: r.name,
+          status: r.status,
+          conclusion: r.conclusion,
+        })),
+        statuses: combined.total_count === 0 ? 'none' : combined.state,
+      }
+    },
+
+    async revertPullRequest(repo, token, number, revert) {
+      const pull = (await (
+        await ensure(
+          await call(repo, token, `/pulls/${number}`),
+          `reading ${repo}#${number}`,
+          [200],
+        )
+      ).json()) as { node_id: string }
+      const response = await fetchImpl('https://api.github.com/graphql', {
+        method: 'POST',
+        headers: {
+          accept: 'application/vnd.github+json',
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          query:
+            'mutation($id: ID!, $title: String, $body: String) { revertPullRequest(input: { pullRequestId: $id, title: $title, body: $body }) { revertPullRequest { number url } } }',
+          variables: { id: pull.node_id, title: revert.title, body: revert.body },
+        }),
+      })
+      const result = (await response.json()) as {
+        data?: { revertPullRequest?: { revertPullRequest?: { number: number; url: string } } }
+        errors?: { message: string }[]
+      }
+      const made = result.data?.revertPullRequest?.revertPullRequest
+      if (!response.ok || result.errors?.length || !made) {
+        const why = result.errors?.map((e) => e.message).join('; ') ?? `HTTP ${response.status}`
+        throw new Error(`GitHub would not open a revert of ${repo}#${number}: ${why}`)
+      }
+      return { number: made.number, url: made.url }
     },
 
     async deleteBranch(repo, token, branch) {

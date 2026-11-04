@@ -10,6 +10,7 @@ const KIND: Record<InboxItem['kind'], string> = {
   review: 'Review the pull request',
   handoff: 'Needs a person',
   failed: 'Failed',
+  main_red: 'The default branch is red',
 }
 
 export default function InboxPage() {

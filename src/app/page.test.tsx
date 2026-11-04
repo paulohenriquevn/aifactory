@@ -23,6 +23,7 @@ const card = (over: Partial<TaskCard>): TaskCard => ({
   approved: false,
   preRelease: null,
   release: null,
+  mainRed: false,
   ...over,
 })
 

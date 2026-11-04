@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router'
 
 import type { TaskDetail } from '../../../shared/panel'
 import { Pass, StageBadge } from '../../components/Badges'
+import { WatchPanel } from '../../components/WatchPanel'
 import { TaskActions } from '../../components/TaskActions'
 import { ago, describeEvent, money, shortSha } from '../../lib/format'
 import { useResource } from '../../lib/live'
@@ -64,6 +65,8 @@ export default function TaskPage() {
       </div>
 
       <TaskActions detail={detail} onDone={resource.reload} />
+
+      <WatchPanel watches={detail.watches} onDone={resource.reload} />
 
       {detail.questions.length > 0 ? (
         <section aria-label="Questions">

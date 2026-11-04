@@ -54,6 +54,19 @@ export type DeliveryView = {
   at: string
 }
 
+export type WatchView = {
+  id: number
+  sha: string
+  tag: string | null
+  status: 'watching' | 'reverting' | 'green' | 'red' | 'silent'
+  revertUrl: string | null
+  detail: string | null
+  startedAt: string
+  endedAt: string | null
+  /** A person said they dealt with a red main. */
+  acknowledged: boolean
+}
+
 export type TaskCard = {
   id: number
   repository: string
@@ -74,6 +87,8 @@ export type TaskCard = {
   /** The factory's delivery of the commit the pull request is at, if it made one. */
   preRelease: { tag: string; url: string } | null
   release: { tag: string; url: string } | null
+  /** The default branch went red after this task's release and nobody has dealt with it yet. */
+  mainRed: boolean
 }
 
 export type TimelineEvent = {
@@ -132,12 +147,13 @@ export type TaskDetail = {
   questions: QuestionView[]
   decisions: DecisionView[]
   deliveries: DeliveryView[]
+  watches: WatchView[]
 }
 
 /** What the inbox lists: a task that waits for a person, and why. */
 export type InboxItem = {
   task: TaskCard
-  kind: 'question' | 'review' | 'handoff' | 'failed'
+  kind: 'question' | 'review' | 'handoff' | 'failed' | 'main_red'
   /** One line that says what is wanted. */
   summary: string
   at: string

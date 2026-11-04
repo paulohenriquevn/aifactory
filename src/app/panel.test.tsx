@@ -3,13 +3,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { InboxItem, TaskCard, TaskDetail } from '../shared/panel'
+import type { InboxItem, TaskCard, TaskDetail, WatchView } from '../shared/panel'
 
 import { TaskActions } from './components/TaskActions'
 import InboxPage from './inbox/page'
 import { describeEvent, shortSha } from './lib/format'
 import LoginPage from './login/page'
 import TaskPage from './tasks/[id]/page'
+import { WatchPanel } from './components/WatchPanel'
+import { Card } from './components/Board'
 
 const base: TaskCard = {
   id: 5,
@@ -30,6 +32,7 @@ const base: TaskCard = {
     url: 'https://github.com/paulo/app/releases/tag/pre%2F7-abcdef1',
   },
   release: null,
+  mainRed: false,
 }
 
 const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
@@ -77,6 +80,7 @@ const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
   questions: [],
   decisions: [],
   deliveries: [],
+  watches: [],
   ...over,
 })
 
@@ -348,6 +352,99 @@ describe('releasing from the panel', () => {
     expect(screen.getByRole('link', { name: /Pre-release pre\/7-abcdef1/ })).toBeDefined()
     expect(screen.getByText(/by human/)).toBeDefined()
     expect(screen.getByText(/by factory/)).toBeDefined()
+  })
+})
+
+const watchView = (over: Partial<WatchView> = {}): WatchView => ({
+  id: 3,
+  sha: 'merge0001abcd',
+  tag: 'v0.1.0',
+  status: 'red',
+  revertUrl: 'https://github.com/paulo/app/pull/9',
+  detail: 'failing: ci',
+  startedAt: '2026-11-04T10:30:00Z',
+  endedAt: '2026-11-04T10:35:00Z',
+  acknowledged: false,
+  ...over,
+})
+
+describe('the default branch after a release', () => {
+  it('shows a red one with the revert pull request, and says it was dealt with when asked', async () => {
+    const calls = serve({ 'POST /api/panel/watches/3/handled': { watchId: 3 } })
+    const onDone = vi.fn()
+    render(<WatchPanel watches={[watchView()]} onDone={onDone} />)
+
+    expect(screen.getByText('the default branch went red')).toBeDefined()
+    expect(screen.getByText('failing: ci')).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Revert pull request' }).getAttribute('href')).toBe(
+      'https://github.com/paulo/app/pull/9',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'I dealt with it' }))
+
+    await waitFor(() => expect(onDone).toHaveBeenCalled())
+    expect(calls).toEqual([{ url: '/api/panel/watches/3/handled', method: 'POST', csrf: '1' }])
+  })
+
+  it('says plainly when no revert could be opened, and has no button once it was dealt with', () => {
+    render(
+      <WatchPanel
+        watches={[watchView({ revertUrl: null, acknowledged: true })]}
+        onDone={() => {}}
+      />,
+    )
+    expect(screen.getByText('No revert pull request could be opened.')).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'I dealt with it' })).toBeNull()
+    expect(screen.getByText('dealt with')).toBeDefined()
+  })
+
+  it('shows a green or silent watch without actions, and nothing when there is none', () => {
+    const { container, rerender } = render(<WatchPanel watches={[]} onDone={() => {}} />)
+    expect(container.textContent).toBe('')
+    rerender(
+      <WatchPanel
+        watches={[watchView({ status: 'green', revertUrl: null, detail: null })]}
+        onDone={() => {}}
+      />,
+    )
+    expect(screen.getByText('the default branch stayed green')).toBeDefined()
+    expect(screen.queryByRole('button')).toBeNull()
+    rerender(
+      <WatchPanel
+        watches={[watchView({ status: 'silent', detail: 'no check reported' })]}
+        onDone={() => {}}
+      />,
+    )
+    expect(screen.getByText('no verdict: the checks never reported')).toBeDefined()
+  })
+
+  it('marks the card of a task whose release broke the default branch', () => {
+    render(
+      <MemoryRouter>
+        <Card task={{ ...base, mainRed: true }} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('main is red after the release')).toBeDefined()
+  })
+
+  it('lists a red default branch in the inbox', async () => {
+    serve({
+      'GET /api/panel/inbox': {
+        items: [
+          {
+            task: base,
+            kind: 'main_red',
+            summary: 'The default branch went red after v0.1.0.',
+            at: '2026-11-04T10:35:00Z',
+          },
+        ],
+      },
+    })
+    render(
+      <MemoryRouter>
+        <InboxPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('The default branch is red')).toBeDefined())
   })
 })
 

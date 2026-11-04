@@ -6,7 +6,7 @@ suporte a vários projetos.
 
 Feita com [TheoKit](https://theokit.dev). O [plano](docs/PLAN.md) traz os marcos M0 a M7, e
 [como a fábrica funciona](docs/como-funciona.md) descreve o fluxo, o isolamento, a evidência e o
-uso do Claude Code e do Codex. Os marcos M0 a M6a estão concluídos: uma issue com a label `factory`
+uso do Claude Code e do Codex. Os marcos M0 a M6 estão concluídos: uma issue com a label `factory`
 chega a um pull request, aberto só com os checks verdes no commit enviado e a aprovação de um
 revisor independente, com até três tentativas de retrabalho na mesma sessão do agente. O Claude Code
 funciona por chave de API ou por assinatura. O Codex está implementado e verificado até a chamada ao
@@ -15,7 +15,8 @@ de uma decisão, ele pergunta na issue e a task espera a resposta de quem tem ac
 O painel local (quadro, caixa de entrada, detalhe, aprovar, pedir mudanças e tentar de novo) mostra
 tudo ao vivo. A fábrica entrega por pré-release (uma tag marcada como pré-release, que ela gera sempre), e a
 release, o merge e a versão final, é feita por um humano pelo painel ou por um agente, conforme
-`FACTORY_RELEASE_MODE`.
+`FACTORY_RELEASE_MODE`. Depois de um release, um vigia olha os checks do merge na `main` e, se ficarem
+vermelhos, abre um PR de revert que a fábrica nunca mergeia.
 
 ## Rodando localmente
 
@@ -117,6 +118,7 @@ src/server/
   factory/            execução de uma task: sandbox isolado, agente, push de factory/<n>, estágios
   github/             autenticação do GitHub App e leitura de issues
   panel/              consultas, ações, sessão e eventos do painel
+  crons/              poll-answers (respostas) e watch-main (vigia da main)
 src/shared/           contratos que o servidor e a interface leem
 src/app/              a interface do painel (React)
   routes/             rotas HTTP (health, ready, webhooks/github)

@@ -263,3 +263,77 @@ describe('pull request state and merge', () => {
     ).rejects.toThrow(/409.*Head branch was modified/)
   })
 })
+
+describe('commitChecks', () => {
+  it('reads the check runs and the combined state of the commit statuses', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /commits/abc/check-runs': {
+        status: 200,
+        body: { check_runs: [{ name: 'ci', status: 'completed', conclusion: 'failure', id: 1 }] },
+      },
+      'GET /commits/abc/status': { status: 200, body: { state: 'pending', total_count: 2 } },
+    })
+    expect(await createGithubApi(fetch).commitChecks('o/r', 't', 'abc')).toEqual({
+      checkRuns: [{ name: 'ci', status: 'completed', conclusion: 'failure' }],
+      statuses: 'pending',
+    })
+    expect(calls[0].url).toContain('per_page=100')
+  })
+
+  it('says there are no statuses when there are none, because GitHub then answers pending', async () => {
+    const { fetch } = fakeFetch({
+      'GET /commits/abc/check-runs': { status: 200, body: { check_runs: [] } },
+      'GET /commits/abc/status': { status: 200, body: { state: 'pending', total_count: 0 } },
+    })
+    expect(await createGithubApi(fetch).commitChecks('o/r', 't', 'abc')).toEqual({
+      checkRuns: [],
+      statuses: 'none',
+    })
+  })
+})
+
+describe('revertPullRequest', () => {
+  const revert = { title: 'Revert: T (#7)', body: 'B' }
+
+  it('asks GitHub to open a revert of the merged pull request, and only opens it', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_node_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: {
+          data: {
+            revertPullRequest: {
+              revertPullRequest: { number: 41, url: 'https://github.com/o/r/pull/41' },
+            },
+          },
+        },
+      },
+    })
+
+    const made = await createGithubApi(fetch).revertPullRequest('o/r', 'tok', 12, revert)
+
+    expect(made).toEqual({ number: 41, url: 'https://github.com/o/r/pull/41' })
+    const graphql = calls.find((c) => c.url.includes('graphql'))!
+    expect(graphql.auth).toBe('Bearer tok')
+    expect((graphql.body as { variables: object }).variables).toEqual({
+      id: 'PR_node_12',
+      title: 'Revert: T (#7)',
+      body: 'B',
+    })
+    expect(JSON.stringify(graphql.body)).toContain('revertPullRequest')
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false)
+  })
+
+  it('throws with what GitHub said when it will not open the revert', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'n' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { errors: [{ message: 'Pull request is not merged' }] },
+      },
+    })
+    await expect(createGithubApi(fetch).revertPullRequest('o/r', 't', 12, revert)).rejects.toThrow(
+      /would not open a revert of o\/r#12: Pull request is not merged/,
+    )
+  })
+})

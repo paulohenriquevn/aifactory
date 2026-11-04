@@ -14,6 +14,7 @@ import {
   review,
   stageEvent,
   task,
+  watch,
 } from '../db/schema'
 import type { GithubApi } from '../github/pulls'
 import { COLUMNS } from '../../shared/panel'
@@ -21,6 +22,7 @@ import { COLUMNS } from '../../shared/panel'
 import {
   ActionRefused,
   approve,
+  acknowledgeWatch,
   releaseTask,
   requestChanges,
   retry,
@@ -35,7 +37,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -397,5 +399,80 @@ describe('deliveries on the panel', () => {
     await expect(releaseTask(deps, id, 'patch')).rejects.toThrow(ActionRefused)
     await expect(releaseTask(deps, id, 'patch')).rejects.toThrow(/only a finished task/)
     await expect(releaseTask(deps, 999, 'patch')).rejects.toThrow(/does not exist/)
+  })
+})
+
+describe('a red default branch on the panel', () => {
+  const noDeps = () =>
+    ({
+      db: getDb(),
+      github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
+      api: {} as never,
+      inTransaction: async () => undefined as never,
+    }) as ActionDeps
+
+  async function red(over: Partial<typeof watch.$inferInsert> = {}) {
+    const id = await seed('released', { headSha: 'abc' }, [{ stage: 'released' }])
+    const [w] = await getDb()
+      .insert(watch)
+      .values({
+        taskId: id,
+        repository: 'paulo/app',
+        sha: 'merge1',
+        pullRequestNumber: 3,
+        tag: 'v0.1.0',
+        status: 'red',
+        revertUrl: 'https://github.com/paulo/app/pull/9',
+        detail: 'failing: ci',
+        endedAt: new Date(),
+        ...over,
+      })
+      .returning({ id: watch.id })
+    return { taskId: id, watchId: w.id }
+  }
+
+  it('flags the task, shows the watch, and puts it in the inbox with the revert', async () => {
+    const { taskId } = await red()
+
+    const [card] = await listTasks(getDb())
+    expect(card.mainRed).toBe(true)
+    const detail = (await taskDetail(getDb(), taskId))!
+    expect(detail.watches).toMatchObject([
+      {
+        status: 'red',
+        revertUrl: 'https://github.com/paulo/app/pull/9',
+        acknowledged: false,
+        tag: 'v0.1.0',
+      },
+    ])
+    const items = await inbox(getDb())
+    expect(items).toHaveLength(1)
+    expect(items[0].kind).toBe('main_red')
+    expect(items[0].summary).toContain('went red after v0.1.0')
+    expect(items[0].summary).toContain('A revert pull request is open.')
+    expect(items[0].summary).toContain('failing: ci')
+  })
+
+  it('says there is no revert when GitHub would not open one', async () => {
+    await red({ revertUrl: null, detail: 'failing: ci; no revert was opened: conflicts' })
+    expect((await inbox(getDb()))[0].summary).toContain('No revert pull request could be opened.')
+  })
+
+  it('leaves the inbox when a person says they dealt with it, and only then', async () => {
+    const { watchId } = await red()
+    await acknowledgeWatch(noDeps(), watchId)
+
+    expect(await inbox(getDb())).toEqual([])
+    expect((await listTasks(getDb()))[0].mainRed).toBe(false)
+    await expect(acknowledgeWatch(noDeps(), watchId)).rejects.toThrow(ActionRefused)
+  })
+
+  it('has nothing to acknowledge on a green, silent or watching one, or on one that is not there', async () => {
+    for (const status of ['green', 'silent', 'watching'] as const) {
+      const { watchId } = await red({ status, revertUrl: null })
+      await expect(acknowledgeWatch(noDeps(), watchId)).rejects.toThrow(/no red default branch/)
+    }
+    await expect(acknowledgeWatch(noDeps(), 999)).rejects.toThrow(ActionRefused)
+    expect(await inbox(getDb())).toEqual([])
   })
 })

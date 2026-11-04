@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { decision, delivery, evidence, review, task } from '../db/schema'
+import { decision, delivery, evidence, review, task, watch } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
 
@@ -200,6 +200,14 @@ export async function release(
     releaseError = error instanceof Error ? error.message : String(error)
   }
 
+  // The merge is on the default branch now, so its checks are watched from here on.
+  await deps.db.insert(watch).values({
+    taskId,
+    repository: row.repository,
+    sha: merged.sha,
+    pullRequestNumber: pr.number,
+    tag: created?.tag ?? null,
+  })
   await deps.db.insert(decision).values({
     taskId,
     kind: 'release',

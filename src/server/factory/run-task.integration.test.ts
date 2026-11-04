@@ -14,6 +14,7 @@ import {
   review,
   stageEvent,
   task,
+  watch,
 } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type {
@@ -39,7 +40,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -122,6 +123,12 @@ const githubApi: GithubApi & {
   },
   async latestReleaseTag() {
     return this.latest
+  },
+  async commitChecks() {
+    return { checkRuns: [], statuses: 'none' as const }
+  },
+  async revertPullRequest() {
+    throw new Error('the pipeline never opens a revert')
   },
   async findPullRequest() {
     return this.pullRequest
@@ -1241,7 +1248,7 @@ describe('runTask waiting for an answer', () => {
 
     const sandbox = new FakeSandbox(changed())
     await getPool().query(
-      'truncate table delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+      'truncate table watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
     )
     const id2 = await seedTask()
     const b = await runTask(
@@ -1433,7 +1440,7 @@ describe('release', () => {
   const dependencies = () => ({ db: getDb(), github, api: githubApi })
   const reset = async () => {
     await getPool().query(
-      'truncate table delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+      'truncate table watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
     )
     dirty = true
   }
