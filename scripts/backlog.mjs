@@ -222,3 +222,24 @@ const INFRA =
 
 /** Whether a failure came from the environment (GitHub, the network, the sandbox) and not from the work. */
 export const isInfraFailure = (reason) => INFRA.test(String(reason ?? ''))
+
+/** How long to wait before each new try when the panel cannot be reached: a restart takes under a minute. */
+export const OUTAGE_WAITS_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 120_000, 120_000]
+
+/**
+ * Runs `fn`, and runs it again while the panel cannot be reached (it is restarting, or the machine is
+ * busy). A refusal from the panel is not an outage and is passed on at once. Without this, one restart of
+ * the panel made the feeder mark every item it touched as failed, a hundred of them in a second.
+ */
+export async function throughOutage(fn, { waits = OUTAGE_WAITS_MS, sleep, onWait = () => {} }) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      const unreachable = isInfraFailure(error?.message) || isInfraFailure(error?.cause?.code)
+      if (!unreachable || attempt >= waits.length) throw error
+      onWait(waits[attempt], attempt + 1)
+      await sleep(waits[attempt])
+    }
+  }
+}

@@ -11,6 +11,7 @@ import {
   repoFor,
   resetAt,
   stuckBehind,
+  throughOutage,
 } from './backlog.mjs'
 
 const FIXTURE = `# BACKLOG
@@ -321,5 +322,83 @@ describe('isInfraFailure', () => {
     ]) {
       expect(isInfraFailure(reason), String(reason)).toBe(false)
     }
+  })
+})
+
+describe('throughOutage', () => {
+  const noSleep = () => Promise.resolve()
+
+  it('tries again while the panel cannot be reached, and returns what it finally answers', async () => {
+    let calls = 0
+    const waited = []
+    const result = await throughOutage(
+      async () => {
+        calls += 1
+        if (calls < 3) throw new TypeError('fetch failed')
+        return { status: 200 }
+      },
+      { waits: [1, 2, 3], sleep: async (ms) => waited.push(ms), onWait: () => {} },
+    )
+    expect(result).toEqual({ status: 200 })
+    expect(calls).toBe(3)
+    expect(waited).toEqual([1, 2])
+  })
+
+  it('says how long it waits and for which try', async () => {
+    const said = []
+    let calls = 0
+    await throughOutage(
+      async () => {
+        if (++calls === 1) throw new Error('connect ECONNREFUSED 127.0.0.1:3000')
+      },
+      { waits: [7], sleep: noSleep, onWait: (ms, n) => said.push([ms, n]) },
+    )
+    expect(said).toEqual([[7, 1]])
+  })
+
+  it('gives up with the same error when the outage outlasts the waits', async () => {
+    let calls = 0
+    await expect(
+      throughOutage(
+        async () => {
+          calls += 1
+          throw new TypeError('fetch failed')
+        },
+        { waits: [1, 1], sleep: noSleep },
+      ),
+    ).rejects.toThrow('fetch failed')
+    expect(calls).toBe(3)
+  })
+
+  it('passes on at once an error that is not an outage, such as a refusal of the panel', async () => {
+    let calls = 0
+    await expect(
+      throughOutage(
+        async () => {
+          calls += 1
+          throw new Error('the panel kept refusing POST /x')
+        },
+        { waits: [1, 1], sleep: noSleep },
+      ),
+    ).rejects.toThrow('kept refusing')
+    expect(calls).toBe(1)
+  })
+
+  it('knows an outage by the code on the cause, as node reports a refused connection', async () => {
+    let calls = 0
+    const result = await throughOutage(
+      async () => {
+        if (++calls === 1)
+          throw Object.assign(new Error('request failed'), { cause: { code: 'ECONNREFUSED' } })
+        return 'ok'
+      },
+      { waits: [1], sleep: noSleep },
+    )
+    expect(result).toBe('ok')
+  })
+
+  it('has waits that add up to several minutes, longer than a restart of the panel', async () => {
+    const { OUTAGE_WAITS_MS } = await import('./backlog.mjs')
+    expect(OUTAGE_WAITS_MS.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(7 * 60_000)
   })
 })

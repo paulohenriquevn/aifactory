@@ -11,6 +11,7 @@ import { dirname, resolve } from 'node:path'
 import {
   classify,
   isInfraFailure,
+  throughOutage,
   issueFor,
   needsAPerson,
   nextRunnable,
@@ -58,8 +59,8 @@ async function login() {
   cookie = r.headers.get('set-cookie').split(';')[0]
 }
 
-async function call(method, path, body) {
-  for (let attempt = 0; attempt < 2; attempt++) {
+async function attempt(method, path, body) {
+  for (let tries = 0; tries < 2; tries++) {
     if (!cookie) await login()
     const r = await fetch(`${BASE}${path}`, {
       method,
@@ -81,6 +82,12 @@ async function call(method, path, body) {
   }
   throw new Error(`the panel kept refusing ${method} ${path}`)
 }
+
+const call = (method, path, body) =>
+  throughOutage(() => attempt(method, path, body), {
+    sleep,
+    onWait: (ms, n) => log('the panel cannot be reached, waiting', `${ms / 1000}s (try ${n})`),
+  })
 
 const state = existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : { items: {} }
 function save() {
