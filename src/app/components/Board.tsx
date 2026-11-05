@@ -9,73 +9,83 @@ import { StageBadge } from './Badges'
 /** The board's address with a task open in the side panel. */
 export const openTask = (id: number) => ({ pathname: '/work', search: `?task=${id}` })
 
+/** Every card on the board is this tall and as wide as its column, so the columns read as even stacks. */
 export function Card({ task }: { task: TaskCard }) {
   return (
     <Link to={openTask(task.id)} className="block">
-      <Surface size="sm" className="p-3 hover:border-primary/60">
-        <div className="text-xs text-muted-foreground">
+      <Surface size="sm" className="flex h-[140px] flex-col p-3 hover:border-primary/60">
+        <div className="truncate text-xs text-muted-foreground">
           {task.repository} #{task.issueNumber}
         </div>
-        <div className="mt-1 text-sm font-medium text-foreground">{task.title}</div>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <StageBadge
-            stage={task.stage}
-            integrated={task.integrated}
-            retryable={task.retryable}
-            wrap
-          />
-          <span className="text-xs text-muted-foreground">
-            {money(task.costUsd)} · {ago(task.updatedAt)}
-          </span>
+        <div title={task.title} className="mt-1 line-clamp-2 text-sm font-medium text-foreground">
+          {task.title}
         </div>
         {task.mainRed ? (
-          <div className="mt-1 text-xs font-medium text-destructive">
+          <div className="mt-1 truncate text-xs font-medium text-destructive">
             main is red after the release
           </div>
         ) : null}
         {task.attempts > 1 ? (
-          <div className="mt-1 text-xs text-muted-foreground">attempt {task.attempts} of 3</div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">
+            attempt {task.attempts} of 3
+          </div>
         ) : null}
+        <div className="mt-auto flex items-center justify-between gap-2">
+          <StageBadge stage={task.stage} integrated={task.integrated} retryable={task.retryable} />
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {task.costUsd >= 0.005 ? `${money(task.costUsd)} · ` : ''}
+            {ago(task.updatedAt)}
+          </span>
+        </div>
       </Surface>
     </Link>
   )
 }
 
-/** A column with nothing in it is a slim label, so the width goes to the columns that have cards. */
-const EMPTY = '90px'
-const FULL = 'minmax(150px, 1fr)'
+/** A column is this wide whatever it holds. */
+const COLUMN_WIDTH = 'w-[264px] shrink-0'
+
+function Column({ title, tasks }: { title: string; tasks: TaskCard[] }) {
+  return (
+    <section aria-label={title} className="min-w-0">
+      <h2 className="mb-2 truncate text-sm font-semibold text-foreground">
+        {title} <span className="font-normal text-muted-foreground">{tasks.length}</span>
+      </h2>
+      <div className="space-y-2">
+        {tasks.map((task) => (
+          <Card key={task.id} task={task} />
+        ))}
+      </div>
+    </section>
+  )
+}
 
 /**
- * Every column of the board, side by side and always in one row: a column that wrapped to a second line
- * would sit below the longest one, out of sight. When the screen is too narrow even for that, the board
- * scrolls sideways.
+ * The board. Only the columns that have cards are drawn, all the same width, side by side; the ones with
+ * nothing in them are named in one line above, so none is hidden and none takes the width of a column of
+ * cards. When there are more columns than the screen holds, the board scrolls sideways.
  */
 export function Board({ tasks }: { tasks: TaskCard[] }) {
-  const counts = COLUMNS.map((column) => tasks.filter((t) => t.column === column.id).length)
+  const columns = COLUMNS.map((column) => ({
+    ...column,
+    tasks: tasks.filter((t) => t.column === column.id),
+  }))
+  const full = columns.filter((c) => c.tasks.length > 0)
+  const empty = columns.filter((c) => c.tasks.length === 0)
   return (
-    <div
-      className="grid gap-3 overflow-x-auto pb-2"
-      style={{ gridTemplateColumns: counts.map((n) => (n === 0 ? EMPTY : FULL)).join(' ') }}
-    >
-      {COLUMNS.map((column, index) => {
-        const inColumn = tasks.filter((t) => t.column === column.id)
-        return (
-          <section key={column.id} aria-label={column.title} className="min-w-0">
-            <h2 className="mb-2 text-sm font-semibold text-foreground">
-              {column.title}{' '}
-              <span className="font-normal text-muted-foreground">{counts[index]}</span>
-            </h2>
-            <div className="space-y-2">
-              {inColumn.map((task) => (
-                <Card key={task.id} task={task} />
-              ))}
-              {inColumn.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Nothing here.</p>
-              ) : null}
-            </div>
-          </section>
-        )
-      })}
+    <div>
+      {empty.length > 0 ? (
+        <p aria-label="Empty columns" className="mb-3 text-xs text-muted-foreground">
+          Nothing in: {empty.map((c) => c.title).join(' · ')}
+        </p>
+      ) : null}
+      <div className="flex items-start gap-4 overflow-x-auto pb-3">
+        {full.map((c) => (
+          <div key={c.id} className={COLUMN_WIDTH}>
+            <Column title={c.title} tasks={c.tasks} />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

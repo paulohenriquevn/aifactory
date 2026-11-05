@@ -64,7 +64,8 @@ describe('board', () => {
     expect(inColumn('Waiting for you').getByText('Asking one')).toBeDefined()
     expect(inColumn('Delivered').getByText('Done one')).toBeDefined()
     expect(inColumn('Needs a person').getByText('Broken one')).toBeDefined()
-    expect(inColumn('Queued').getByText('Nothing here.')).toBeDefined()
+    expect(screen.queryByRole('region', { name: 'Queued' })).toBeNull()
+    expect(screen.getByLabelText('Empty columns').textContent).toContain('Queued')
     expect(screen.getByText(/\$0\.31/)).toBeDefined()
   })
 
@@ -104,10 +105,11 @@ describe('board', () => {
     expect(inColumn('Needs a person').queryByText('Out of quota')).toBeNull()
   })
 
-  it('keeps all seven columns in one row, and gives the width to the ones that have cards', async () => {
+  it('draws only the columns that have cards, all the same width, and names the empty ones in a line', async () => {
     serve({
       tasks: [
         card({ id: 1, title: 'Building one' }),
+        card({ id: 2, title: 'Another one' }),
         card({ id: 4, title: 'Broken one', stage: 'failed', column: 'attention' }),
       ],
     })
@@ -117,20 +119,72 @@ describe('board', () => {
       </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByText('Building one')).toBeDefined())
-    const row = screen.getByRole('region', { name: 'Released' }).parentElement as HTMLElement
-    expect(row.querySelectorAll(':scope > section')).toHaveLength(7)
-    const widths = row.style.gridTemplateColumns.split(/ (?![^(]*\))/)
-    expect(widths).toEqual([
-      '90px',
-      'minmax(150px, 1fr)',
-      '90px',
-      '90px',
-      '90px',
-      '90px',
-      'minmax(150px, 1fr)',
-    ])
-    expect(screen.getByRole('region', { name: 'Needs a person' })).toBeDefined()
-    expect(screen.getByRole('region', { name: 'Released' })).toBeDefined()
+    const wrapper = (name: string) =>
+      screen.getByRole('region', { name }).parentElement as HTMLElement
+
+    for (const name of ['Working', 'Needs a person'])
+      expect(wrapper(name).className).toContain('w-[264px]')
+    for (const name of [
+      'Queued',
+      'Waiting for you',
+      'Will retry itself',
+      'Delivered',
+      'Released',
+    ]) {
+      expect(screen.queryByRole('region', { name }), name).toBeNull()
+    }
+    expect(screen.getByLabelText('Empty columns').textContent).toBe(
+      'Nothing in: Queued · Waiting for you · Will retry itself · Delivered · Released',
+    )
+  })
+
+  it('says nothing about empty columns when every column has cards', async () => {
+    const stages = [
+      ['intake', 'queued'],
+      ['build', 'working'],
+      ['waiting', 'waiting'],
+      ['failed', 'retrying'],
+      ['done', 'review'],
+      ['released', 'released'],
+      ['failed', 'attention'],
+    ] as const
+    serve({
+      tasks: stages.map(([stage, column], i) =>
+        card({ id: i + 1, title: `Task ${i + 1}`, stage, column }),
+      ),
+    })
+    render(
+      <MemoryRouter>
+        <Page />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('Task 1')).toBeDefined())
+    expect(screen.queryByLabelText('Empty columns')).toBeNull()
+    expect(screen.getAllByRole('region')).toHaveLength(7)
+  })
+
+  it('draws every card the same size, whatever its title', async () => {
+    serve({
+      tasks: [
+        card({ id: 1, title: 'Short' }),
+        card({ id: 2, title: 'A very long title '.repeat(20), attempts: 2 }),
+      ],
+    })
+    render(
+      <MemoryRouter>
+        <Page />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('Short')).toBeDefined())
+    const cards = screen
+      .getAllByRole('link')
+      .filter((l) => l.getAttribute('href')?.includes('?task='))
+    expect(cards).toHaveLength(2)
+    for (const c of cards) expect(c.querySelector('[class*="h-[140px]"]')).not.toBeNull()
+    expect(screen.getByText(/A very long title/).className).toContain('line-clamp-2')
+    expect(screen.getByText(/A very long title/).getAttribute('title')).toContain(
+      'A very long title',
+    )
   })
 
   it('says how to start when there are no tasks, and shows an error as one', async () => {
