@@ -19,13 +19,20 @@ export const factoryStatusTool = tool('factory_status')
 
 export const listTasksTool = tool('list_tasks')
   .describe(
-    'List tasks, the most recently active first. Filter by stage (failed, done, build, waiting, handoff, released...) or by part of the repository name.',
+    'List tasks, the most recently active first. Filter by stage (failed, done, build, waiting, handoff, released...), by the board column as the screen writes it (Queued, Working, Waiting for you, Will retry itself, Delivered, Released, Needs a person), or by part of the repository name.',
   )
   .input(
     z.object({
       stage: z.string().max(20).optional(),
+      column: z.string().max(30).optional(),
       repository: z.string().max(100).optional(),
-      limit: z.number().int().min(1).max(40).optional(),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(40)
+        .optional()
+        .describe('Leave it out unless you need fewer; the default is 15.'),
     }),
   )
   .execute(async (input) => findTasks(getDb(), input))

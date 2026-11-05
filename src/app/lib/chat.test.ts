@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessageView, ChatSummary } from '../../shared/panel'
 
 import { describeApproval, displayed, groupChats, NEW_MESSAGE, promptWith, textOf } from './chat'
+import type { RepositoryView } from '../../shared/panel'
 
 const say = (role: ChatMessageView['role'], text: string): ChatMessageView => ({
   id: text,
@@ -110,5 +111,60 @@ describe('describeApproval', () => {
     })
     expect(describeApproval(undefined, undefined).title).toBe('Ação')
     expect(describeApproval('retry_task', null).request).toContain('undefined')
+  })
+})
+
+describe('promptWith a preface', () => {
+  it('always sets the preface apart from the new message, even with no history, and the owner never sees it', () => {
+    const prompt = promptWith([], 'oi', 'Onde o dono está: Quadro')
+    expect(prompt).toBe(`Onde o dono está: Quadro\n\n${NEW_MESSAGE}oi`)
+    expect(textOf(displayed({ role: 'user', parts: [{ type: 'text', text: prompt }] }))).toBe('oi')
+  })
+
+  it('puts it before the conversation so far', () => {
+    const prompt = promptWith([say('user', 'um')], 'dois', 'ONDE')
+    expect(prompt.indexOf('ONDE')).toBeLessThan(prompt.indexOf('[dono]: um'))
+    expect(prompt.endsWith(`${NEW_MESSAGE}dois`)).toBe(true)
+  })
+})
+
+describe('describeApproval for the guides', () => {
+  it('says in words what each change would do', () => {
+    expect(describeApproval('approve_task', { id: 4 }).request).toContain(
+      'não faz merge nem release',
+    )
+    expect(describeApproval('create_plan', { repository: 'o/r', goal: 'g' }).request).toContain(
+      'Nenhuma issue é criada ainda',
+    )
+    expect(describeApproval('create_plan_issues', { planId: 2, start: true }).request).toContain(
+      'já começar',
+    )
+    expect(describeApproval('create_plan_issues', { planId: 2, start: false }).request).toContain(
+      'esperando',
+    )
+    expect(
+      describeApproval('resolve_finding', { id: 1, action: 'delete_snapshot' }).request,
+    ).toContain('snapshot')
+    expect(describeApproval('resolve_finding', { id: 1, action: 'new_thing' }).request).toContain(
+      'new_thing',
+    )
+    expect(describeApproval('acknowledge_watch', { id: 3 }).title).toBe('Marcar como visto')
+  })
+
+  it('shows what a save changes, before and after when the repository is known, and says when nothing does', () => {
+    const repo = { releaseBranch: 'main' } as RepositoryView
+    const change = describeApproval(
+      'update_repository',
+      { repository: 'o/r', releaseBranch: 'release' },
+      repo,
+    )
+    expect(change.request).toBe('Em o/r:\n- Branch de release: main → release')
+    expect(
+      describeApproval('update_repository', { repository: 'o/r', releaseBranch: 'main' }, repo)
+        .request,
+    ).toContain('nada muda')
+    expect(
+      describeApproval('update_repository', { repository: 'o/r', releaseBranch: 'x' }).request,
+    ).toContain('Branch de release: x')
   })
 })

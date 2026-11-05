@@ -14,6 +14,7 @@ const STARTS = [
  * the send button at the right. Enter sends and Shift+Enter breaks the line.
  */
 export function PillComposer({
+  starts = STARTS,
   value,
   onValueChange,
   onSubmit,
@@ -22,6 +23,8 @@ export function PillComposer({
   trailing,
   placeholder,
 }: {
+  /** What the "+" offers. None hides it. */
+  starts?: typeof STARTS
   value: string
   onValueChange: (value: string) => void
   onSubmit: (value: string) => void
@@ -49,31 +52,33 @@ export function PillComposer({
       }}
       className="flex items-end gap-1 rounded-[28px] border border-white/10 bg-[#161617] px-2.5 py-2"
     >
-      <DropdownMenu>
-        <DropdownMenu.Trigger asChild>
-          <button
-            type="button"
-            aria-label="Mais ações"
-            className="mb-0.5 shrink-0 rounded-full p-2 text-foreground/80 hover:bg-white/[0.08]"
-          >
-            <Plus className="size-5" />
-          </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="start" side="top" className="min-w-56">
-          {STARTS.map(({ icon: Icon, label, text }) => (
-            <DropdownMenu.Item
-              key={label}
-              onSelect={() => {
-                onValueChange(text)
-                requestAnimationFrame(() => box.current?.focus())
-              }}
+      {starts.length > 0 ? (
+        <DropdownMenu>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              aria-label="Mais ações"
+              className="mb-0.5 shrink-0 rounded-full p-2 text-foreground/80 hover:bg-white/[0.08]"
             >
-              <Icon className="mr-2 size-4" />
-              {label}
-            </DropdownMenu.Item>
-          ))}
-        </DropdownMenu.Content>
-      </DropdownMenu>
+              <Plus className="size-5" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="start" side="top" className="min-w-56">
+            {starts.map(({ icon: Icon, label, text }) => (
+              <DropdownMenu.Item
+                key={label}
+                onSelect={() => {
+                  onValueChange(text)
+                  requestAnimationFrame(() => box.current?.focus())
+                }}
+              >
+                <Icon className="mr-2 size-4" />
+                {label}
+              </DropdownMenu.Item>
+            ))}
+          </DropdownMenu.Content>
+        </DropdownMenu>
+      ) : null}
       <textarea
         ref={box}
         rows={1}

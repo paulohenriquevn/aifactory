@@ -1,6 +1,13 @@
-import type { ChatDetail, ChatMessageView, ChatModel, ChatSummary } from '../../shared/panel'
+import type {
+  ChatDetail,
+  ChatMessageView,
+  ChatModel,
+  ChatSummary,
+  RepositoryView,
+} from '../../shared/panel'
 
 import { del, get, post, put } from './api'
+import { repoChanges } from './guides'
 
 /** The agents the owner can talk to, as the picker names them. */
 export const MODELS: { id: ChatModel; name: string; blurb: string }[] = [
@@ -29,16 +36,21 @@ export function textOf(message: Pick<ChatMessageView, 'parts'>): string {
     .join('')
 }
 
-/** What to send to the agent: the end of the conversation so far, then what the owner just wrote. */
-export function promptWith(history: ChatMessageView[], text: string): string {
+/**
+ * What to send to the agent: the end of the conversation so far, then what the owner just wrote. A
+ * `preface` (where the owner is, for a guide) always goes first, set apart from the new message.
+ */
+export function promptWith(history: ChatMessageView[], text: string, preface?: string): string {
   const lines = history
     .filter((m) => m.role !== 'system')
     .map((m) => ({ who: m.role === 'user' ? 'dono' : 'assistente', text: textOf(m).trim() }))
     .filter((m) => m.text !== '')
     .slice(-HISTORY_MESSAGES)
     .map((m) => `[${m.who}]: ${m.text.slice(0, HISTORY_CHARS)}`)
-  if (lines.length === 0) return text
-  return `Conversa até aqui, a mais antiga primeiro:\n${lines.join('\n')}\n\n${NEW_MESSAGE}${text}`
+  if (lines.length === 0 && !preface) return text
+  const before =
+    lines.length === 0 ? '' : `Conversa até aqui, a mais antiga primeiro:\n${lines.join('\n')}\n\n`
+  return `${preface ? `${preface}\n\n` : ''}${before}${NEW_MESSAGE}${text}`
 }
 
 /** A message as the owner should see it: a user message loses the history that rode along with it. */
@@ -83,31 +95,79 @@ export type Connection = {
     | { status: 'error'; message: string }
 }
 
-/** What the owner is asked to approve, in words, for the tools that change something. */
+type Approval = { title: string; request: string }
+type Args = Record<string, unknown>
+
+const text = (v: unknown) => String(v ?? '')
+
+const FINDING_ACTIONS: Record<string, string> = {
+  retry: 'Começar de novo a tarefa travada (a branch e o PR dela são apagados antes).',
+  resume: 'Retomar a tarefa, cuja pergunta já foi respondida.',
+  delete_snapshot: 'Apagar o snapshot que nenhuma tarefa usa.',
+  mark_revert_unknown:
+    'Mostrar a main como vermelha, para alguém conferir o revert no repositório.',
+}
+
+/** What each tool that changes something says to the owner before it runs. */
+const APPROVALS: Record<string, (a: Args, repo?: RepositoryView) => Approval> = {
+  retry_task: (a) => ({
+    title: 'Repetir uma tarefa',
+    request: `Começar de novo a tarefa ${String(a.id)}. A branch e o PR dela são apagados antes.`,
+  }),
+  request_changes: (a) => ({
+    title: 'Pedir mudanças',
+    request: `Devolver a tarefa ${String(a.id)} ao agente com esta nota:\n${text(a.note)}`,
+  }),
+  start_job: (a) => ({
+    title: 'Abrir uma issue e começar',
+    request: `Em ${String(a.repository)}: ${String(a.title)}\n\n${text(a.body).slice(0, 600)}`,
+  }),
+  approve_task: (a) => ({
+    title: 'Aprovar o pull request',
+    request: `Aprovar o PR da tarefa ${String(a.id)}, no commit em que ele está agora. Isso não faz merge nem release.`,
+  }),
+  update_repository: (a, repo) => {
+    const { repository, ...patch } = a
+    const lines = repoChanges(repo, patch)
+    return {
+      title: 'Salvar configurações',
+      request: `Em ${String(repository)}:\n${lines.length > 0 ? lines.map((l) => `- ${l}`).join('\n') : '- nada muda'}`,
+    }
+  },
+  create_plan: (a) => ({
+    title: 'Começar um plano',
+    request: `Em ${String(a.repository)}, com este objetivo:\n${text(a.goal).slice(0, 600)}\nNenhuma issue é criada ainda: você revisa o plano antes.`,
+  }),
+  create_plan_issues: (a) => ({
+    title: 'Criar as issues do plano',
+    request: `Criar no GitHub as issues selecionadas do plano ${String(a.planId)}, ${a.start ? 'e já começar o trabalho nelas' : 'deixando-as esperando para você começar depois'}.`,
+  }),
+  resolve_finding: (a) => ({
+    title: 'Resolver um achado',
+    request:
+      FINDING_ACTIONS[text(a.action)] ??
+      `Fazer "${text(a.action)}" sobre o achado ${String(a.id)}.`,
+  }),
+  acknowledge_watch: (a) => ({
+    title: 'Marcar como visto',
+    request: `Marcar a main vermelha ${String(a.id)} como vista por uma pessoa.`,
+  }),
+}
+
+/**
+ * What the owner is asked to approve, in words, for the tools that change something. `repo` is the
+ * repository's current settings, when known, so a save can show what it changes as "before → after".
+ */
 export function describeApproval(
   toolName: string | undefined,
   input: unknown,
-): { title: string; request: string } {
-  const args = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
-  switch (toolName) {
-    case 'retry_task':
-      return {
-        title: 'Repetir uma tarefa',
-        request: `Começar de novo a tarefa ${String(args.id)}. A branch e o PR dela são apagados antes.`,
-      }
-    case 'request_changes':
-      return {
-        title: 'Pedir mudanças',
-        request: `Devolver a tarefa ${String(args.id)} ao agente com esta nota:\n${String(args.note ?? '')}`,
-      }
-    case 'start_job':
-      return {
-        title: 'Abrir uma issue e começar',
-        request: `Em ${String(args.repository)}: ${String(args.title)}\n\n${String(args.body ?? '').slice(0, 600)}`,
-      }
-    default:
-      return { title: toolName ?? 'Ação', request: JSON.stringify(input, null, 2) ?? '' }
-  }
+  repo?: RepositoryView,
+): Approval {
+  const args = (input && typeof input === 'object' ? input : {}) as Args
+  const describe = toolName ? APPROVALS[toolName] : undefined
+  return describe
+    ? describe(args, repo)
+    : { title: toolName ?? 'Ação', request: JSON.stringify(input, null, 2) ?? '' }
 }
 
 /** The suggestions under an empty conversation. */

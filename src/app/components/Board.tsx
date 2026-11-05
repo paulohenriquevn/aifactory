@@ -38,7 +38,7 @@ export function Card({ task }: { task: TaskCard }) {
 
 export function Board({ tasks }: { tasks: TaskCard[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-7">
+    <div className="grid auto-cols-[minmax(230px,1fr)] gap-4 overflow-x-auto pb-2 lg:grid-flow-col">
       {COLUMNS.map((column) => {
         const inColumn = tasks.filter((t) => t.column === column.id)
         return (

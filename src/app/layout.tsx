@@ -6,10 +6,12 @@ import { Outlet, useLocation, useNavigate } from 'react-router'
 
 import type { HealthReport, InboxItem } from '../shared/panel'
 
+import { GuidePanel } from './components/guide/GuidePanel'
 import { Sidebar } from './components/shell/Sidebar'
 import { inWork, TopBar } from './components/shell/TopBar'
 import { post } from './lib/api'
 import { ChatsProvider } from './lib/chats'
+import { GuideProvider } from './lib/guide-state'
 import { useResource } from './lib/live'
 
 const HIDDEN_KEY = 'aifactory.menu.hidden'
@@ -60,34 +62,37 @@ export default function RootLayout() {
   return (
     <ThemeProvider themes={builtinThemes} defaultTheme="violet-forge" defaultMode="dark">
       <ChatsProvider enabled={signedIn}>
-        <div className="flex h-screen bg-[#0b0b0c] text-foreground">
-          {signedIn && !menuHidden ? (
-            <Sidebar
-              onToggle={() => setMenuHidden(true)}
-              waiting={inbox.data?.items.length ?? 0}
-              wrong={health.data?.findings.length ?? 0}
-              name={me.data?.name ?? 'dono'}
-              plan="dono da fábrica"
-              onSignOut={signOut}
-            />
-          ) : null}
-          <div className="flex min-w-0 flex-1 flex-col">
-            {signedIn ? (
-              <TopBar menuHidden={menuHidden} onShowMenu={() => setMenuHidden(false)} />
+        <GuideProvider>
+          <div className="flex h-screen bg-[#0b0b0c] text-foreground">
+            {signedIn && !menuHidden ? (
+              <Sidebar
+                onToggle={() => setMenuHidden(true)}
+                waiting={inbox.data?.items.length ?? 0}
+                wrong={health.data?.findings.length ?? 0}
+                name={me.data?.name ?? 'dono'}
+                plan="dono da fábrica"
+                onSignOut={signOut}
+              />
             ) : null}
-            <main className="min-h-0 flex-1 overflow-y-auto">
-              {signedIn && inWork(location.pathname) ? (
-                <div className="mx-auto max-w-7xl px-6 pb-10 pt-2">
+            <div className="flex min-w-0 flex-1 flex-col">
+              {signedIn ? (
+                <TopBar menuHidden={menuHidden} onShowMenu={() => setMenuHidden(false)} />
+              ) : null}
+              <main className="min-h-0 flex-1 overflow-y-auto">
+                {signedIn && inWork(location.pathname) ? (
+                  <div className="mx-auto max-w-7xl px-6 pb-10 pt-2">
+                    <Outlet />
+                  </div>
+                ) : signedIn || onLogin ? (
                   <Outlet />
-                </div>
-              ) : signedIn || onLogin ? (
-                <Outlet />
-              ) : (
-                <p className="p-6 text-sm text-muted-foreground">Carregando…</p>
-              )}
-            </main>
+                ) : (
+                  <p className="p-6 text-sm text-muted-foreground">Carregando…</p>
+                )}
+              </main>
+            </div>
+            {signedIn ? <GuidePanel /> : null}
           </div>
-        </div>
+        </GuideProvider>
       </ChatsProvider>
     </ThemeProvider>
   )

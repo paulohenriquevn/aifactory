@@ -5,11 +5,15 @@ import { eq, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
 import { repository, task } from '../db/schema'
+import { COLUMNS, type Column } from '../../shared/panel'
 import { listTasks, taskDetail } from '../panel/queries'
 
 /** What the assistant may read of the factory. It reads rows and a state file, and nothing it could run. */
 
 const TEXT_MAX = 300
+/** What the board calls a column, which is what the owner says. */
+const columnTitle = (column: Column) => COLUMNS.find((c) => c.id === column)?.title ?? column
+
 const cut = (value: unknown, max = TEXT_MAX) =>
   typeof value === 'string' ? value.replace(/\s+/g, ' ').slice(0, max) : value
 
@@ -48,7 +52,7 @@ export async function factoryStatus(
   }
 }
 
-export type TaskFilter = { stage?: string; repository?: string; limit?: number }
+export type TaskFilter = { stage?: string; column?: string; repository?: string; limit?: number }
 
 /** Tasks, newest activity first, with what the owner wants to know about each. */
 export async function findTasks(db: Database, filter: TaskFilter) {
@@ -56,6 +60,9 @@ export async function findTasks(db: Database, filter: TaskFilter) {
   const cards = await listTasks(db)
   return cards
     .filter((c) => !filter.stage || c.stage === filter.stage)
+    .filter(
+      (c) => !filter.column || columnTitle(c.column).toLowerCase() === filter.column.toLowerCase(),
+    )
     .filter(
       (c) =>
         !filter.repository || c.repository.toLowerCase().includes(filter.repository.toLowerCase()),
@@ -68,7 +75,9 @@ export async function findTasks(db: Database, filter: TaskFilter) {
       issue: c.issueNumber,
       title: cut(c.title, 120),
       stage: c.stage,
+      column: columnTitle(c.column),
       integrated: c.integrated,
+      willRetryBecause: c.retryable,
       preRelease: c.preRelease?.tag ?? null,
       pullRequest: c.pullRequestUrl,
       costUsd: Number(c.costUsd.toFixed(3)),

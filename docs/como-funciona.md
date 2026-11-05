@@ -407,6 +407,44 @@ As conversas ficam no Postgres (`chat` e `chat_message`). Uma conversa nova só 
 resposta termina, e a página vai para o endereço dela. Como o agente não guarda sessão entre mensagens, o
 histórico viaja dentro da mensagem (as últimas 20, cortadas) e a tela mostra só o que você escreveu.
 
+**Um guia para cada página.** Em Quadro, Planos, Repositórios, Caixa de entrada, Saúde e Configuração, o
+botão "Guia" no alto da página abre, ao lado dela, um especialista daquela página: o Guia do Quadro, de
+Planos, de Repositórios, da Caixa de entrada, da Saúde e da Configuração. O chat não tem guia, porque é o
+assistente geral. A página não sai do lugar: o painel divide a largura com ela (e cobre a página só em
+telas estreitas), então o dono vê o que está sendo explicado ou mudado.
+
+Cada guia tem três coisas, e é isso que o diferencia de um chat solto:
+
+- **Sabe onde o dono está.** Toda mensagem leva a página e o item aberto (a tarefa de `?task=7`, o plano
+  de `/plans/3`), então "esta tarefa" quer dizer a que está na tela.
+- **Responde sobre a situação do dono.** O manual de cada página (`agents/prompts/guides.ts`) usa os nomes
+  que a tela escreve ("Will retry itself", "Approve this commit"), e o guia consulta os dados antes de
+  responder, em vez de explicar o conceito de forma geral.
+- **Muda o sistema só com o OK, e mostra o que muda.** Quando propõe uma mudança, aparece um cartão em
+  português com os botões Aprovar e Recusar. Numa configuração de repositório o cartão mostra "antes →
+  depois" (e "nada muda" quando já está assim). Ao terminar, a página atrás atualiza na hora.
+
+Ao abrir o painel pela primeira vez numa página, aparece o que a página faz e sugestões, separadas em
+"Entender" e "Fazer"; as que pedem as palavras do dono vão para a caixa, em vez de serem enviadas. Uma
+bolinha no botão some depois da primeira vez. A chamada de uma ferramenta não aparece como um cartão com
+dados crus: vira uma linha ("Consultou: as tarefas", "Fez: começou uma tarefa de novo").
+
+| Guia          | Lê                                                       | Muda (com aprovação)                                            |
+| ------------- | -------------------------------------------------------- | --------------------------------------------------------------- |
+| Quadro        | estado, tarefas por coluna, caixa de entrada, uma tarefa | repetir, devolver com nota, aprovar o commit, abrir um job      |
+| Planos        | planos e seus itens, repositórios                        | começar um plano, criar as issues dele                          |
+| Repositórios  | repositórios e arquivos de build do projeto              | configurações e ativação de um repositório                      |
+| Caixa entrada | o que espera uma pessoa, uma tarefa                      | aprovar o commit, devolver com nota, repetir                    |
+| Saúde         | custo e achados do supervisor, uma tarefa                | resolver um achado, marcar a `main` vermelha como vista         |
+| Configuração  | o que falta para a fábrica funcionar                     | nada: guia passo a passo (chaves e contas são feitas pelo dono) |
+
+Nenhum guia faz release nem merge na `main`: o release é um botão do dono na tarefa. Nenhum aceita chave
+ou senha na conversa. Cada guia só tem as ferramentas da sua página (`onlyTools`), e as conversas dos guias
+não são gravadas: ficam na memória da página enquanto ela está aberta. Como o chat, cada guia roda no
+OpenRouter (`FACTORY_GUIDE_MODEL`, padrão `openrouter/openai/gpt-4.1-mini`) ou na assinatura do ChatGPT,
+pelo seletor do campo de mensagem. O modelo importa: um modelo mais barato (`gemini-2.5-flash`) respondia
+pela descrição da página em vez de consultar os dados.
+
 **O que o painel mostra, ao vivo:**
 
 - O quadro: uma coluna por situação (na fila, trabalhando, esperando você, vai tentar sozinha, entregue,
@@ -713,6 +751,7 @@ responde `/api/health` mesmo sem as credenciais.
 | `VERCEL_OIDC_TOKEN`                                   | alternativa de desenvolvimento, de `vercel env pull` |
 | `OPENROUTER_API_KEY`, `FACTORY_CHAT_MODEL`            | o assistente do chat no OpenRouter                   |
 | `FACTORY_CHAT_CODEX_MODEL`                            | o modelo do assistente na assinatura do ChatGPT      |
+| `FACTORY_GUIDE_MODEL`                                 | o modelo dos guias de página (padrão gpt-4.1-mini)   |
 | `FACTORY_JOBS=off`                                    | sobe uma prévia do painel sem pegar jobs da fila     |
 
 `.env.local` e `.secrets/` ficam fora do git, com modo 600.

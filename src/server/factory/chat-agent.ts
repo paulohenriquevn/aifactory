@@ -1,7 +1,3 @@
-import { AgentBuilder, Provider } from '@theokit/agents'
-import { z } from 'zod'
-
-import { onlyTools } from '../agents/hooks/only-tools'
 import { CHAT_INSTRUCTIONS } from '../agents/prompts/chat'
 import {
   backlogProgressTool,
@@ -13,41 +9,31 @@ import {
   taskDetailTool,
 } from '../agents/tools/chat'
 
+import { buildAssistant, type AssistantSpec } from './assistant'
+
+export const CHAT_SPEC: AssistantSpec = {
+  system: CHAT_INSTRUCTIONS,
+  tools: {
+    factory_status: factoryStatusTool,
+    list_tasks: listTasksTool,
+    task_detail: taskDetailTool,
+    backlog_progress: backlogProgressTool,
+    retry_task: retryTaskTool,
+    request_changes: requestChangesTool,
+    start_job: startJobTool,
+  },
+  asks: {
+    retry_task: 'Start this task again from the beginning?',
+    request_changes: 'Send this work back to the agent with this note?',
+    start_job: 'Open this issue and start the factory on it?',
+  },
+}
+
 /** The tools the assistant may call: the ones it declares, and no built-in the SDK gives every agent. */
-export const CHAT_TOOLS = [
-  'factory_status',
-  'list_tasks',
-  'task_detail',
-  'backlog_progress',
-  'retry_task',
-  'request_changes',
-  'start_job',
-] as const
+export const CHAT_TOOLS = Object.keys(CHAT_SPEC.tools)
 
 /** The changes it may make, each behind the owner's approval. */
-export const ACTING_TOOLS = ['retry_task', 'request_changes', 'start_job'] as const
+export const ACTING_TOOLS = Object.keys(CHAT_SPEC.asks)
 
-/**
- * The assistant on a model. Two agents are made from it: one on OpenRouter, one on the owner's ChatGPT
- * subscription (the Codex login), and the page picks between them. The `ChatGPT` provider is not part of
- * the framework's own model resolution, so its plugin is handed over explicitly.
- */
-export function chatAgent(model: string) {
-  return AgentBuilder.create()
-    .input(z.object({ message: z.string().max(40_000) }))
-    .model(model)
-    .plugins(Provider.builtins())
-    .system(CHAT_INSTRUCTIONS)
-    .tool(factoryStatusTool)
-    .tool(listTasksTool)
-    .tool(taskDetailTool)
-    .tool(backlogProgressTool)
-    .tool(retryTaskTool)
-    .tool(requestChangesTool)
-    .tool(startJobTool)
-    .approval('retry_task', { question: 'Start this task again from the beginning?' })
-    .approval('request_changes', { question: 'Send this work back to the agent with this note?' })
-    .approval('start_job', { question: 'Open this issue and start the factory on it?' })
-    .hooks(onlyTools([...CHAT_TOOLS]))
-    .build()
-}
+/** The chat assistant on a model: OpenRouter, or the owner's ChatGPT subscription. */
+export const chatAgent = (model: string) => buildAssistant(model, CHAT_SPEC)

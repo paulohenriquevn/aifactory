@@ -31,6 +31,16 @@ export function subscribe(listener: Listener): () => void {
   }
 }
 
+const changeListeners = new Set<() => void>()
+
+/**
+ * Says that something was changed from outside the page, by a guide for example, so every resource on the
+ * page reads again now instead of at its next turn: the owner sees the change where they are looking.
+ */
+export function announceChange() {
+  for (const listener of changeListeners) listener()
+}
+
 export type Resource<T> = {
   data: T | undefined
   error: string | undefined
@@ -85,7 +95,9 @@ export function useResource<T>(
           pending = setTimeout(reload, 150)
         })
       : () => {}
+    changeListeners.add(reload)
     return () => {
+      changeListeners.delete(reload)
       alive.current = false
       clearInterval(timer)
       clearTimeout(pending)

@@ -1,4 +1,3 @@
-import { AgentErrorCard, AgentStreaming, ApprovalCard, ChatMessage, ChatThread } from '@theokit/ui'
 import { ScrollArea } from '@usetheo/ui'
 import { MessageSquare } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -6,21 +5,14 @@ import { useNavigate } from 'react-router'
 import { useAgent } from 'theokit/client'
 
 import type { ChatMessageView, ChatModel } from '../../../shared/panel'
-import { get } from '../../lib/api'
-import {
-  AGENT_PATH,
-  chatApi,
-  describeApproval,
-  displayed,
-  promptWith,
-  SUGGESTIONS,
-  type Connection,
-} from '../../lib/chat'
+import { AGENT_PATH, chatApi, displayed, promptWith, SUGGESTIONS } from '../../lib/chat'
+import { useChatgptConnection } from '../../lib/chatgpt-connection'
 import { useChats } from '../../lib/chats'
-import { toRenderable } from '../../lib/renderable'
 
 import { ChatgptConnect } from './ChatgptConnect'
 import { ModelPicker } from './ModelPicker'
+import { Messages } from './Messages'
+import { Pending } from './Pending'
 import { PillComposer } from './PillComposer'
 
 /**
@@ -36,7 +28,7 @@ export function ChatView({ chatId }: { chatId?: string }) {
   const [loading, setLoading] = useState(chatId !== undefined)
   const [loadError, setLoadError] = useState<string>()
   const [value, setValue] = useState('')
-  const [connection, setConnection] = useState<Connection>()
+  const { needsConnection, recheck: checkConnection } = useChatgptConnection(model)
 
   const agent = useAgent<{ message: string }>(AGENT_PATH[model], {
     headers: { 'x-theo-action': '1' },
@@ -73,13 +65,6 @@ export function ChatView({ chatId }: { chatId?: string }) {
       alive = false
     }
   }, [chatId])
-
-  const checkConnection = useCallback(() => {
-    void get<Connection>('/api/panel/chat/connection').then(setConnection)
-  }, [])
-  useEffect(() => {
-    if (model === 'codex') checkConnection()
-  }, [model, checkConnection])
 
   /** Keeps the conversation: creates it the first time, and sends the owner to its address. */
   const keep = useCallback(async () => {
@@ -119,33 +104,11 @@ export function ChatView({ chatId }: { chatId?: string }) {
   }
 
   const empty = messages.length === 0
-  const needsConnection = model === 'codex' && connection !== undefined && !connection.connected
   const running = agent.status === 'streaming'
 
   const composer = (
     <div className="w-full">
-      {agent.status === 'error' ? (
-        <div className="mb-3">
-          <AgentErrorCard
-            kind="network"
-            title="Não consegui responder"
-            detail={agent.error?.message ?? 'Algo deu errado. Tente de novo.'}
-          />
-        </div>
-      ) : null}
-      {agent.pendingApprovals.map((a) => {
-        const text = describeApproval(a.toolName, a.input)
-        return (
-          <div key={a.approvalId} className="mb-3">
-            <ApprovalCard
-              title={text.title}
-              request={<span className="whitespace-pre-wrap">{text.request}</span>}
-              onApprove={() => void agent.approve(a.approvalId, { approved: true })}
-              onDeny={() => void agent.approve(a.approvalId, { approved: false })}
-            />
-          </div>
-        )
-      })}
+      <Pending conversation={agent} />
       {needsConnection ? <ChatgptConnect onConnected={checkConnection} /> : null}
       <PillComposer
         value={value}
@@ -195,14 +158,11 @@ export function ChatView({ chatId }: { chatId?: string }) {
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-6">
-          <ChatThread>
-            {messages.map((m) => (
-              <ChatMessage key={m.id} message={toRenderable(m as never)} />
-            ))}
-            {running ? (
-              <AgentStreaming model={model === 'codex' ? 'ChatGPT' : 'OpenRouter'} />
-            ) : null}
-          </ChatThread>
+          <Messages
+            messages={messages}
+            running={running}
+            model={model === 'codex' ? 'ChatGPT' : 'OpenRouter'}
+          />
         </div>
       </ScrollArea>
       <div className="mx-auto w-full max-w-3xl px-6 pb-5">{composer}</div>

@@ -94,6 +94,20 @@ describe('findTasks and describeTask', () => {
     expect(await findTasks(getDb(), { limit: 0 })).toHaveLength(1)
   })
 
+  it('filters by the column as the board writes it, and says which column each task is in', async () => {
+    await seed('failed', { quota: true })
+    await seed('failed', { error: 'the agent made no change' })
+    await seed('build')
+    const retrying = await findTasks(getDb(), { column: 'will retry itself' })
+    expect(retrying).toHaveLength(1)
+    expect(retrying[0]).toMatchObject({ column: 'Will retry itself', willRetryBecause: 'quota' })
+    expect((await findTasks(getDb(), { column: 'Needs a person' }))[0]).toMatchObject({
+      column: 'Needs a person',
+      willRetryBecause: null,
+    })
+    expect(await findTasks(getDb(), { column: 'Released' })).toEqual([])
+  })
+
   it('describes one task with its last events, and says when there is none', async () => {
     const id = await seed('failed', { error: 'x'.repeat(500), quota: true })
     const detail = await describeTask(getDb(), id)
