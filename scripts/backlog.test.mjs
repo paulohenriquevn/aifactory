@@ -222,6 +222,17 @@ describe('resetAt', () => {
     }
   })
 
+  it('reads a bare time as today, or as tomorrow once it has passed', () => {
+    const now = new Date(2026, 10, 5, 15, 25)
+    const evening = resetAt('7:38 PM', now)
+    expect([evening.getDate(), evening.getHours(), evening.getMinutes()]).toEqual([5, 19, 38])
+    const morning = resetAt('9:05 AM', now)
+    expect([morning.getDate(), morning.getHours(), morning.getMinutes()]).toEqual([6, 9, 5])
+    expect(resetAt('12:00 AM', now).getHours()).toBe(0)
+    expect(resetAt('12:30 PM', now).getHours()).toBe(12)
+    expect(resetAt('3:25 PM', now).getDate()).toBe(6) // the minute it resets is already gone
+  })
+
   it('says nothing when there is no date to read', () => {
     expect(resetAt(undefined)).toBeUndefined()
     expect(resetAt('')).toBeUndefined()

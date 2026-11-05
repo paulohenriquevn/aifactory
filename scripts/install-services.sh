@@ -17,4 +17,6 @@ systemctl --user enable aifactory.service aifactory-tunnel.service aifactory-bac
 for n in $(seq 1 "${FACTORY_WORKERS:-0}"); do
   systemctl --user enable "aifactory-worker@$n.service"
 done
+# The backlog feeder is not started with the rest: it opens issues in real repositories, so it is started on
+# purpose with `systemctl --user start aifactory-feeder`.
 echo "installed in $dest; start them with: systemctl --user start aifactory aifactory-tunnel aifactory-backup.timer"

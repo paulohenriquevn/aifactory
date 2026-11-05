@@ -159,9 +159,21 @@ export function stuckBehind(items, state) {
     .filter((x) => x.blockers.length > 0)
 }
 
-/** When a usage limit says it resets, as a Date, or undefined. "Nov 5th, 2026 11:48 AM" is local time. */
-export function resetAt(text) {
+/**
+ * When a usage limit says it resets, as a Date, or undefined. Both "Nov 5th, 2026 11:48 AM" and a bare
+ * "7:38 PM" are local time; a bare time is today's, or tomorrow's when it has already passed.
+ */
+export function resetAt(text, now = new Date()) {
   if (!text) return undefined
+  const bare = /^\s*(\d{1,2}):(\d{2})\s*([AaPp][Mm])\s*$/.exec(String(text))
+  if (bare) {
+    let hours = Number(bare[1]) % 12
+    if (bare[3].toLowerCase() === 'pm') hours += 12
+    const d = new Date(now)
+    d.setHours(hours, Number(bare[2]), 0, 0)
+    if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1)
+    return d
+  }
   const clean = String(text).replace(/(\d)(st|nd|rd|th)\b/, '$1')
   const d = new Date(clean)
   return Number.isNaN(d.getTime()) ? undefined : d
