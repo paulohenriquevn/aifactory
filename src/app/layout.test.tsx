@@ -106,24 +106,40 @@ describe('the layout', () => {
     expect(screen.getByText('Nenhuma conversa encontrada')).toBeDefined()
   })
 
-  it('hides the menu, remembers it, and brings it back', async () => {
+  it('folds the menu into a strip of icons, remembers it, and brings the menu back', async () => {
     serve(signedIn)
     renderAt('/')
     await waitFor(() => expect(screen.getByRole('link', { name: 'Quadro' })).toBeDefined())
     fireEvent.click(screen.getByRole('button', { name: 'Recolher o menu' }))
-    expect(screen.queryByRole('link', { name: 'Quadro' })).toBeNull()
+    expect(screen.queryByRole('complementary', { name: 'Menu' })).toBeNull()
+    expect(screen.getByRole('complementary', { name: 'Menu recolhido' })).toBeDefined()
+    expect(screen.queryByText('Recentes')).toBeNull()
     expect(window.localStorage.getItem('aifactory.menu.hidden')).toBe('1')
     fireEvent.click(screen.getByRole('button', { name: 'Mostrar o menu' }))
-    expect(screen.getByRole('link', { name: 'Quadro' })).toBeDefined()
+    expect(screen.getByRole('complementary', { name: 'Menu' })).toBeDefined()
+    expect(screen.getByText('Recentes')).toBeDefined()
     expect(window.localStorage.getItem('aifactory.menu.hidden')).toBe('0')
   })
 
-  it('starts hidden when the owner left it hidden', async () => {
+  it("opens the menu with the search box showing when the strip's search is pressed", async () => {
+    window.localStorage.setItem('aifactory.menu.hidden', '1')
+    serve(signedIn)
+    renderAt('/')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Buscar conversas' })).toBeDefined(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar conversas' }))
+    expect(screen.getByLabelText('Buscar nas conversas')).toBeDefined()
+  })
+
+  it('starts as a strip when the owner left the menu folded, and a plain return of the menu has no search box', async () => {
     window.localStorage.setItem('aifactory.menu.hidden', '1')
     serve(signedIn)
     renderAt('/')
     await waitFor(() => expect(screen.getByText('the chat')).toBeDefined())
-    expect(screen.queryByRole('link', { name: 'Quadro' })).toBeNull()
+    expect(screen.getByRole('complementary', { name: 'Menu recolhido' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Mostrar o menu' }))
+    expect(screen.queryByLabelText('Buscar nas conversas')).toBeNull()
   })
 
   it('has two tabs, and the second one is selected on the pages of the factory', async () => {

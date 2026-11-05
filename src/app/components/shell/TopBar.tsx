@@ -1,6 +1,6 @@
 import { useTheme } from '@theokit/ui'
-import { Moon, PanelLeft, Sparkles, SquarePen, Sun } from 'lucide-react'
-import { NavLink, useLocation, useNavigate } from 'react-router'
+import { Moon, Sparkles, Sun } from 'lucide-react'
+import { NavLink, useLocation } from 'react-router'
 
 import { useGuideState } from '../../lib/guide-state'
 import { guideFor } from '../../lib/guides'
@@ -11,42 +11,15 @@ export const inWork = (path: string) => !(path === '/' || path.startsWith('/chat
 const tab = (active: boolean) =>
   `rounded-full px-7 py-1.5 text-[14px] font-medium transition-colors ${active ? 'bg-white/[0.14] text-foreground' : 'text-foreground/60 hover:text-foreground'}`
 
-/** The bar over the page: the two halves of the app, and the way to bring the menu back when it is hidden. */
-export function TopBar({
-  menuHidden,
-  onShowMenu,
-}: {
-  menuHidden: boolean
-  onShowMenu: () => void
-}) {
+/** The bar over the page: the two halves of the app, the guide of the page and the theme. */
+export function TopBar() {
   const { mode, toggleMode } = useTheme()
   const guide = guideFor(useLocation().pathname)
   const { open, setOpen, seen } = useGuideState()
   const { pathname } = useLocation()
-  const navigate = useNavigate()
   const work = inWork(pathname)
   return (
     <div className="relative flex h-14 shrink-0 items-center justify-center px-4">
-      {menuHidden ? (
-        <div className="absolute left-3 flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Mostrar o menu"
-            onClick={onShowMenu}
-            className="rounded-lg p-2 text-foreground/80 hover:bg-white/[0.08]"
-          >
-            <PanelLeft className="size-[18px]" />
-          </button>
-          <button
-            type="button"
-            aria-label="Novo chat"
-            onClick={() => void navigate('/')}
-            className="rounded-lg p-2 text-foreground/80 hover:bg-white/[0.08]"
-          >
-            <SquarePen className="size-[18px]" />
-          </button>
-        </div>
-      ) : null}
       <div
         role="tablist"
         aria-label="Parte do app"

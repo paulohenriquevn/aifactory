@@ -7,6 +7,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router'
 import type { HealthReport, InboxItem } from '../shared/panel'
 
 import { GuidePanel } from './components/guide/GuidePanel'
+import { Rail } from './components/shell/Rail'
 import { Sidebar } from './components/shell/Sidebar'
 import { inWork, TopBar } from './components/shell/TopBar'
 import { post } from './lib/api'
@@ -47,6 +48,7 @@ export default function RootLayout() {
   const inbox = useResource<{ items: InboxItem[] }>('/api/panel/inbox')
   const health = useResource<HealthReport>('/api/panel/health', { everyMs: 60_000 })
   const [menuHidden, setMenuHidden] = useMenuHidden()
+  const [searchOnOpen, setSearchOnOpen] = useState(false)
 
   useEffect(() => {
     if (me.data && !me.data.owner && !onLogin) void navigate('/login', { replace: true })
@@ -64,20 +66,35 @@ export default function RootLayout() {
       <ChatsProvider enabled={signedIn}>
         <GuideProvider>
           <div className="flex h-screen bg-[#0b0b0c] text-foreground">
-            {signedIn && !menuHidden ? (
-              <Sidebar
-                onToggle={() => setMenuHidden(true)}
-                waiting={inbox.data?.items.length ?? 0}
-                wrong={health.data?.findings.length ?? 0}
-                name={me.data?.name ?? 'dono'}
-                plan="dono da fábrica"
-                onSignOut={signOut}
-              />
+            {signedIn ? (
+              menuHidden ? (
+                <Rail
+                  onExpand={(search = false) => {
+                    setSearchOnOpen(search)
+                    setMenuHidden(false)
+                  }}
+                  waiting={inbox.data?.items.length ?? 0}
+                  wrong={health.data?.findings.length ?? 0}
+                  name={me.data?.name ?? 'dono'}
+                  onSignOut={signOut}
+                />
+              ) : (
+                <Sidebar
+                  onToggle={() => {
+                    setSearchOnOpen(false)
+                    setMenuHidden(true)
+                  }}
+                  startSearching={searchOnOpen}
+                  waiting={inbox.data?.items.length ?? 0}
+                  wrong={health.data?.findings.length ?? 0}
+                  name={me.data?.name ?? 'dono'}
+                  plan="dono da fábrica"
+                  onSignOut={signOut}
+                />
+              )
             ) : null}
             <div className="flex min-w-0 flex-1 flex-col">
-              {signedIn ? (
-                <TopBar menuHidden={menuHidden} onShowMenu={() => setMenuHidden(false)} />
-              ) : null}
+              {signedIn ? <TopBar /> : null}
               <main className="min-h-0 flex-1 overflow-y-auto">
                 {signedIn && inWork(location.pathname) ? (
                   <div className="mx-auto max-w-7xl px-6 pb-10 pt-2">

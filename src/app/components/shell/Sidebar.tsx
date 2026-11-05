@@ -166,6 +166,7 @@ export function Sidebar({
   name,
   plan,
   onSignOut,
+  startSearching = false,
 }: {
   onToggle: () => void
   waiting: number
@@ -173,10 +174,12 @@ export function Sidebar({
   name: string
   plan: string
   onSignOut: () => void
+  /** Open with the search box showing, when the owner came from the folded menu's search. */
+  startSearching?: boolean
 }) {
   const { chats } = useChats()
   const navigate = useNavigate()
-  const [searching, setSearching] = useState(false)
+  const [searching, setSearching] = useState(startSearching)
   const [filter, setFilter] = useState('')
   const { pinned, recent } = groupChats(chats, filter)
 

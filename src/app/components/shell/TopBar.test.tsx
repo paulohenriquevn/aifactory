@@ -2,7 +2,7 @@
 import { ThemeProvider, builtinThemes } from '@theokit/ui'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { GuideProvider } from '../../lib/guide-state'
 
@@ -12,16 +12,15 @@ afterEach(cleanup)
 
 const Where = () => <p aria-label="where">{useLocation().pathname}</p>
 
-function mount(path: string, menuHidden: boolean, onShowMenu = vi.fn()) {
+function mount(path: string) {
   render(
     <ThemeProvider themes={builtinThemes} defaultTheme="violet-forge" defaultMode="dark">
       <MemoryRouter initialEntries={[path]}>
-        <TopBar menuHidden={menuHidden} onShowMenu={onShowMenu} />
+        <TopBar />
         <Where />
       </MemoryRouter>
     </ThemeProvider>,
   )
-  return onShowMenu
 }
 
 describe('inWork', () => {
@@ -34,26 +33,13 @@ describe('inWork', () => {
 
 describe('the bar on top', () => {
   it('selects the tab of where the owner is', () => {
-    mount('/chat/abc', false)
+    mount('/chat/abc')
     expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('tab', { name: 'Work' }).getAttribute('aria-selected')).toBe('false')
   })
 
-  it('has no menu buttons while the menu is showing', () => {
-    mount('/', false)
-    expect(screen.queryByRole('button', { name: 'Mostrar o menu' })).toBeNull()
-  })
-
-  it('brings the menu back, and starts a new chat, when the menu is hidden', () => {
-    const show = mount('/work', true)
-    fireEvent.click(screen.getByRole('button', { name: 'Mostrar o menu' }))
-    expect(show).toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Novo chat' }))
-    expect(screen.getByLabelText('where').textContent).toBe('/')
-  })
-
   it('switches between light and dark', () => {
-    mount('/', false)
+    mount('/')
     fireEvent.click(screen.getByRole('button', { name: 'Tema claro' }))
     expect(screen.getByRole('button', { name: 'Tema escuro' })).toBeDefined()
   })
@@ -70,7 +56,7 @@ describe('the way to the guide', () => {
       <GuideProvider>
         <ThemeProvider themes={builtinThemes} defaultTheme="violet-forge" defaultMode="dark">
           <MemoryRouter initialEntries={[path]}>
-            <TopBar menuHidden={false} onShowMenu={() => {}} />
+            <TopBar />
           </MemoryRouter>
         </ThemeProvider>
       </GuideProvider>,
