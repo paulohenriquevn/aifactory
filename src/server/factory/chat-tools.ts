@@ -24,8 +24,14 @@ export async function factoryStatus(
     .from(task)
     .groupBy(task.stage)
   const repos = await db.select().from(repository).where(eq(repository.enabled, true))
+  const failed = (await listTasks(db)).filter((c) => c.stage === 'failed')
   return {
     tasksByStage: Object.fromEntries(byStage.map((r) => [r.stage, r.n])),
+    failedTasks: {
+      willRetryItself: failed.filter((c) => c.retryable !== null).length,
+      waitingForTheUsageLimit: failed.filter((c) => c.retryable === 'quota').length,
+      needAPerson: failed.filter((c) => c.retryable === null).length,
+    },
     repositories: repos.map((r) => ({
       name: r.fullName,
       integrationBranch: r.baseBranch ?? 'workspace',
