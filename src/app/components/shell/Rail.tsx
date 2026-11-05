@@ -14,7 +14,11 @@ import {
   SquarePen,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
-import { NavLink, useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
+
+import type { GuideId } from '../../../shared/guides'
+
+import { ACTIVE, useOnNewChat, usePlace } from './active'
 
 type Icon = ComponentType<{ className?: string }>
 
@@ -23,28 +27,32 @@ const button =
 
 /** A place of the factory, as an icon: its name is the tooltip and the label a screen reader reads. */
 function Place({
+  id,
   to,
   icon: Icon,
   label,
   dot,
 }: {
+  id: GuideId
   to: string
   icon: Icon
   label: string
   dot?: boolean
 }) {
+  const active = usePlace() === id
   return (
-    <NavLink
+    <Link
       to={to}
       aria-label={label}
+      aria-current={active ? 'page' : undefined}
       title={label}
-      className={({ isActive }) => `${button} ${isActive ? 'bg-white/[0.09]' : ''}`}
+      className={`${button} ${active ? ACTIVE : ''}`}
     >
       <Icon className="size-5" />
       {dot ? (
         <span aria-hidden className="absolute right-1.5 top-1.5 size-2 rounded-full bg-sky-400" />
       ) : null}
-    </NavLink>
+    </Link>
   )
 }
 
@@ -68,6 +76,7 @@ export function Rail({
   onSignOut: () => void
 }) {
   const navigate = useNavigate()
+  const onNewChat = useOnNewChat()
   return (
     <aside
       aria-label="Menu recolhido"
@@ -90,7 +99,8 @@ export function Rail({
           aria-label="Novo chat"
           title="Novo chat"
           onClick={() => void navigate('/', { state: { fresh: Date.now() } })}
-          className={`${button} bg-white/[0.09]`}
+          aria-current={onNewChat ? 'page' : undefined}
+          className={`${button} ${onNewChat ? ACTIVE : ''}`}
         >
           <SquarePen className="size-5" />
         </button>
@@ -127,12 +137,12 @@ export function Rail({
         aria-label="Principal"
         className="mt-3 flex flex-col items-center gap-1 border-t border-white/[0.08] pt-3"
       >
-        <Place to="/work" icon={LayoutDashboard} label="Quadro" />
-        <Place to="/plans" icon={ListChecks} label="Planos" />
-        <Place to="/repositories" icon={FolderGit2} label="Repositórios" />
-        <Place to="/inbox" icon={Inbox} label="Caixa de entrada" dot={waiting > 0} />
-        <Place to="/health" icon={HeartPulse} label="Saúde" dot={wrong > 0} />
-        <Place to="/setup" icon={Settings2} label="Configuração" />
+        <Place id="board" to="/work" icon={LayoutDashboard} label="Quadro" />
+        <Place id="plans" to="/plans" icon={ListChecks} label="Planos" />
+        <Place id="repositories" to="/repositories" icon={FolderGit2} label="Repositórios" />
+        <Place id="inbox" to="/inbox" icon={Inbox} label="Caixa de entrada" dot={waiting > 0} />
+        <Place id="health" to="/health" icon={HeartPulse} label="Saúde" dot={wrong > 0} />
+        <Place id="setup" to="/setup" icon={Settings2} label="Configuração" />
       </nav>
 
       <div className="mt-auto">

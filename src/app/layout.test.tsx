@@ -51,6 +51,8 @@ function renderAt(path: string) {
         <Route element={<RootLayout />}>
           <Route path="/" element={<p>the chat</p>} />
           <Route path="/work" element={<p>the board</p>} />
+          <Route path="/tasks/:id" element={<p>a task</p>} />
+          <Route path="/chat/:chatId" element={<p>a chat</p>} />
           <Route path="/login" element={<p>the login</p>} />
           <Route path="/inbox" element={<p>the inbox</p>} />
         </Route>
@@ -83,6 +85,40 @@ describe('the layout', () => {
       expect(screen.getByRole('link', { name: 'Caixa de entrada 2' })).toBeDefined(),
     )
     expect(screen.getByRole('link', { name: 'Saúde 3' })).toBeDefined()
+  })
+
+  it('marks the item of the menu the owner is in, and "Novo chat" only on the empty conversation', async () => {
+    serve(signedIn)
+    renderAt('/')
+    await waitFor(() => expect(screen.getByText('the chat')).toBeDefined())
+    const current = () =>
+      screen
+        .getAllByRole('link')
+        .filter((l) => l.getAttribute('aria-current') === 'page')
+        .map((l) => l.textContent?.replace(/\d+$/, '').trim())
+    expect(current()).toEqual(['Novo chat'])
+    fireEvent.click(screen.getByRole('link', { name: 'Quadro' }))
+    await waitFor(() => expect(screen.getByText('the board')).toBeDefined())
+    expect(current()).toEqual(['Quadro'])
+    fireEvent.click(screen.getByRole('link', { name: /Caixa de entrada/ }))
+    await waitFor(() => expect(screen.getByText('the inbox')).toBeDefined())
+    expect(current()).toEqual(['Caixa de entrada'])
+  })
+
+  it('keeps a page inside a place under it: a task is still on the board, a conversation is no place', async () => {
+    serve(signedIn)
+    renderAt('/tasks/7')
+    await waitFor(() => expect(screen.getByText('a task')).toBeDefined())
+    expect(screen.getByRole('link', { name: 'Quadro' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('link', { name: 'Novo chat' }).getAttribute('aria-current')).toBeNull()
+    cleanup()
+    renderAt('/chat/b')
+    await waitFor(() => expect(screen.getByText('a chat')).toBeDefined())
+    expect(screen.getByRole('link', { name: 'Quadro' }).getAttribute('aria-current')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Novo chat' }).getAttribute('aria-current')).toBeNull()
+    const row = await screen.findByRole('link', { name: 'Outra' })
+    expect(row.getAttribute('aria-current')).toBe('page')
+    expect(row.parentElement?.className).toContain('font-medium')
   })
 
   it('lists the conversations, the pinned ones apart, and links each to its address', async () => {

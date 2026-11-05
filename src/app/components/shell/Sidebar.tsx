@@ -16,11 +16,14 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
-import { NavLink, useNavigate, useParams } from 'react-router'
+import { Link, NavLink, useNavigate, useParams } from 'react-router'
 
+import type { GuideId } from '../../../shared/guides'
 import type { ChatSummary } from '../../../shared/panel'
 import { chatApi, groupChats } from '../../lib/chat'
 import { useChats } from '../../lib/chats'
+
+import { ACTIVE, useOnNewChat, usePlace } from './active'
 
 type Icon = ComponentType<{ className?: string }>
 
@@ -29,29 +32,33 @@ const row =
 
 /** One place in the factory, in the menu: an icon, a name, and a count when something is waiting. */
 function Place({
+  id,
   to,
   icon: Icon,
   label,
   count,
 }: {
+  id: GuideId
   to: string
   icon: Icon
   label: string
   count?: number
 }) {
+  const active = usePlace() === id
   return (
-    <NavLink
+    <Link
       to={to}
-      className={({ isActive }) => `${row} ${isActive ? 'bg-white/[0.09] text-foreground' : ''}`}
+      aria-current={active ? 'page' : undefined}
+      className={`${row} ${active ? ACTIVE : ''}`}
     >
-      <Icon className="size-[18px] shrink-0 opacity-90" />
+      <Icon className={`size-[18px] shrink-0 ${active ? '' : 'opacity-90'}`} />
       <span className="truncate">{label}</span>
       {count ? (
         <span className="ml-auto rounded-full bg-white/10 px-2 text-xs text-foreground/80">
           {count}
         </span>
       ) : null}
-    </NavLink>
+    </Link>
   )
 }
 
@@ -90,9 +97,7 @@ function ChatRow({ chat }: { chat: ChatSummary }) {
   }
 
   return (
-    <div
-      className={`group relative rounded-lg ${active ? 'bg-white/[0.09]' : 'hover:bg-white/[0.06]'}`}
-    >
+    <div className={`group relative rounded-lg ${active ? ACTIVE : 'hover:bg-white/[0.06]'}`}>
       <NavLink
         to={`/chat/${chat.id}`}
         className="block truncate px-3 py-2 pr-9 text-[14px] text-foreground/90"
@@ -179,6 +184,7 @@ export function Sidebar({
 }) {
   const { chats } = useChats()
   const navigate = useNavigate()
+  const onNewChat = useOnNewChat()
   const [searching, setSearching] = useState(startSearching)
   const [filter, setFilter] = useState('')
   const { pinned, recent } = groupChats(chats, filter)
@@ -211,25 +217,25 @@ export function Sidebar({
       </div>
 
       <nav aria-label="Principal" className="px-2">
-        <NavLink
+        <Link
           to="/"
-          end
+          aria-current={onNewChat ? 'page' : undefined}
           onClick={(e) => {
             e.preventDefault()
             void navigate('/', { state: { fresh: Date.now() } })
           }}
-          className={`${row} bg-white/[0.09]`}
+          className={`${row} ${onNewChat ? ACTIVE : ''}`}
         >
           <SquarePen className="size-[18px] shrink-0" />
           Novo chat
-        </NavLink>
+        </Link>
         <div className="mt-3 space-y-0.5">
-          <Place to="/work" icon={LayoutDashboard} label="Quadro" />
-          <Place to="/plans" icon={ListChecks} label="Planos" />
-          <Place to="/repositories" icon={FolderGit2} label="Repositórios" />
-          <Place to="/inbox" icon={Inbox} label="Caixa de entrada" count={waiting} />
-          <Place to="/health" icon={HeartPulse} label="Saúde" count={wrong} />
-          <Place to="/setup" icon={Settings2} label="Configuração" />
+          <Place id="board" to="/work" icon={LayoutDashboard} label="Quadro" />
+          <Place id="plans" to="/plans" icon={ListChecks} label="Planos" />
+          <Place id="repositories" to="/repositories" icon={FolderGit2} label="Repositórios" />
+          <Place id="inbox" to="/inbox" icon={Inbox} label="Caixa de entrada" count={waiting} />
+          <Place id="health" to="/health" icon={HeartPulse} label="Saúde" count={wrong} />
+          <Place id="setup" to="/setup" icon={Settings2} label="Configuração" />
         </div>
       </nav>
 

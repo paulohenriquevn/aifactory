@@ -76,10 +76,32 @@ describe('the folded menu', () => {
     expect(props.onExpand).not.toHaveBeenCalled()
   })
 
-  it('marks the place the owner is in', () => {
+  it('marks the place the owner is in, and only that one', () => {
     mount('/health')
-    expect(screen.getByRole('link', { name: 'Saúde' }).className).toContain('bg-white/[0.09]')
-    expect(screen.getByRole('link', { name: 'Quadro' }).className).not.toContain('bg-white/[0.09]')
+    expect(screen.getByRole('link', { name: 'Saúde' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('link', { name: 'Saúde' }).className).toContain('font-medium')
+    for (const name of ['Quadro', 'Planos', 'Repositórios', 'Caixa de entrada', 'Configuração']) {
+      expect(screen.getByRole('link', { name }).getAttribute('aria-current'), name).toBeNull()
+    }
+    expect(
+      screen.getByRole('button', { name: 'Novo chat' }).getAttribute('aria-current'),
+    ).toBeNull()
+  })
+
+  it('marks the place for a page inside it, and "Novo chat" only on the empty conversation', () => {
+    mount('/tasks/12')
+    expect(screen.getByRole('link', { name: 'Quadro' }).getAttribute('aria-current')).toBe('page')
+    cleanup()
+    mount('/plans/3')
+    expect(screen.getByRole('link', { name: 'Planos' }).getAttribute('aria-current')).toBe('page')
+    cleanup()
+    mount('/')
+    expect(screen.getByRole('button', { name: 'Novo chat' }).getAttribute('aria-current')).toBe(
+      'page',
+    )
+    for (const name of ['Quadro', 'Planos', 'Saúde']) {
+      expect(screen.getByRole('link', { name }).getAttribute('aria-current')).toBeNull()
+    }
   })
 
   it('shows a dot on what waits and on what is wrong, and on nothing else', () => {
