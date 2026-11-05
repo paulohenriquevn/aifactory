@@ -380,9 +380,17 @@ ele abre. Nenhum comando.
    App alcança pode ser habilitado.
 4. **Ajustar por projeto.** Para cada repositório habilitado: os checks (um por linha, `nome: comando`,
    vazio roda `npm test`), os domínios extras que o sandbox pode alcançar (o GitHub, o agente e o
-   registro do npm já estão abertos; um projeto Python pede `pypi.org` e `files.pythonhosted.org`), o
-   agente que constrói e o que revisa, e até onde vai o release. Isso vale para toda execução daquele
+   registro do npm já estão abertos; um projeto Python pede `pypi.org` e `files.pythonhosted.org`), a
+   branch de onde o trabalho parte, o agente que constrói e o que revisa, e até onde vai o release. Isso vale para toda execução daquele
    repositório. Uma label `harness:` ou `reviewer:` na issue ainda vence o padrão do repositório.
+
+   **A branch de base.** Por padrão a fábrica parte da branch padrão do repositório e abre o PR contra
+   ela. Um projeto que integra em outra branch (um `develop`, com a `main` só para releases) preenche
+   "Branch the work starts from": o agente começa dali, o assistente de setup lê os arquivos dali, e o PR
+   é aberto contra ela. Vazio volta ao padrão. O nome é validado (sem `-` no começo, sem `..`), mas a
+   existência da branch só é checada quando a execução clona: uma branch que não existe falha no estágio
+   `sandbox`, com o erro do git.
+
 5. **Planejar.** Em Plans, o dono escolhe o repositório e escreve o objetivo. Um agente lê o repositório
    num sandbox (sem escrever nada) e devolve até dez issues independentes, cada uma com critérios de
    aceite. O dono edita os títulos e as descrições, tira ou reordena itens e decide: "Create issues"

@@ -66,3 +66,18 @@ describe('patchProblem', () => {
     expect(problem({ reviewer: 'gpt' })).toBe('unknown reviewer "gpt" (known: claude-code, codex)')
   })
 })
+
+describe('patchProblem and the branch', () => {
+  it('accepts a branch name, and null to go back to the default', () => {
+    expect(problem({ baseBranch: 'develop' })).toBeUndefined()
+    expect(problem({ baseBranch: 'release/1.2' })).toBeUndefined()
+    expect(problem({ baseBranch: null })).toBeUndefined()
+  })
+
+  it('refuses a name git would not take, and says which', () => {
+    expect(problem({ baseBranch: '--upload-pack=x' })).toBe(
+      '"--upload-pack=x" is not a branch name',
+    )
+    expect(problem({ baseBranch: 'a b' })).toBe('"a b" is not a branch name')
+  })
+})

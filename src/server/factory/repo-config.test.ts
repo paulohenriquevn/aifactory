@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { DOMAIN, labelsWithRepoChoice, NO_CONFIG } from './repo-config'
+import { DOMAIN, validBranch, labelsWithRepoChoice, NO_CONFIG } from './repo-config'
 
 describe('labelsWithRepoChoice', () => {
   it('adds the repository agents when the issue names none', () => {
@@ -58,5 +58,42 @@ describe('DOMAIN', () => {
     }
     expect(DOMAIN.test(`${'a'.repeat(64)}.com`)).toBe(false)
     expect(DOMAIN.test(`${'a'.repeat(63)}.com`)).toBe(true)
+  })
+})
+
+describe('validBranch', () => {
+  it('takes the names git branches have', () => {
+    for (const ok of [
+      'develop',
+      'main',
+      'release/1.2',
+      'feature/a-b_c.d',
+      'v1',
+      'a',
+      'x'.repeat(100),
+    ]) {
+      expect(validBranch(ok), ok).toBe(true)
+    }
+  })
+
+  it('refuses what git would read as a flag, a climb or a malformed ref', () => {
+    for (const bad of [
+      '',
+      '-delete',
+      '--upload-pack=x',
+      '/main',
+      'a..b',
+      'a//b',
+      'a/',
+      'topic.lock',
+      'has space',
+      'semi;colon',
+      'a$(x)',
+      'back\\slash',
+      'new\nline',
+      'x'.repeat(101),
+    ]) {
+      expect(validBranch(bad), JSON.stringify(bad)).toBe(false)
+    }
   })
 })

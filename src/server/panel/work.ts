@@ -2,7 +2,7 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
 import { plan, planItem, repository } from '../db/schema'
-import { DOMAIN } from '../factory/repo-config'
+import { DOMAIN, validBranch } from '../factory/repo-config'
 import type { AppRepos, GithubApp, ReachableRepository } from '../github/app'
 import type { IssuesApi } from '../github/issues-api'
 import type { PlanItemView, PlanView, RepositoriesView, RepositoryView } from '../../shared/panel'
@@ -35,6 +35,8 @@ export type RepositoryPatch = {
   /** `null` clears the owner's checks, so the default (`npm test`) applies. */
   checks?: { name: string; command: string }[] | null
   egress?: string[]
+  /** `null` clears it, so the default branch applies. */
+  baseBranch?: string | null
   harness?: string | null
   reviewer?: string | null
   releaseMode?: 'manual' | 'trial' | 'auto' | null
@@ -60,6 +62,9 @@ export function patchProblem(patch: RepositoryPatch, agents: string[]): string |
         return `the command of "${check.name}" must be one line of at most 500 characters`
       }
     }
+  }
+  if (patch.baseBranch && !validBranch(patch.baseBranch)) {
+    return `"${patch.baseBranch}" is not a branch name`
   }
   if (patch.egress) {
     if (patch.egress.length > MAX_DOMAINS) return `at most ${MAX_DOMAINS} domains`
@@ -108,6 +113,7 @@ export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView
       enabled: row?.enabled ?? false,
       checks: row?.checks ?? null,
       egress: row?.egress ?? [],
+      baseBranch: row?.baseBranch ?? null,
       harness: row?.harness ?? null,
       reviewer: row?.reviewer ?? null,
       releaseMode: row?.releaseMode ?? null,
@@ -179,6 +185,7 @@ export async function saveRepository(
     ...(patch.egress === undefined
       ? {}
       : { egress: [...new Set(patch.egress.map((d) => d.toLowerCase()))] }),
+    ...(patch.baseBranch === undefined ? {} : { baseBranch: patch.baseBranch }),
     ...(patch.harness === undefined ? {} : { harness: patch.harness }),
     ...(patch.reviewer === undefined ? {} : { reviewer: patch.reviewer }),
     ...(patch.releaseMode === undefined ? {} : { releaseMode: patch.releaseMode }),

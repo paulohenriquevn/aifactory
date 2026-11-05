@@ -59,6 +59,26 @@ describe('reading a repository for the assistant', () => {
     expect(asked).toContain('Acme/App')
   })
 
+  it('reads the branch the owner chose, and the default when none was chosen', async () => {
+    await getPool().query(
+      "update repository set base_branch = 'release/1' where full_name = 'Acme/App'",
+    )
+    const { deps, calls } = serve(() => Response.json({ tree: [] }))
+    await repoTree(deps, 'Acme/App')
+    expect(calls[0].url).toContain('/git/trees/release%2F1?recursive=1')
+
+    const file = serve(() => new Response('x'))
+    await repoFile(file.deps, 'Acme/App', 'package.json')
+    expect(file.calls[0].url).toBe(
+      'https://api.github.com/repos/Acme/App/contents/package.json?ref=release%2F1',
+    )
+
+    await getPool().query("update repository set base_branch = null where full_name = 'Acme/App'")
+    const plain = serve(() => new Response('x'))
+    await repoFile(plain.deps, 'Acme/App', 'package.json')
+    expect(plain.calls[0].url).toBe('https://api.github.com/repos/Acme/App/contents/package.json')
+  })
+
   it('keeps at most three hundred names', async () => {
     const tree = Array.from({ length: 450 }, (_, i) => ({ path: `f${i}.txt`, type: 'blob' }))
     const { deps } = serve(() => Response.json({ tree }))

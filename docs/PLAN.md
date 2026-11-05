@@ -658,6 +658,15 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   `[planId]`), e a lista de 120 repositórios levava 4,5 segundos, então ficou guardada por 15. O GitHub
   Projects ficou de fora: uma App não alcança o Project de uma conta pessoal. Falta do M10: a receita
   `.factory/setup.json` (hoje o dono ajusta no painel) e o primeiro projeto que não seja o playground.
+- Branch de base por repositório (2026-11-05). Alimentar a fábrica com o backlog do theokit (a fábrica antiga, o
+  squad) esbarrou numa limitação medida: a fábrica sempre parte da branch padrão e abre o PR contra ela,
+  e o theokit integra em `develop` (a `main` só recebe release, e o `promotion-gate` roda nos PRs para
+  `develop`). Cada repositório ganhou uma coluna `base_branch` (migration 0011), um campo na página
+  Repositories, validação do nome, e a base vale para o clone, o PR, o leitor do assistente de setup e o
+  plano. Vazio mantém o comportamento antigo. Testado: a execução parte de `develop` e abre contra ela, e
+  sem a configuração parte de `HEAD` como antes. Os outros dois bloqueios do primeiro item (o clone limpo
+  pede `pnpm build:packages`, e o teste do B-634 falha com `__dirname` num clone limpo) estão no registro
+  da sessão e seguem abertos.
 - Assistente de escrita (2026-11-04, a pedido do Paulo: em todos os textarea um agente que faça da
   fábrica um super agente especializado nela, com a premissa de que o dono não precisa ser programador).
   Sob toda caixa de texto do painel há um botão ("Help me say it", "Improve this" ou "Set this up for me")

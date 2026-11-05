@@ -168,15 +168,16 @@ export class Run {
 
   /**
    * Puts the repository on the task's branch. A resumed run already has its checkout, on its branch,
-   * inside the snapshot. The SDK's provisioner clones with `--` and the `ext::` transport off, and
-   * `HEAD` is the default branch, so the factory does not need to know its name.
+   * inside the snapshot. The SDK's provisioner clones with `--` and the `ext::` transport off. The work
+   * starts from the branch the owner chose for the repository, and from `HEAD`, the default branch,
+   * when none was chosen.
    */
   private static async checkout(c: RunContext, backend: SandboxBackend) {
     const { resuming, continuation, branch, row } = c
     if (resuming) return { repoDir: resuming.repoDir, baseSha: resuming.baseSha }
     const { repoDir } = await provisionRepo(backend, {
       repoUrl: `https://github.com/${row.repository}.git`,
-      ref: 'HEAD',
+      ref: c.repo.baseBranch ?? 'HEAD',
       instanceId: INSTANCE,
     })
     const baseSha = (await must(backend, `git -C ${repoDir} rev-parse HEAD`)).stdout.trim()
@@ -625,6 +626,7 @@ export class Run {
     await enterStage(deps.db, taskId, 'pr', { branch, sha })
     const pull = await api.openPullRequest(row.repository, token, {
       head: branch,
+      base: this.c.repo.baseBranch,
       title: this.title,
       body: pullRequestBody({
         issueNumber: row.issueNumber,
@@ -681,6 +683,7 @@ export class Run {
     state.current = 'pr'
     const pull = await api.openPullRequest(row.repository, token, {
       head: branch,
+      base: this.c.repo.baseBranch,
       title: `[needs a person] ${this.title}`,
       draft: true,
       body: pullRequestBody({

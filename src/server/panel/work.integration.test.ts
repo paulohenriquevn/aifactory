@@ -221,6 +221,34 @@ describe('the repositories page', () => {
     })
   })
 
+  it('saves the branch the work starts from, shows it, and goes back to the default with null', async () => {
+    await enable()
+    await saveRepository(deps(), 'paulo/app', { baseBranch: 'develop' })
+    let [row] = await getDb().select().from(repository)
+    expect(row.baseBranch).toBe('develop')
+    const view = await listRepositories(deps())
+    expect(view.repositories.find((r) => r.fullName === 'Paulo/App')?.baseBranch).toBe('develop')
+
+    await saveRepository(deps(), 'paulo/app', { baseBranch: null })
+    ;[row] = await getDb().select().from(repository)
+    expect(row.baseBranch).toBeNull()
+  })
+
+  it('leaves the branch alone when a patch does not mention it', async () => {
+    await enable()
+    await saveRepository(deps(), 'paulo/app', { baseBranch: 'develop' })
+    await saveRepository(deps(), 'paulo/app', { harness: 'codex' })
+    const [row] = await getDb().select().from(repository)
+    expect(row.baseBranch).toBe('develop')
+  })
+
+  it('refuses a branch name git would not take', async () => {
+    await enable()
+    await expect(saveRepository(deps(), 'paulo/app', { baseBranch: '-x' })).rejects.toThrow(
+      '"-x" is not a branch name',
+    )
+  })
+
   it('refuses what the factory could not use', async () => {
     await enable()
     const bad = (patch: Parameters<typeof saveRepository>[2]) =>

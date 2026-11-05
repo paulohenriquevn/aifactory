@@ -123,7 +123,7 @@ export async function runPlan(deps: PlanDeps, planId: number): Promise<void> {
     stop = () => sandbox.stop().catch(() => {})
     const { repoDir } = await provisionRepo(sandbox.backend, {
       repoUrl: `https://github.com/${row.repository}.git`,
-      ref: 'HEAD',
+      ref: config.baseBranch ?? 'HEAD',
       instanceId: 'plan',
     })
     await agent.prepare?.(sandbox.backend)

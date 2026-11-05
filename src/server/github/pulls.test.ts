@@ -86,6 +86,23 @@ describe('openPullRequest', () => {
     expect(calls[0].url).toContain('head=o:factory%2F1')
   })
 
+  it('opens against the branch it was given, without asking GitHub for the default', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls': { status: 200, body: [] },
+      'POST /pulls': {
+        status: 201,
+        body: { number: 7, html_url: 'https://github.com/o/r/pull/7' },
+      },
+    })
+
+    await createGithubApi(fetch).openPullRequest('o/r', 'tok', { ...pull, base: 'develop' })
+
+    expect((calls.at(-1)?.body as { base: string }).base).toBe('develop')
+    expect(calls.map((c) => `${c.method} ${c.url}`).some((c) => c.endsWith('/repos/o/r'))).toBe(
+      false,
+    )
+  })
+
   it('opens a draft when asked to', async () => {
     const { fetch, calls } = fakeFetch({
       'GET /pulls': { status: 200, body: [] },

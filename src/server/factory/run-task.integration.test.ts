@@ -12,6 +12,7 @@ import {
   evidence,
   ingress,
   question,
+  repository,
   review,
   stageEvent,
   task,
@@ -85,6 +86,8 @@ const PR_URL = 'https://github.com/paulo/app/pull/12'
 const githubApi: GithubApi & {
   checkRuns: CheckRun[]
   pulls: string[]
+  /** The base each pull request asked for; undefined is the default branch. */
+  bases: (string | undefined)[]
   drafts: boolean[]
   comments: string[]
   replies: IssueComment[]
@@ -96,6 +99,7 @@ const githubApi: GithubApi & {
 } = {
   checkRuns: [],
   pulls: [],
+  bases: [],
   drafts: [],
   comments: [],
   replies: [],
@@ -109,6 +113,7 @@ const githubApi: GithubApi & {
   },
   async openPullRequest(_repo, _token, pull) {
     this.pulls.push(pull.head)
+    this.bases.push(pull.base)
     this.drafts.push(pull.draft ?? false)
     return { number: 12, url: PR_URL }
   },
@@ -151,6 +156,7 @@ let dirty = true
 beforeEach(() => {
   githubApi.checkRuns = []
   githubApi.pulls = []
+  githubApi.bases = []
   githubApi.drafts = []
   githubApi.comments = []
   githubApi.replies = []
@@ -451,6 +457,31 @@ describe('runTask', () => {
     expect(result).toMatchObject({ status: 'failed', stage: 'build' })
     expect(result.status === 'failed' && result.error).toContain('Invalid API key')
     expect(sandbox.backend.commands.some((c) => c.includes('push origin'))).toBe(false)
+  })
+
+  it('starts from the default branch and opens against it when the owner chose no other', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    await runTask(deps(sandbox), id)
+
+    expect(sandbox.backend.commands.some((c) => /checkout .*HEAD/.test(c))).toBe(true)
+    expect(githubApi.bases).toEqual([undefined])
+  })
+
+  it('starts from the branch the owner chose for the repository and opens against it', async () => {
+    await getDb()
+      .insert(repository)
+      .values({ fullName: 'paulo/app', enabled: true, baseBranch: 'develop' })
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    await runTask(deps(sandbox), id)
+
+    const commands = sandbox.backend.commands
+    expect(commands.some((c) => /checkout .*develop/.test(c))).toBe(true)
+    expect(commands.some((c) => /checkout .*HEAD/.test(c))).toBe(false)
+    expect(githubApi.bases).toEqual(['develop'])
   })
 
   it('stops the sandbox and records the failure when the clone fails', async () => {

@@ -15,6 +15,7 @@ export const PUT = route()
       enabled: z.boolean().optional(),
       checks: z.array(check).max(20).nullable().optional(),
       egress: z.array(z.string().max(253)).max(50).optional(),
+      baseBranch: z.string().max(100).nullable().optional(),
       harness: z.string().max(40).nullable().optional(),
       reviewer: z.string().max(40).nullable().optional(),
       releaseMode: z.enum(['manual', 'trial', 'auto']).nullable().optional(),

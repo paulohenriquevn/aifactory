@@ -222,6 +222,8 @@ export type RepositoryView = {
   enabled: boolean
   checks: { name: string; command: string }[] | null
   egress: string[]
+  /** The branch work starts from and pull requests target; null means the default branch. */
+  baseBranch: string | null
   harness: string | null
   reviewer: string | null
   releaseMode: 'manual' | 'trial' | 'auto' | null

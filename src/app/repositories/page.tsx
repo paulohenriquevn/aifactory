@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, Textarea } from '@usetheo/ui'
+import { Alert, Badge, Button, Card, Input, Textarea } from '@usetheo/ui'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
@@ -22,6 +22,7 @@ function Settings({
 }) {
   const [checks, setChecks] = useState(formatChecks(repo.checks))
   const [domains, setDomains] = useState(formatDomains(repo.egress))
+  const [baseBranch, setBaseBranch] = useState(repo.baseBranch ?? '')
   const [harness, setHarness] = useState(repo.harness ?? '')
   const [reviewer, setReviewer] = useState(repo.reviewer ?? '')
   const [release, setRelease] = useState(repo.releaseMode ?? '')
@@ -36,6 +37,7 @@ function Settings({
       await put(`/api/panel/repositories/${repo.fullName}`, {
         checks: parsed.length > 0 ? parsed : null,
         egress: parseDomains(domains),
+        baseBranch: baseBranch.trim() || null,
         harness: harness || null,
         reviewer: reviewer || null,
         releaseMode: release || null,
@@ -79,6 +81,21 @@ function Settings({
           placeholder="GitHub, the agent and the npm registry are always open. For Python: pypi.org, files.pythonhosted.org"
           className="mt-1 w-full font-mono"
         />
+      </label>
+      <label className="block">
+        <span className="text-foreground">Branch the work starts from</span>
+        <Input
+          aria-label="Branch the work starts from"
+          value={baseBranch}
+          placeholder={
+            repo.defaultBranch ? `${repo.defaultBranch} (the default)` : 'the default branch'
+          }
+          onChange={(e) => setBaseBranch(e.target.value)}
+          className="mt-1 w-full"
+        />
+        <span className="text-muted-foreground">
+          Leave it empty to use the default branch. Pull requests are opened against this one.
+        </span>
       </label>
       <div className="grid grid-cols-3 gap-3">
         <label className="block">

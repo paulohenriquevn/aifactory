@@ -11,12 +11,28 @@ export type RepoConfig = {
   checks?: CheckSpec[]
   /** Domains the sandbox may reach besides GitHub, the agent and the npm registry. */
   egress: string[]
+  /** The branch work starts from and pull requests target; absent means the default branch. */
+  baseBranch?: string
   harness?: string
   reviewer?: string
   releaseMode?: ReleaseMode
 }
 
 export const NO_CONFIG: RepoConfig = { egress: [] }
+
+/**
+ * A branch name the factory will pass to git: no leading dash (it would read as a flag), no `..`, no
+ * empty path part, and not ending in `/` or `.lock`.
+ */
+export function validBranch(name: string): boolean {
+  return (
+    /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(name) &&
+    !name.includes('..') &&
+    !name.includes('//') &&
+    !name.endsWith('/') &&
+    !name.endsWith('.lock')
+  )
+}
 
 /** A hostname the firewall can take: letters, digits, hyphens and dots, with at least one dot. */
 export const DOMAIN = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
@@ -31,6 +47,7 @@ export async function loadRepoConfig(db: Database, fullName: string): Promise<Re
   return {
     checks: row.checks && row.checks.length > 0 ? row.checks : undefined,
     egress: row.egress,
+    baseBranch: row.baseBranch ?? undefined,
     harness: row.harness ?? undefined,
     reviewer: row.reviewer ?? undefined,
     releaseMode: row.releaseMode ?? undefined,

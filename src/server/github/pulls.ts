@@ -49,11 +49,14 @@ export type PullRequest = { number: number; url: string }
 
 export type GithubApi = {
   createCheckRun(repo: string, token: string, check: CheckRun): Promise<void>
-  /** Opens a pull request from `head`, or returns the one already open for it. */
+  /**
+   * Opens a pull request from `head` into `base`, or into the default branch when `base` is not given,
+   * or returns the one already open for it.
+   */
   openPullRequest(
     repo: string,
     token: string,
-    pull: { head: string; title: string; body: string; draft?: boolean },
+    pull: { head: string; base?: string; title: string; body: string; draft?: boolean },
   ): Promise<PullRequest>
   /**
    * Creates a release and the tag it points at. A tag that already has a release is not an error:
@@ -150,9 +153,13 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
       ).json()) as { number: number; html_url: string }[]
       if (open[0]) return { number: open[0].number, url: open[0].html_url }
 
-      const { default_branch: base } = (await (
-        await ensure(await call(repo, token, ''), `reading ${repo}`, [200])
-      ).json()) as { default_branch: string }
+      const base =
+        pull.base ??
+        (
+          (await (await ensure(await call(repo, token, ''), `reading ${repo}`, [200])).json()) as {
+            default_branch: string
+          }
+        ).default_branch
       const created = (await (
         await ensure(
           await call(repo, token, '/pulls', {

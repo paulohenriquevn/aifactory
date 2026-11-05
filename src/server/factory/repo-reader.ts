@@ -59,13 +59,14 @@ export type ReaderDeps = {
   fetch?: FetchLike
 }
 
-async function enabled(db: Database, fullName: string): Promise<string> {
+/** The repository's name as stored, and the branch the owner works on, which the assistant reads too. */
+async function enabled(db: Database, fullName: string): Promise<{ name: string; ref: string }> {
   const [row] = await db
     .select()
     .from(repository)
     .where(sql`lower(${repository.fullName}) = lower(${fullName})`)
   if (!row?.enabled) throw new Error(`${fullName} is not a repository the factory works in`)
-  return row.fullName
+  return { name: row.fullName, ref: row.baseBranch ?? 'HEAD' }
 }
 
 const headers = (token: string) => ({
@@ -76,10 +77,10 @@ const headers = (token: string) => ({
 
 /** The names of the files in a repository, without what a build leaves behind. Names only. */
 export async function repoTree(deps: ReaderDeps, fullName: string): Promise<string[]> {
-  const name = await enabled(deps.db, fullName)
+  const { name, ref } = await enabled(deps.db, fullName)
   const { token } = await deps.github.installationToken(name)
   const response = await (deps.fetch ?? ((url, init) => fetch(url, init)))(
-    `https://api.github.com/repos/${name}/git/trees/HEAD?recursive=1`,
+    `https://api.github.com/repos/${name}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
     { headers: headers(token) },
   )
   if (!response.ok) throw new Error(`GitHub answered ${response.status} listing ${name}`)
@@ -95,10 +96,11 @@ export async function repoFile(deps: ReaderDeps, fullName: string, path: string)
   if (!readable(path)) {
     throw new Error(`${path} is not a file the assistant may read: only build and test files are`)
   }
-  const name = await enabled(deps.db, fullName)
+  const { name, ref } = await enabled(deps.db, fullName)
   const { token } = await deps.github.installationToken(name)
+  const branch = ref === 'HEAD' ? '' : `?ref=${encodeURIComponent(ref)}`
   const response = await (deps.fetch ?? ((url, init) => fetch(url, init)))(
-    `https://api.github.com/repos/${name}/contents/${path.split('/').map(encodeURIComponent).join('/')}`,
+    `https://api.github.com/repos/${name}/contents/${path.split('/').map(encodeURIComponent).join('/')}${branch}`,
     { headers: { ...headers(token), accept: 'application/vnd.github.raw+json' } },
   )
   if (response.status === 404) throw new Error(`${path} does not exist in ${name}`)

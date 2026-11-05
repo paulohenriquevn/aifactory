@@ -53,6 +53,7 @@ const repos = (over: Partial<RepositoriesView> = {}): RepositoriesView => ({
       enabled: true,
       checks: [{ name: 'unit', command: 'pnpm test' }],
       egress: ['pypi.org'],
+      baseBranch: null,
       harness: 'codex',
       reviewer: null,
       releaseMode: 'trial',
@@ -65,6 +66,7 @@ const repos = (over: Partial<RepositoriesView> = {}): RepositoriesView => ({
       enabled: false,
       checks: null,
       egress: [],
+      baseBranch: null,
       harness: null,
       reviewer: null,
       releaseMode: null,
@@ -350,10 +352,30 @@ describe('repositories', () => {
         { name: 'types', command: 'pnpm typecheck' },
       ],
       egress: ['pypi.org', 'crates.io'],
+      baseBranch: null,
       harness: 'codex',
       reviewer: 'claude-code',
       releaseMode: null,
     })
+  })
+
+  it('shows the branch the work starts from, saves a new one trimmed, and clears it when emptied', async () => {
+    serve({
+      'GET /api/panel/repositories': repos(),
+      'PUT /api/panel/repositories/paulo/app': {},
+    })
+    mount()
+    await waitFor(() => expect(screen.getByText('Save settings')).toBeDefined())
+    const box = screen.getByLabelText('Branch the work starts from') as HTMLInputElement
+    expect(box.value).toBe('')
+    expect(box.placeholder).toContain('(the default)')
+
+    fireEvent.change(box, { target: { value: '  develop  ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(
+      (calls.find((c) => c.method === 'PUT')?.body as { baseBranch: unknown }).baseBranch,
+    ).toBe('develop')
   })
 
   it('sends null for checks when the box is emptied, so the default applies again', async () => {
