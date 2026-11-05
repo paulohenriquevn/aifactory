@@ -138,7 +138,10 @@ export class Run {
     return this.sandbox.backend
   }
   private get git() {
-    return `GIT_CONFIG_GLOBAL=${GITCONFIG} git -C ${this.repoDir}`
+    // The repository's own hooks (a pre-commit scanner, say) are for people working by hand: they may need
+    // tools this sandbox does not have, and they are not this factory's gate, which is the checks and the
+    // review. `-c` outranks the repository's own `core.hooksPath`.
+    return `GIT_CONFIG_GLOBAL=${GITCONFIG} git -c core.hooksPath=/dev/null -C ${this.repoDir}`
   }
   private get timeouts(): Timeouts {
     return this.c.deps.timeouts ?? DEFAULT_TIMEOUTS

@@ -518,6 +518,17 @@ describe('runTask', () => {
     expect(githubApi.bases).toEqual(['staging'])
   })
 
+  it("commits and pushes without the repository's own git hooks, which may need tools the sandbox lacks", async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    await runTask(deps(sandbox), id)
+
+    const writes = sandbox.backend.commands.filter((c) => /\bgit\b.* (commit|push) /.test(c))
+    expect(writes.length).toBeGreaterThanOrEqual(2)
+    for (const command of writes) expect(command).toContain('-c core.hooksPath=/dev/null')
+  })
+
   it('creates the integration and pre-release branches a repository does not have yet', async () => {
     githubApi.branches = new FakeBranches()
     const id = await seedTask()
