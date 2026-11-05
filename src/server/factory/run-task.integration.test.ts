@@ -105,7 +105,10 @@ const githubApi: GithubApi & {
   /** GitHub refuses to merge into the pre-release branch. */
   branchMergeFails: boolean
   branches: FakeBranches
+  /** Opening a pull request from this branch fails. */
+  openFailsFor: string | undefined
 } = {
+  openFailsFor: undefined,
   branches: FakeBranches.prepared(),
   branchMerges: [],
   mergeFails: false,
@@ -125,6 +128,8 @@ const githubApi: GithubApi & {
     this.checkRuns.push(check)
   },
   async openPullRequest(_repo, _token, pull) {
+    if (pull.head === this.openFailsFor)
+      throw new Error('GitHub answered 422 opening a pull request')
     this.pulls.push(pull.head)
     this.bases.push(pull.base)
     this.drafts.push(pull.draft ?? false)
@@ -192,6 +197,7 @@ beforeEach(() => {
   githubApi.branchMerges = []
   githubApi.mergeFails = false
   githubApi.branchMergeFails = false
+  githubApi.openFailsFor = undefined
   githubApi.branches = FakeBranches.prepared()
   dirty = true
 })
@@ -1443,7 +1449,25 @@ describe('the factory always makes a pre-release', () => {
     expect(done.detail).toMatchObject({
       mergedSha: 'merge0001',
       developError: expect.stringContaining('protected'),
+      developPullRequest: PR_URL,
     })
+    // A protected branch takes a pull request, which the factory opens and never merges.
+    expect(githubApi.pulls).toEqual(['factory/7', 'workspace'])
+    expect(githubApi.bases).toEqual(['workspace', 'develop'])
+    expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+  })
+
+  it('still integrates when even the pull request to develop cannot be opened', async () => {
+    githubApi.branchMergeFails = true
+    githubApi.openFailsFor = 'workspace'
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
+    expect(done.detail).toMatchObject({ mergedSha: 'merge0001' })
+    expect((done.detail as Record<string, unknown>).developPullRequest).toBeUndefined()
   })
 
   it('never merges work that was handed over to a person', async () => {

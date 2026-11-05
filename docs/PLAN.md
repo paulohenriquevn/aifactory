@@ -658,6 +658,15 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   `[planId]`), e a lista de 120 repositórios levava 4,5 segundos, então ficou guardada por 15. O GitHub
   Projects ficou de fora: uma App não alcança o Project de uma conta pessoal. Falta do M10: a receita
   `.factory/setup.json` (hoje o dono ajusta no painel) e o primeiro projeto que não seja o playground.
+- Primeira integração real em `workspace` (2026-11-05). O B-682 refeito contra `workspace`: PR `#1157`,
+  checks verdes, review aprovado, e **a fábrica mergeou o PR sozinha** (commit `4fb965a`), por US$ 0,25. O
+  theokit mostrou o caso que os testes não tinham: `develop` é protegida ("Changes must be made through a
+  pull request, 7 of 7 required status checks"), então o avanço direto foi recusado (409) e a tag de
+  pré-release ficou sobre o commit de `workspace`. Daí a regra nova: quando `develop` recusa, a fábrica abre,
+  ou reaproveita, um PR `workspace → develop` e só o abre. Antes de rodar, a base `workspace` do theokit foi
+  medida num clone limpo (tipos, lint e os testes de MCP passam), e os arquivos do item são idênticos aos de
+  `develop`. O PR antigo `#1155` (contra `develop`, recusado pelo `promotion-gate`) foi fechado e a
+  pré-release dele removida.
 - workspace, develop e main como padrão da fábrica (2026-11-05, decisão do Paulo: "workspace, todos os
   itens integrados sem governança; develop, a nossa pré-release; main, a release; isso é o padrão"). O PR
   da fábrica agora vai contra `workspace`, e a fábrica mesmo o mergeia (squash, preso ao SHA verificado)

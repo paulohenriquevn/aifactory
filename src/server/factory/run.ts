@@ -86,6 +86,11 @@ type Integrated = {
   /** The pre-release branch advanced, and this is where it is. */
   developSha?: string
   developError?: string
+  /**
+   * Where the work waits to reach the pre-release branch when GitHub would not let the factory advance it
+   * (a protected branch): a pull request from the integration branch, which the factory only opens.
+   */
+  developPullRequest?: string
   /** GitHub refused to merge the pull request, which stays open for a person. */
   error?: string
 }
@@ -95,6 +100,7 @@ const describeIntegration = (integrated: Integrated) => ({
   ...(integrated.mergedSha ? { mergedSha: integrated.mergedSha } : {}),
   ...(integrated.developSha ? { developSha: integrated.developSha } : {}),
   ...(integrated.developError ? { developError: integrated.developError } : {}),
+  ...(integrated.developPullRequest ? { developPullRequest: integrated.developPullRequest } : {}),
 })
 
 const describeDelivery = (handed: Handed) =>
@@ -608,7 +614,31 @@ export class Run {
       return {
         mergedSha: merged.sha,
         developError: error instanceof Error ? error.message : String(error),
+        developPullRequest: await this.proposePreRelease(),
       }
+    }
+  }
+
+  /**
+   * A protected pre-release branch only takes a pull request, so the factory opens one from the
+   * integration branch, or finds the one already open, and leaves the merge to whoever the branch's rules
+   * ask. It is one standing pull request: later integrations add to it. Failing to open it is not an error:
+   * the work is integrated either way.
+   */
+  private async proposePreRelease(): Promise<string | undefined> {
+    const { row, token, api } = this.c
+    const from = integrationBranch(this.c.repo)
+    try {
+      return (
+        await api.openPullRequest(row.repository, token, {
+          head: from,
+          base: PRE_RELEASE_BRANCH,
+          title: `Pre-release: ${from} into ${PRE_RELEASE_BRANCH}`,
+          body: `${PRE_RELEASE_BRANCH} accepts changes only through a pull request, so the factory could not advance it. Merging this pull request publishes what has been integrated into ${from}.`,
+        })
+      ).url
+    } catch {
+      return undefined
     }
   }
 

@@ -232,7 +232,9 @@ uma branch protegida), a task não falha: o PR fica aberto para uma pessoa e o m
 `pre/<issue>-<sha7>` sobre ele, marcada como pré-release no GitHub. Nas notas vão os checks, o veredito do
 review, as tentativas, o custo e o que o agente disse. Se o GitHub recusar o avanço de `develop` (uma branch
 protegida que só aceita PR), a task continua integrada e a tag fica sobre o commit de `workspace`
-(`developError` no estágio `done`). Checks vermelhos não geram entrega, porque não há o que entregar.
+(`developError` no estágio `done`). Nesse caso a fábrica abre, ou reaproveita, um PR de `workspace` para
+`develop` (`developPullRequest`) e **só o abre**: quem o mergeia é quem as regras da branch pedirem. É um
+PR só, e as integrações seguintes entram nele. Checks vermelhos não geram entrega, porque não há o que entregar.
 
 **Release.** É a promoção de `develop` para a branch padrão: abre (ou reaproveita) um PR `develop → main` e
 o mergeia, e publica uma release de verdade com a versão seguinte à da última (`v0.1.0` na primeira, e
