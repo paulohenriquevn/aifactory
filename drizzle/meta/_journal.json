@@ -85,6 +85,13 @@
       "when": 1793882819583,
       "tag": "0011_repository_base_branch",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793886741606,
+      "tag": "0012_task_merged_sha",
+      "breakpoints": true
     }
   ]
 }

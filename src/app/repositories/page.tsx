@@ -87,14 +87,14 @@ function Settings({
         <Input
           aria-label="Branch the work starts from"
           value={baseBranch}
-          placeholder={
-            repo.defaultBranch ? `${repo.defaultBranch} (the default)` : 'the default branch'
-          }
+          placeholder="workspace (the default)"
           onChange={(e) => setBaseBranch(e.target.value)}
           className="mt-1 w-full"
         />
         <span className="text-muted-foreground">
-          Leave it empty to use the default branch. Pull requests are opened against this one.
+          Finished work is merged here by the factory. Leave it empty to use workspace. The branch
+          develop then carries the pre-release, and {repo.defaultBranch || 'the default branch'} the
+          release. Missing branches are created for you.
         </span>
       </label>
       <div className="grid grid-cols-3 gap-3">

@@ -86,10 +86,13 @@ reads that file, not a convention.
   textarea has none. The premise is that the owner never has to be a programmer.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;
   `.policy('public')` is for the webhook and the probes. The panel never goes through the tunnel.
-- **The factory delivers by pre-release and never releases on its own account.** A pre-release (a tag
-  marked as one, no change to the default branch) is always allowed. A release (merge and final tag)
-  goes through `release()` in `factory/deliver.ts`, with its refusals, and only a person or, in
-  `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it.
+- **Three branches, the same in every repository.** `workspace` integrates: the factory merges its own pull
+  request there, pinned to the verified commit, once the checks pass and the review approves. `develop` is
+  the pre-release: it advances to each integration, which gets a pre-release tag. The default branch
+  (`main`) is the release. The factory never merges into it on its own account: a release is a promotion of
+  `develop`, goes through `release()` in `factory/deliver.ts` with its refusals, and only a person or, in
+  `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it. `ensureBranches` creates the two missing
+  branches, never touches one that exists, and refuses the default branch as the integration branch.
 - **The factory opens a revert and never merges it.** `watch-main` may open a pull request that
   reverts a release when its merge commit goes red. Nothing in `factory/watch.ts` calls a merge, and a
   test fails if it does.

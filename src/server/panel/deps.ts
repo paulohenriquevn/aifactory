@@ -41,6 +41,7 @@ export function workDeps(env: NodeJS.ProcessEnv = process.env): WorkDeps {
     db: getDb(),
     github: githubAppFromEnv(env),
     issues: createIssuesApi(),
+    api: createGithubApi(),
     installUrl: slug ? `https://github.com/apps/${slug}/installations/new` : undefined,
     agents: Object.keys(harnessRegistry(env)),
     inTransaction: inTransactionForPlan,

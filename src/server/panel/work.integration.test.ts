@@ -9,6 +9,8 @@ import { plan, planItem, repository } from '../db/schema'
 import type { ReachableRepository } from '../github/app'
 import type { IssuesApi, NewIssue } from '../github/issues-api'
 
+import { FakeBranches } from '../../test/fake-branches'
+
 import { ActionRefused } from './actions'
 import {
   createJob,
@@ -28,6 +30,7 @@ beforeAll(async () => {
   await migrate(getDb(), { migrationsFolder: 'drizzle' })
 })
 beforeEach(async () => {
+  branches = new FakeBranches()
   await getPool().query('truncate table plan_item, plan, repository restart identity cascade')
   world.reachable = [
     { fullName: 'Paulo/App', private: true, defaultBranch: 'main' },
@@ -88,8 +91,11 @@ const issues: IssuesApi = {
   },
 }
 
+let branches = new FakeBranches()
+
 const deps = (): WorkDeps => ({
   db: getDb(),
+  api: branches.api,
   github: {
     async installationToken(repo) {
       world.tokens.push(repo)
@@ -221,6 +227,28 @@ describe('the repositories page', () => {
     })
   })
 
+  it('creates the integration and pre-release branches when a repository is enabled, and touches none that exist', async () => {
+    await enable()
+    expect(branches.created).toEqual(['workspace', 'develop'])
+
+    branches = FakeBranches.prepared()
+    await saveRepository(deps(), 'paulo/app', { harness: 'codex' })
+    expect(branches.created).toEqual([])
+  })
+
+  it('does not prepare a repository that stays disabled', async () => {
+    await saveRepository(deps(), 'paulo/app', { checks: [{ name: 'unit', command: 'pnpm test' }] })
+    expect(branches.created).toEqual([])
+  })
+
+  it('refuses to enable a repository whose branches cannot be prepared, and saves nothing', async () => {
+    await expect(
+      saveRepository(deps(), 'paulo/app', { enabled: true, baseBranch: 'main' }),
+    ).rejects.toThrow(/could not be prepared.*only a release reaches/)
+    expect(await getDb().select().from(repository)).toEqual([])
+    expect(branches.created).toEqual([])
+  })
+
   it('saves the branch the work starts from, shows it, and goes back to the default with null', async () => {
     await enable()
     await saveRepository(deps(), 'paulo/app', { baseBranch: 'develop' })
@@ -306,7 +334,7 @@ describe('a job from the panel', () => {
     })
     expect(world.created[0].issue.body).toContain('Write it.')
     expect(world.created[0].issue.body).toContain('Opened from the aifactory panel')
-    expect(world.tokens).toEqual(['Paulo/App'])
+    expect(world.tokens.at(-1)).toBe('Paulo/App')
   })
 
   it('opens an issue without the label when it should wait, and creates no label for it', async () => {

@@ -4,9 +4,11 @@ import { eq } from 'drizzle-orm'
 import type { Database } from '../db'
 import { plan, planItem } from '../db/schema'
 import type { GithubApp } from '../github/app'
+import type { GithubApi } from '../github/pulls'
 
 import type { CodingHarness } from './harness'
 import { jsonObjects } from './review'
+import { ensureBranches, integrationBranch } from './branches'
 import { loadRepoConfig, labelsWithRepoChoice } from './repo-config'
 import { mergeEgress } from './run-support'
 import { createIsolatedSandbox, type IsolatedSandboxProvider } from './sandbox'
@@ -77,6 +79,8 @@ export function parsePlan(text: string): PlanDraft | undefined {
 export type PlanDeps = {
   db: Database
   github: GithubApp
+  /** Used to make sure the repository has its integration branch before it is read. */
+  api: Pick<GithubApi, 'defaultBranch' | 'branchHead' | 'createBranch'>
   sandbox: IsolatedSandboxProvider
   harness: (labels: string[]) => CodingHarness
   timeoutMs?: number
@@ -106,6 +110,7 @@ export async function runPlan(deps: PlanDeps, planId: number): Promise<void> {
     const config = await loadRepoConfig(db, row.repository)
     const agent = deps.harness(labelsWithRepoChoice([], config))
     const { token } = await deps.github.installationToken(row.repository)
+    await ensureBranches(deps.api, row.repository, token, integrationBranch(config))
     const sandbox = await createIsolatedSandbox(deps.sandbox, {
       timeoutMs: (deps.timeoutMs ?? 15 * 60_000) + 5 * 60_000,
       egress: [
@@ -123,7 +128,7 @@ export async function runPlan(deps: PlanDeps, planId: number): Promise<void> {
     stop = () => sandbox.stop().catch(() => {})
     const { repoDir } = await provisionRepo(sandbox.backend, {
       repoUrl: `https://github.com/${row.repository}.git`,
-      ref: config.baseBranch ?? 'HEAD',
+      ref: integrationBranch(config),
       instanceId: 'plan',
     })
     await agent.prepare?.(sandbox.backend)

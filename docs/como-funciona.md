@@ -39,10 +39,13 @@ issue com a label "factory"
    check run "success" + pull request com "Closes #<n>"
         |
         v
-   pré-release no GitHub (a entrega da fábrica)
+   merge do PR em workspace, preso ao SHA verificado (a fábrica, sem pedir a ninguém)
+        |
+        v
+   develop avança até o commit integrado + pré-release no GitHub
         |
         v  (um humano pelo painel, ou um agente em modo auto)
-   release: merge do PR preso ao SHA + versão final
+   release: PR develop -> main mergeado + versão final
 
 (sem aprovação e sem tentativas: PR em rascunho + comentário na issue = handoff, e também uma pré-release)
 ```
@@ -54,20 +57,20 @@ agente, como "todos os testes passam", nunca vira evidência.
 
 Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `task.stage`.
 
-| Estágio    | O que acontece                                                                                              |
-| ---------- | ----------------------------------------------------------------------------------------------------------- |
-| `intake`   | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                   |
-| `sandbox`  | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.     |
-| `build`    | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                        |
-| `push`     | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).     |
-| `verify`   | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.     |
-| `review`   | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.      |
-| `waiting`  | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.     |
-| `pr`       | Se o portão abriu, cria o check run `aifactory/verify` e o pull request, ou devolve o que já estava aberto. |
-| `done`     | Guarda o SHA, a URL do PR, a pré-release, o número de tentativas e o custo total (construtor e revisor).    |
-| `released` | O PR foi mergeado e a release publicada, por um humano ou pelo veredito de um agente.                       |
-| `handoff`  | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.       |
-| `failed`   | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                 |
+| Estágio    | O que acontece                                                                                                    |
+| ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| `intake`   | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                         |
+| `sandbox`  | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.           |
+| `build`    | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                              |
+| `push`     | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).           |
+| `verify`   | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.           |
+| `review`   | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.            |
+| `waiting`  | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.           |
+| `pr`       | Se o portão abriu, cria o check run `aifactory/verify`, abre o PR contra `workspace`, mergeia e avança `develop`. |
+| `done`     | Guarda o SHA, a URL do PR, a pré-release, o número de tentativas e o custo total (construtor e revisor).          |
+| `released` | `develop` foi promovida para `main` e a release publicada, por um humano ou pelo veredito de um agente.           |
+| `handoff`  | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.             |
+| `failed`   | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                       |
 
 Depois de um retrabalho, a task volta a `build` e repete `push`, `verify` e `review`: o histórico mostra cada tentativa.
 
@@ -207,23 +210,34 @@ e o snapshot é apagado.
 Cada snapshot ocupa cerca de 800 MB, e o plano Hobby da Vercel limita o armazenamento. Muitas
 perguntas abertas ao mesmo tempo esgotam esse limite.
 
-## Entrega: pré-release e release
+## Entrega: workspace, develop e main
 
-A fábrica entrega por pré-release, e a release é a promoção dessa entrega. São dois passos com donos
-diferentes de propósito.
+Todo repositório que a fábrica atende tem três branches, e cada uma tem um dono e um propósito. Isto é o
+padrão da fábrica, para qualquer repositório:
 
-**Pré-release.** É feita pela fábrica, sempre, sem pedir a ninguém: uma tag `pre/<issue>-<sha7>` sobre o
-commit entregue, marcada como pré-release no GitHub. Ela não mexe na branch padrão, então não há o que
-pedir licença. Nas notas vão os checks que rodaram naquele commit, o veredito do review, as tentativas, o
-custo e o que o agente disse. Cada commit entregue tem a sua tag, e pedir duas vezes a mesma devolve a
-primeira. A fábrica a faz para todo commit com checks verdes que chegou a um PR, inclusive um trabalho
-entregue a uma pessoa (as notas dizem que o revisor não aprovou). Checks vermelhos não geram entrega,
-porque não há o que entregar. Se o GitHub recusar a pré-release, a task não falha: o motivo fica no
-estágio `done`.
+| Branch                   | O que é                      | Quem move                                                                |
+| ------------------------ | ---------------------------- | ------------------------------------------------------------------------ |
+| `workspace`              | A integração, sem governança | A fábrica, quando o trabalho passa nos checks e o review aprova          |
+| `develop`                | A pré-release                | A fábrica, a cada integração                                             |
+| `main` (a branch padrão) | A release                    | Só uma promoção de `develop`: um humano, ou um agente se o modo permitir |
 
-**Release.** É a promoção: o PR é mergeado e uma release de verdade (não pré-release) é publicada, com a
-versão seguinte à da última release (`v0.1.0` na primeira, e `patch`, `minor` ou `major` escolhe o que
-sobe). Quem a faz:
+**Integração.** O agente parte de `workspace` e o PR é aberto contra ela. Quando os checks passam e o
+review aprova, **a fábrica mesmo faz o merge** (squash), sem pedir a ninguém: os checks e o review são a
+decisão. O merge é fixado ao SHA que foi verificado e revisado, então um push que caia entre olhar e
+mergear faz o GitHub recusar em vez de juntar o que ninguém viu. Se o GitHub recusar o merge (um conflito,
+uma branch protegida), a task não falha: o PR fica aberto para uma pessoa e o motivo fica no estágio
+`done` (`integrationError`). Trabalho entregue a uma pessoa (`handoff`) nunca é mergeado pela fábrica.
+
+**Pré-release.** Logo depois de integrar, a fábrica avança `develop` até o commit integrado e cria uma tag
+`pre/<issue>-<sha7>` sobre ele, marcada como pré-release no GitHub. Nas notas vão os checks, o veredito do
+review, as tentativas, o custo e o que o agente disse. Se o GitHub recusar o avanço de `develop` (uma branch
+protegida que só aceita PR), a task continua integrada e a tag fica sobre o commit de `workspace`
+(`developError` no estágio `done`). Checks vermelhos não geram entrega, porque não há o que entregar.
+
+**Release.** É a promoção de `develop` para a branch padrão: abre (ou reaproveita) um PR `develop → main` e
+o mergeia, e publica uma release de verdade com a versão seguinte à da última (`v0.1.0` na primeira, e
+`patch`, `minor` ou `major` escolhe o que sobe). Como é a promoção da branch, **tudo o que está em `develop`
+vai junto** com o item pedido. Quem a faz:
 
 - um humano, pelo painel. O clique vale como a aprovação, e o painel pede confirmação;
 - um agente, quando o modo permite. `FACTORY_RELEASE_MODE` é `manual` (padrão: só humanos), `trial` (a
@@ -235,13 +249,19 @@ sobe). Quem a faz:
 `release()` recusa, dizendo por quê, quando:
 
 - a task não está concluída, ou já foi liberada, ou outra liberação está em curso;
-- o commit não tem pré-release ou os checks não estão verdes;
-- o PR não existe, está fechado, já foi mergeado, é um rascunho, ou **andou** para outro commit que não
-  foi entregue.
+- o trabalho não foi integrado (o PR dele ainda espera merge em `workspace`, então não está em `develop`);
+- não há pré-release, ou os checks não estão verdes;
+- o PR `develop → main` não pôde ser aberto (por exemplo, `develop` não tem nada que `main` já não tenha),
+  está fechado ou é um rascunho.
 
-O merge é fixado ao SHA entregue: se um push cair entre olhar e mergear, o GitHub recusa o merge em vez de
-juntar o que ninguém viu, e a task volta a `done`. Se o merge acontece mas a release não pôde ser criada,
-a task fica `released` com o erro registrado, porque o merge não se desfaz.
+O merge é fixado ao commit que a fábrica viu em `develop`. Se o merge acontece mas a release não pôde ser
+criada, a task fica `released` com o erro registrado, porque o merge não se desfaz.
+
+**A fábrica nunca mergeia em `main` por conta própria.** A branch de integração não pode ser a branch
+padrão: a fábrica se recusa (ao habilitar o repositório e ao começar uma execução), porque integrar ali é
+liberar, e liberar é a única coisa que pede uma decisão. As branches que faltam são criadas a partir da
+branch padrão, ao habilitar o repositório e de novo no começo de cada execução e de cada plano. Uma branch
+que já existe nunca é tocada.
 
 Depois do release, o vigia olha a `main` (a próxima seção).
 
@@ -384,12 +404,11 @@ ele abre. Nenhum comando.
    branch de onde o trabalho parte, o agente que constrói e o que revisa, e até onde vai o release. Isso vale para toda execução daquele
    repositório. Uma label `harness:` ou `reviewer:` na issue ainda vence o padrão do repositório.
 
-   **A branch de base.** Por padrão a fábrica parte da branch padrão do repositório e abre o PR contra
-   ela. Um projeto que integra em outra branch (um `develop`, com a `main` só para releases) preenche
-   "Branch the work starts from": o agente começa dali, o assistente de setup lê os arquivos dali, e o PR
-   é aberto contra ela. Vazio volta ao padrão. O nome é validado (sem `-` no começo, sem `..`), mas a
-   existência da branch só é checada quando a execução clona: uma branch que não existe falha no estágio
-   `sandbox`, com o erro do git.
+   **A branch de integração.** Por padrão é `workspace` (veja "Entrega"): o agente parte dali, o assistente
+   de setup lê os arquivos dali, o planejador lê o repositório dali, e o PR é aberto contra ela. Um projeto
+   que integra em outra branch preenche "Branch the work starts from". Vazio volta a `workspace`. O nome é
+   validado (sem `-` no começo, sem `..`), e a branch de integração não pode ser a branch padrão do
+   repositório. Se `workspace` e `develop` não existem, a fábrica as cria ao habilitar.
 
 5. **Planejar.** Em Plans, o dono escolhe o repositório e escreve o objetivo. Um agente lê o repositório
    num sandbox (sem escrever nada) e devolve até dez issues independentes, cada uma com critérios de
@@ -402,8 +421,9 @@ ele abre. Nenhum comando.
 7. **Acompanhar e entregar.** O quadro, a caixa de entrada e o detalhe de cada task seguem como antes:
    o dono aprova, pede mudanças e faz o release.
 
-As issues de um plano devem ser independentes porque cada uma parte da branch padrão: uma que dependa
-de outra ainda não mergeada vai conflitar. O agente que planeja recebe essa regra no prompt, e o dono
+As issues de um plano devem ser independentes porque as que rodam ao mesmo tempo não enxergam umas às
+outras: cada uma parte de `workspace` como ela está quando começa, e uma que dependa de outra ainda não
+integrada vai conflitar. Uma que começa depois da integração da anterior já a enxerga. O agente que planeja recebe essa regra no prompt, e o dono
 revisa antes de criar. Um plano que falha (o agente não terminou ou a cota acabou) diz o motivo na
 própria página, e nada é criado no GitHub até o dono pedir.
 
@@ -665,7 +685,7 @@ como texto.
 - A GitHub App ainda é criada por um comando (`scripts/github-app-setup.mjs`), uma vez. Instalar e escolher
   os repositórios é pelo GitHub, e habilitar e configurar é pelo painel.
 - O planejador só lê o repositório que a App alcança e devolve texto: ele não vê issues antigas, PRs nem o
-  histórico, só o código da branch padrão.
+  histórico, só o código de `workspace` (a branch de integração).
 - O Postgres reinicia sozinho se o processo dele morrer, mas o reinício no boot depende do Docker estar
   habilitado (está) e não foi exercitado com um reboot de verdade.
 - O vigia só olha o commit de merge de cada release, não a `main` inteira.

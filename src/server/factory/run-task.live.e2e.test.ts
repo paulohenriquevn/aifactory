@@ -13,7 +13,7 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, stageEvent, task } from '../db/schema'
 import { createGithubApp } from '../github/app'
-import { deletePreReleases } from '../../test/playground'
+import { deletePreReleases, resetIntegrationBranches } from '../../test/playground'
 
 import { DEFAULT_HARNESS, harnessRegistry, pickHarness } from './harness-registry'
 import { runTask } from './run-task'
@@ -49,7 +49,9 @@ describe.skipIf(!live)('the factory with the real agent', () => {
   }
   const deleteBranch = async () => {
     await api(`/git/refs/heads/factory/${ISSUE}`, { method: 'DELETE' })
-    await deletePreReleases((await github!.installationToken(REPO)).token, REPO, ISSUE)
+    const { token } = await github!.installationToken(REPO)
+    await deletePreReleases(token, REPO, ISSUE)
+    await resetIntegrationBranches(token, REPO)
   }
 
   beforeAll(async () => {
@@ -137,11 +139,9 @@ describe.skipIf(!live)('the factory with the real agent', () => {
     console.log(JSON.stringify({ event: 'live_cost', costUsd: done.costUsd }))
 
     // The factory checks the work itself: the files the agent pushed, run here, outside the sandbox.
-    const ref = (await (await api('/git/ref/heads/factory/1')).json()) as {
-      object: { sha: string }
-    }
-    expect(ref.object.sha).toBe(result.status === 'done' ? result.sha : '')
-    const tree = (await (await api(`/git/trees/${ref.object.sha}?recursive=1`)).json()) as {
+    // The branch is gone once the factory merged it into workspace, but the commit it pushed is not.
+    const pushed = result.status === 'done' ? result.sha : ''
+    const tree = (await (await api(`/git/trees/${pushed}?recursive=1`)).json()) as {
       tree: { path: string; type: string }[]
     }
     const paths = tree.tree.filter((e) => e.type === 'blob').map((e) => e.path)
@@ -150,7 +150,7 @@ describe.skipIf(!live)('the factory with the real agent', () => {
     const dir = mkdtempSync(join(tmpdir(), 'factory-verify-'))
     try {
       for (const path of paths.filter((p) => p.endsWith('.js') || p === 'package.json')) {
-        const file = (await (await api(`/contents/${path}?ref=${ref.object.sha}`)).json()) as {
+        const file = (await (await api(`/contents/${path}?ref=${pushed}`)).json()) as {
           content: string
         }
         const target = join(dir, path)
@@ -256,12 +256,13 @@ describe.skipIf(!live)('the factory with the real agent', () => {
       'done',
     ])
     // Two commits on the branch, the second made by the resumed session, and the test exists.
-    const commits = (await (await api('/commits?sha=factory/1&per_page=5')).json()) as {
+    const pushed = result.status === 'done' ? result.sha : ''
+    const commits = (await (await api(`/commits?sha=${pushed}&per_page=5`)).json()) as {
       sha: string
       commit: { message: string }
     }[]
     expect(commits[0].commit.message).toContain('address feedback')
-    const file = (await (await api('/contents/src/truncate.test.js?ref=factory/1')).json()) as {
+    const file = (await (await api(`/contents/src/truncate.test.js?ref=${pushed}`)).json()) as {
       content: string
     }
     expect(Buffer.from(file.content, 'base64').toString()).toContain('exactly max long')

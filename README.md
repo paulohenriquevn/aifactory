@@ -13,9 +13,10 @@ funciona por chave de API ou por assinatura. O Codex também completa uma issue,
 revisor. Quando o agente precisa
 de uma decisão, ele pergunta na issue e a task espera a resposta de quem tem acesso de escrita.
 O painel local (quadro, caixa de entrada, detalhe, aprovar, pedir mudanças e tentar de novo) mostra
-tudo ao vivo. A fábrica entrega por pré-release (uma tag marcada como pré-release, que ela gera sempre), e a
-release, o merge e a versão final, é feita por um humano pelo painel ou por um agente, conforme
-`FACTORY_RELEASE_MODE`. Depois de um release, um vigia olha os checks do merge na `main` e, se ficarem
+tudo ao vivo. Todo repositório tem três branches: `workspace` integra (a fábrica mergeia o próprio PR ali,
+sem governança, quando os checks passam e o review aprova), `develop` é a pré-release (avança a cada
+integração, com uma tag de pré-release) e `main` é a release, uma promoção de `develop` feita por um
+humano pelo painel ou por um agente, conforme `FACTORY_RELEASE_MODE`. Depois de um release, um vigia olha os checks do merge na `main` e, se ficarem
 vermelhos, abre um PR de revert que a fábrica nunca mergeia. A página Health do painel mostra o custo
 por execução e o que o supervisor achou de errado (`stalled`, `orphaned`), e o CI cobra CRAP, duplicação
 e mutação.

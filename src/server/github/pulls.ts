@@ -86,6 +86,23 @@ export type GithubApi = {
     number: number,
     revert: { title: string; body: string },
   ): Promise<PullRequest>
+  /** The repository's default branch: the one a release lands on. */
+  defaultBranch(repo: string, token: string): Promise<string>
+  /** The commit a branch points at, or undefined when the branch does not exist. */
+  branchHead(repo: string, token: string, branch: string): Promise<string | undefined>
+  /** Creates a branch at a commit. */
+  createBranch(repo: string, token: string, branch: string, sha: string): Promise<void>
+  /**
+   * Merges `head` (a branch or a commit) into the branch `base`, on GitHub. `sha` is where `base` is
+   * afterwards, and `changed` is false when `base` already had everything in `head`. A conflict, or a
+   * branch GitHub does not let the App write to, is an error.
+   */
+  mergeBranch(
+    repo: string,
+    token: string,
+    base: string,
+    head: string,
+  ): Promise<{ sha: string; changed: boolean }>
   /** Deletes a branch, which also closes a pull request that was open from it. A missing branch is fine. */
   deleteBranch(repo: string, token: string, branch: string): Promise<void>
   /** Posts a comment and returns its id. */
@@ -250,6 +267,59 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
             merged: pr.merged_at !== null,
           }
         : undefined
+    },
+
+    async defaultBranch(repo, token) {
+      const body = (await (
+        await ensure(await call(repo, token, ''), `reading ${repo}`, [200])
+      ).json()) as { default_branch: string }
+      return body.default_branch
+    },
+
+    async branchHead(repo, token, branch) {
+      const response = await call(
+        repo,
+        token,
+        `/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`,
+      )
+      if (response.status === 404) return undefined
+      const body = (await (
+        await ensure(response, `reading the branch ${branch} of ${repo}`, [200])
+      ).json()) as { object: { sha: string } }
+      return body.object.sha
+    },
+
+    async createBranch(repo, token, branch, sha) {
+      await ensure(
+        await call(repo, token, '/git/refs', {
+          method: 'POST',
+          body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
+        }),
+        `creating the branch ${branch} of ${repo}`,
+        [201],
+      )
+    },
+
+    async mergeBranch(repo, token, base, head) {
+      const response = await ensure(
+        await call(repo, token, '/merges', {
+          method: 'POST',
+          body: JSON.stringify({
+            base,
+            head,
+            commit_message: `Merge ${head.slice(0, 40)} into ${base}`,
+          }),
+        }),
+        `merging ${head.slice(0, 40)} into ${base} on ${repo}`,
+        [201, 204],
+      )
+      if (response.status === 201) {
+        const body = (await response.json()) as { sha: string }
+        return { sha: body.sha, changed: true }
+      }
+      const sha = await this.branchHead(repo, token, base)
+      if (!sha) throw new Error(`the branch ${base} of ${repo} disappeared while merging into it`)
+      return { sha, changed: false }
     },
 
     async mergePullRequest(repo, token, number, sha, method) {

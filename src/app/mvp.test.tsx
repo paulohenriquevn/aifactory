@@ -368,7 +368,7 @@ describe('repositories', () => {
     await waitFor(() => expect(screen.getByText('Save settings')).toBeDefined())
     const box = screen.getByLabelText('Branch the work starts from') as HTMLInputElement
     expect(box.value).toBe('')
-    expect(box.placeholder).toContain('(the default)')
+    expect(box.placeholder).toBe('workspace (the default)')
 
     fireEvent.change(box, { target: { value: '  develop  ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))

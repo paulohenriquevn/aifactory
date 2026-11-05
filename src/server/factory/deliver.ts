@@ -5,6 +5,7 @@ import { decision, delivery, evidence, review, task, watch } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
 
+import { PRE_RELEASE_BRANCH } from './branches'
 import { nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
 import { enterStage } from './stages'
 
@@ -31,8 +32,8 @@ async function latestChecks(db: Database, taskId: number, sha: string) {
 }
 
 /**
- * Hands the work over as a pre-release: a tag on the pushed commit, marked as a pre-release, with the
- * evidence in its notes. It needs nobody's leave, because it moves nothing on the default branch.
+ * Hands the work over as a pre-release: a tag, marked as a pre-release, with the evidence in its notes.
+ * It needs nobody's leave, because it moves nothing on the default branch.
  * Every commit the factory delivers gets its own, and asking twice for one returns the first.
  */
 export async function createPreRelease(
@@ -43,7 +44,10 @@ export async function createPreRelease(
     token: string
     issueNumber: number
     title: string
+    /** The commit that was verified and reviewed: the evidence is keyed by it. */
     sha: string
+    /** The commit the tag points at, when it is not `sha` (the pre-release branch after an integration). */
+    tagSha?: string
     pullRequestUrl: string | undefined
     attempts: number
     costUsd: number
@@ -77,8 +81,8 @@ export async function createPreRelease(
     agentSummary: input.agentSummary,
   })
   const created = await deps.api.createRelease(input.repository, input.token, {
-    tag: preReleaseTag(input.issueNumber, input.sha),
-    sha: input.sha,
+    tag: preReleaseTag(input.issueNumber, input.tagSha ?? input.sha),
+    sha: input.tagSha ?? input.sha,
     name,
     body,
     prerelease: true,
@@ -93,7 +97,7 @@ export async function createPreRelease(
       kind: 'prerelease',
       tag: created.tag,
       url: created.url,
-      sha: input.sha,
+      sha: input.tagSha ?? input.sha,
       actor: 'factory',
     })
   }
@@ -117,10 +121,14 @@ export type ReleaseResult = {
 }
 
 /**
- * Promotes a pre-released commit: merges its pull request and creates a full release. It refuses
- * unless the commit has a pre-release, green checks, and a pull request that is open, not a draft
- * and still at that commit, and the merge itself is pinned to that commit, so a push that lands
- * between the look and the merge makes GitHub refuse it instead of merging something unseen.
+ * Promotes the pre-release branch to the release branch (the default one): a pull request from `develop`
+ * is opened, or the one already open is taken, and merged, and a full release is created on the merge.
+ * It is a promotion of the branch, so everything on `develop` goes with the item that was asked for.
+ *
+ * It refuses unless the item was integrated (its pull request was merged into the integration branch),
+ * has a pre-release and green checks, and the pull request from `develop` is open and not a draft. The
+ * merge is pinned to the commit seen, so a push that lands between the look and the merge makes GitHub
+ * refuse it instead of merging something unseen.
  *
  * `actor` is who decided: `human` from the panel, `agent:<name>` when an agent's approval was enough.
  */
@@ -135,29 +143,50 @@ export async function release(
   if (row.stage !== 'done' || !row.headSha) {
     throw new ReleaseRefused('only a finished task with a pull request can be released')
   }
-  const sha = row.headSha
-  const [pre] = await deps.db
-    .select()
-    .from(delivery)
-    .where(and(eq(delivery.taskId, taskId), eq(delivery.kind, 'prerelease'), eq(delivery.sha, sha)))
-  if (!pre)
-    throw new ReleaseRefused('there is no pre-release for the commit the pull request is at')
-  const checks = await latestChecks(deps.db, taskId, sha)
+  if (!row.mergedSha) {
+    throw new ReleaseRefused(
+      'this work was not integrated: its pull request is still waiting to be merged into the integration branch, so it is not on the pre-release branch',
+    )
+  }
+  const [pre] = (
+    await deps.db
+      .select()
+      .from(delivery)
+      .where(and(eq(delivery.taskId, taskId), eq(delivery.kind, 'prerelease')))
+      .orderBy(asc(delivery.id))
+  ).slice(-1)
+  if (!pre) throw new ReleaseRefused('there is no pre-release for this work')
+  const checks = await latestChecks(deps.db, taskId, row.headSha)
   if (checks.length === 0 || checks.some((c) => !c.passed)) {
     throw new ReleaseRefused('the checks are not green on this commit')
   }
 
   const { token } = await deps.github.installationToken(row.repository)
-  const pr = await deps.api.findPullRequest(row.repository, token, `factory/${row.issueNumber}`)
-  if (!pr) throw new ReleaseRefused('the pull request was not found')
-  if (pr.merged) throw new ReleaseRefused('the pull request was already merged')
-  if (pr.state !== 'open') throw new ReleaseRefused('the pull request is closed')
-  if (pr.draft) throw new ReleaseRefused('the pull request is a draft: mark it ready first')
-  if (pr.headSha !== sha) {
+  const target = await deps.api.defaultBranch(row.repository, token)
+  let opened: { number: number; url: string }
+  try {
+    opened = await deps.api.openPullRequest(row.repository, token, {
+      head: PRE_RELEASE_BRANCH,
+      base: target,
+      title: `Release: ${row.issueTitle}`,
+      body: [
+        `Promotes \`${PRE_RELEASE_BRANCH}\` to \`${target}\`, with #${row.issueNumber}: ${row.issueTitle}.`,
+        '',
+        `Pre-release: \`${pre.tag}\` (${pre.url}). Everything on \`${PRE_RELEASE_BRANCH}\` is released with it.`,
+        '',
+      ].join('\n'),
+    })
+  } catch (error) {
     throw new ReleaseRefused(
-      `the pull request moved to ${pr.headSha.slice(0, 7)}, which was not delivered (${sha.slice(0, 7)} was)`,
+      `the pull request from ${PRE_RELEASE_BRANCH} to ${target} could not be opened: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+  const pr = await deps.api.findPullRequest(row.repository, token, PRE_RELEASE_BRANCH)
+  if (!pr || pr.number !== opened.number)
+    throw new ReleaseRefused('the release pull request was not found')
+  if (pr.state !== 'open') throw new ReleaseRefused('the release pull request is closed')
+  if (pr.draft) throw new ReleaseRefused('the release pull request is a draft: mark it ready first')
+  const sha = pr.headSha
 
   // Takes the task so two clicks cannot merge twice. It is given back if the merge does not happen.
   const claimed = await deps.db
@@ -169,7 +198,7 @@ export async function release(
 
   let merged: { sha: string }
   try {
-    merged = await deps.api.mergePullRequest(row.repository, token, pr.number, sha, 'squash')
+    merged = await deps.api.mergePullRequest(row.repository, token, pr.number, sha, 'merge')
   } catch (error) {
     await deps.db.update(task).set({ stage: 'done' }).where(eq(task.id, taskId))
     throw new ReleaseRefused(
@@ -190,7 +219,8 @@ export async function release(
         `Release of #${row.issueNumber}: ${row.issueTitle}.`,
         '',
         `Promoted from the pre-release \`${pre.tag}\` (${pre.url}) by ${options.actor}.`,
-        `Pull request: ${row.pullRequestUrl ?? pr.url}`,
+        `Release pull request: ${pr.url}`,
+        `Pull request of the work: ${row.pullRequestUrl ?? pr.url}`,
         '',
       ].join('\n'),
       prerelease: false,

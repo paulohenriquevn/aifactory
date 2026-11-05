@@ -21,7 +21,8 @@
     "src/app/lib/assist.ts",
     "src/server/agents/hooks/only-tools.ts",
     "src/server/factory/repo-reader.ts:1-50",
-    "src/app/lib/repo-form.ts"
+    "src/app/lib/repo-form.ts",
+    "src/server/factory/branches.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

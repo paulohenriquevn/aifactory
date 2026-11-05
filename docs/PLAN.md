@@ -658,6 +658,19 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   `[planId]`), e a lista de 120 repositórios levava 4,5 segundos, então ficou guardada por 15. O GitHub
   Projects ficou de fora: uma App não alcança o Project de uma conta pessoal. Falta do M10: a receita
   `.factory/setup.json` (hoje o dono ajusta no painel) e o primeiro projeto que não seja o playground.
+- workspace, develop e main como padrão da fábrica (2026-11-05, decisão do Paulo: "workspace, todos os
+  itens integrados sem governança; develop, a nossa pré-release; main, a release; isso é o padrão"). O PR
+  da fábrica agora vai contra `workspace`, e a fábrica mesmo o mergeia (squash, preso ao SHA verificado)
+  quando os checks passam e o review aprova. Logo depois `develop` avança até o commit integrado e a tag de
+  pré-release fica sobre ele. A release virou a promoção de `develop` para a branch padrão, por um PR
+  `develop → main`. As branches que faltam são criadas a partir da branch padrão ao habilitar o repositório e
+  no começo de cada execução e de cada plano, e a branch padrão é recusada como branch de integração, porque
+  integrar nela seria liberar sem decisão. Decidido com o Paulo: merge em `workspace` feito pela fábrica,
+  `develop` avançando sozinha a cada integração, e criação das branches que faltam. O que mudou na
+  semântica e está coberto por teste: um merge que o GitHub recusa deixa o PR aberto e a task em `done`; um
+  avanço recusado de `develop` mantém o trabalho integrado e a tag sobre o commit de `workspace`; um trabalho
+  entregue a uma pessoa nunca é mergeado; "pedir mudanças" é recusado para trabalho já integrado. Coluna
+  nova `task.merged_sha` (migration 0012).
 - Primeira execução real sobre o backlog do theokit (2026-11-05). O item B-682 (servir uma lista de tools
   por MCP) virou a issue `usetheokit/theokit#1154`, escrita para se sustentar sozinha, e a fábrica a
   entregou: PR `#1155` contra `develop`, 4 arquivos (+278 −64), os 4 checks verdes (install, tests, types,

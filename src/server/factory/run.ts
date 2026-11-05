@@ -12,6 +12,7 @@ import {
 import type { Issue } from '../github/issues'
 import type { GithubApi } from '../github/pulls'
 
+import { ensureBranches, integrationBranch, PRE_RELEASE_BRANCH } from './branches'
 import { createPreRelease, release } from './deliver'
 import { DEFAULT_CHECKS, gate, runChecks, type CheckResult, type Verdict } from './evidence'
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
@@ -78,6 +79,24 @@ const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 30 * 60_000, agentMs: 25 * 60_00
 /** What the factory handed over, or why it could not. A failure to hand over never fails the task. */
 type Handed = { tag: string; url: string } | { error: string }
 
+/** What the integration did, or why it did not happen. Nothing set means it did not run. */
+type Integrated = {
+  /** The pull request was merged, and this is the commit on the integration branch. */
+  mergedSha?: string
+  /** The pre-release branch advanced, and this is where it is. */
+  developSha?: string
+  developError?: string
+  /** GitHub refused to merge the pull request, which stays open for a person. */
+  error?: string
+}
+
+const describeIntegration = (integrated: Integrated) => ({
+  ...(integrated.error ? { integrationError: integrated.error } : {}),
+  ...(integrated.mergedSha ? { mergedSha: integrated.mergedSha } : {}),
+  ...(integrated.developSha ? { developSha: integrated.developSha } : {}),
+  ...(integrated.developError ? { developError: integrated.developError } : {}),
+})
+
 const describeDelivery = (handed: Handed) =>
   'tag' in handed
     ? { preRelease: handed.tag, preReleaseUrl: handed.url }
@@ -132,6 +151,10 @@ export class Run {
    */
   static async open(c: RunContext): Promise<Run> {
     const { deps, issue, resuming } = c
+    // Before any sandbox exists: a repository without the integration and pre-release branches gets them.
+    if (!resuming) {
+      await ensureBranches(c.api, c.row.repository, c.token, integrationBranch(c.repo))
+    }
     const labels = labelsWithRepoChoice(issue.labels ?? [], c.repo)
     const builder = typeof deps.harness === 'function' ? deps.harness(labels) : deps.harness
     const chosen = typeof deps.reviewer === 'function' ? deps.reviewer(labels) : deps.reviewer
@@ -169,15 +192,14 @@ export class Run {
   /**
    * Puts the repository on the task's branch. A resumed run already has its checkout, on its branch,
    * inside the snapshot. The SDK's provisioner clones with `--` and the `ext::` transport off. The work
-   * starts from the branch the owner chose for the repository, and from `HEAD`, the default branch,
-   * when none was chosen.
+   * starts from the integration branch: `workspace`, or the one the owner chose for the repository.
    */
   private static async checkout(c: RunContext, backend: SandboxBackend) {
     const { resuming, continuation, branch, row } = c
     if (resuming) return { repoDir: resuming.repoDir, baseSha: resuming.baseSha }
     const { repoDir } = await provisionRepo(backend, {
       repoUrl: `https://github.com/${row.repository}.git`,
-      ref: c.repo.baseBranch ?? 'HEAD',
+      ref: integrationBranch(c.repo),
       instanceId: INSTANCE,
     })
     const baseSha = (await must(backend, `git -C ${repoDir} rev-parse HEAD`)).stdout.trim()
@@ -563,7 +585,39 @@ export class Run {
    * approved or handed over, and a failure here never fails the task: the pull request is the work,
    * and the pre-release is how it is handed over.
    */
-  private async deliver(sha: string, pullRequestUrl: string, attempts: number): Promise<Handed> {
+  /**
+   * Integrates the approved work: the pull request is merged into the integration branch, pinned to the
+   * commit that was verified and reviewed, and the pre-release branch then advances to include it. Nobody
+   * is asked, because the checks and the review are the decision. A merge GitHub refuses (a conflict, a
+   * protected branch) leaves the pull request open for a person and does not fail the task.
+   */
+  private async integrate(sha: string, pullNumber: number): Promise<Integrated> {
+    const { deps, taskId, row, token, api, branch } = this.c
+    let merged: { sha: string }
+    try {
+      merged = await api.mergePullRequest(row.repository, token, pullNumber, sha, 'squash')
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+    await deps.db.update(task).set({ mergedSha: merged.sha }).where(eq(task.id, taskId))
+    await api.deleteBranch(row.repository, token, branch).catch(() => {})
+    try {
+      const develop = await api.mergeBranch(row.repository, token, PRE_RELEASE_BRANCH, merged.sha)
+      return { mergedSha: merged.sha, developSha: develop.sha }
+    } catch (error) {
+      return {
+        mergedSha: merged.sha,
+        developError: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  private async deliver(
+    sha: string,
+    pullRequestUrl: string,
+    attempts: number,
+    integrated?: Integrated,
+  ): Promise<Handed> {
     const { deps, taskId, row, issue, token, api } = this.c
     try {
       return await createPreRelease(
@@ -575,6 +629,10 @@ export class Run {
           issueNumber: row.issueNumber,
           title: issue.title,
           sha,
+          tagSha:
+            integrated && 'mergedSha' in integrated
+              ? (integrated.developSha ?? integrated.mergedSha)
+              : undefined,
           pullRequestUrl,
           attempts,
           costUsd: this.cost,
@@ -626,7 +684,7 @@ export class Run {
     await enterStage(deps.db, taskId, 'pr', { branch, sha })
     const pull = await api.openPullRequest(row.repository, token, {
       head: branch,
-      base: this.c.repo.baseBranch,
+      base: integrationBranch(this.c.repo),
       title: this.title,
       body: pullRequestBody({
         issueNumber: row.issueNumber,
@@ -636,7 +694,8 @@ export class Run {
         review: { reviewer: this.reviewer.name, attempt, outcome },
       }),
     })
-    const handed = await this.deliver(sha, pull.url, attempt)
+    const integrated = await this.integrate(sha, pull.number)
+    const handed = await this.deliver(sha, pull.url, attempt, integrated)
     await enterStage(
       deps.db,
       taskId,
@@ -647,6 +706,7 @@ export class Run {
         pullRequestUrl: pull.url,
         costUsd: this.cost,
         attempts: attempt,
+        ...describeIntegration(integrated),
         ...describeDelivery(handed),
       },
       { pullRequestUrl: pull.url },
@@ -683,7 +743,7 @@ export class Run {
     state.current = 'pr'
     const pull = await api.openPullRequest(row.repository, token, {
       head: branch,
-      base: this.c.repo.baseBranch,
+      base: integrationBranch(this.c.repo),
       title: `[needs a person] ${this.title}`,
       draft: true,
       body: pullRequestBody({

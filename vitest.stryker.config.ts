@@ -19,6 +19,7 @@ export default defineConfig({
       'src/server/agents/hooks/only-tools.test.ts',
       'src/server/factory/repo-reader.test.ts',
       'src/server/factory/plan.test.ts',
+      'src/server/factory/branches.test.ts',
       'src/server/factory/repo-config.test.ts',
       'src/server/panel/work.test.ts',
       'src/app/lib/format.test.ts',

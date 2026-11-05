@@ -35,6 +35,7 @@ const base: TaskCard = {
   createdAt: '2026-11-04T10:00:00Z',
   updatedAt: '2026-11-04T10:05:00Z',
   approved: false,
+  integrated: false,
   preRelease: {
     tag: 'pre/7-abcdef1',
     url: 'https://github.com/paulo/app/releases/tag/pre%2F7-abcdef1',
@@ -290,6 +291,24 @@ describe('releasing from the panel', () => {
     })
     expect(confirm).toHaveBeenCalledTimes(2)
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Released.'))
+  })
+
+  it('does not offer to ask for changes on work that is already integrated', () => {
+    const integrated = detail({ task: { ...base, integrated: true } })
+    render(<TaskActions detail={integrated} onDone={noop} />)
+    expect(screen.queryByText('Ask for changes')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Release' })).toBeDefined()
+    cleanup()
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    expect(screen.getByText('Ask for changes')).toBeDefined()
+  })
+
+  it('says a release promotes the pre-release branch, not a pull request', async () => {
+    serve({ 'POST /api/panel/tasks/5/release': { tag: 'v1.0.0' } })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }))
+    expect(confirm.mock.calls[0][0]).toContain('pre-release branch')
   })
 
   it('does not offer a release without a pre-release, or once released', () => {

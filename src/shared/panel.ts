@@ -134,6 +134,8 @@ export type TaskCard = {
   updatedAt: string
   /** Whether a person approved the commit the pull request is at. */
   approved: boolean
+  /** The pull request was merged into the integration branch, so it is on the pre-release branch too. */
+  integrated: boolean
   /** The factory's delivery of the commit the pull request is at, if it made one. */
   preRelease: { tag: string; url: string } | null
   release: { tag: string; url: string } | null

@@ -106,6 +106,11 @@ export async function requestChanges(deps: ActionDeps, taskId: number, note: str
   if (!['done', 'handoff'].includes(row.stage)) {
     throw new ActionRefused('only a task with a pull request can be sent back')
   }
+  if (row.mergedSha) {
+    throw new ActionRefused(
+      'this work is already integrated, so there is no pull request to send back: open a new job for what should change',
+    )
+  }
   const decisionId = await requeue(
     deps,
     taskId,

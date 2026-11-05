@@ -9,7 +9,7 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, stageEvent, task } from '../db/schema'
 import { createGithubApp } from '../github/app'
-import { deletePreReleases } from '../../test/playground'
+import { deletePreReleases, resetIntegrationBranches } from '../../test/playground'
 
 import type { CodingHarness } from './harness'
 import { runTask } from './run-task'
@@ -77,6 +77,7 @@ const scriptedReviewer: CodingHarness = {
 async function deleteBranch(branch: string) {
   const { token } = await github.installationToken(REPO)
   await deletePreReleases(token, REPO, ISSUE)
+  await resetIntegrationBranches(token, REPO)
   await fetch(`https://api.github.com/repos/${REPO}/git/refs/heads/${branch}`, {
     method: 'DELETE',
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },
@@ -149,44 +150,64 @@ describe('the factory against the real services', () => {
       'done',
     ])
 
-    // The branch is on GitHub, at the commit the sandbox reported, holding the agent's change.
+    // The factory merged the pull request into workspace and advanced develop, so the agent's change is on
+    // both, and the branch the agent worked on is gone.
     const { token } = await github.installationToken(REPO)
     const api = (path: string) =>
       fetch(`https://api.github.com/repos/${REPO}${path}`, {
         headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },
       }).then((r) => r.json())
-    const ref = (await api('/git/ref/heads/factory/1')) as { object: { sha: string } }
-    expect(ref.object.sha).toBe(result.status === 'done' ? result.sha : '')
-    const file = (await api('/contents/src/truncate.js?ref=factory/1')) as { name: string }
-    expect(file.name).toBe('truncate.js')
-    const commit = (await api(`/commits/${ref.object.sha}`)) as {
-      commit: { message: string; author: { name: string } }
-    }
-    expect(commit.commit.message).toContain('Add a truncate(text, max) helper (#1)')
-    expect(commit.commit.author.name).toBe('aifactory-paulohenriquevn[bot]')
+    const onWorkspace = (await api('/contents/src/truncate.js?ref=workspace')) as { name: string }
+    const onDevelop = (await api('/contents/src/truncate.js?ref=develop')) as { name: string }
+    expect(onWorkspace.name).toBe('truncate.js')
+    expect(onDevelop.name).toBe('truncate.js')
+    const onMain = (await api('/contents/src/truncate.js?ref=main')) as { message?: string }
+    expect(onMain.message).toBe('Not Found') // only a release reaches the default branch
+    const gone = (await api('/git/ref/heads/factory/1')) as { message?: string }
+    expect(gone.message).toBe('Not Found')
 
-    // The factory ran the tests on that commit, said so as a check run, and opened the pull request.
-    const sha = ref.object.sha
+    // The factory ran the tests on the commit it pushed, said so as a check run, and opened the pull
+    // request against workspace, which it then merged.
+    const sha = result.status === 'done' ? result.sha : ''
     const checks = (await api(`/commits/${sha}/check-runs`)) as {
       check_runs: { name: string; conclusion: string }[]
     }
     expect(checks.check_runs).toContainEqual(
       expect.objectContaining({ name: 'aifactory/verify', conclusion: 'success' }),
     )
-    const pulls = (await api('/pulls?state=open&head=paulohenriquevn:factory/1')) as {
+    const pulls = (await api('/pulls?state=all&head=paulohenriquevn:factory/1')) as {
       html_url: string
       head: { sha: string }
+      base: { ref: string }
+      merged_at: string | null
       body: string
     }[]
-    expect(pulls).toHaveLength(1)
-    expect(pulls[0].head.sha).toBe(sha)
-    expect(pulls[0].html_url).toBe(result.status === 'done' ? result.pullRequestUrl : '')
-    expect(pulls[0].body).toContain('Closes #1')
+    // The playground keeps the pull requests of earlier runs, so this one is found by its commit.
+    const mine = pulls.filter((p) => p.head.sha === sha)
+    expect(mine).toHaveLength(1)
+    expect(mine[0].base.ref).toBe('workspace')
+    expect(mine[0].merged_at).not.toBeNull()
+    expect(mine[0].html_url).toBe(result.status === 'done' ? result.pullRequestUrl : '')
+    expect(mine[0].body).toContain('Closes #1')
+
+    // The pre-release is a tag on the commit develop is at now.
+    const developHead = (await api('/git/ref/heads/develop')) as { object: { sha: string } }
+    const releases = (await api('/releases?per_page=30')) as {
+      tag_name: string
+      prerelease: boolean
+    }[]
+    expect(releases).toContainEqual(
+      expect.objectContaining({
+        tag_name: `pre/1-${developHead.object.sha.slice(0, 7)}`,
+        prerelease: true,
+      }),
+    )
 
     const [row] = await db
       .select()
       .from(task)
       .where(and(eq(task.id, created.id)))
     expect(row.stage).toBe('done')
+    expect(row.mergedSha).not.toBeNull()
   })
 })

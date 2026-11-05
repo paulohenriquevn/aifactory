@@ -10,7 +10,7 @@ import { getDb, getPool } from '../db'
 import { storageFromEnv } from '../db/config'
 import { ingress, question, stageEvent, task } from '../db/schema'
 import { createGithubApp } from '../github/app'
-import { deletePreReleases } from '../../test/playground'
+import { deletePreReleases, resetIntegrationBranches } from '../../test/playground'
 import { createGithubApi } from '../github/pulls'
 
 import { DEFAULT_HARNESS, harnessRegistry, pickHarness } from './harness-registry'
@@ -65,7 +65,9 @@ describe.skipIf(!live)('a task that waits for an answer, with the real agent', (
   })
   afterAll(async () => {
     await app(`/git/refs/heads/factory/${issueNumber}`, { method: 'DELETE' })
-    await deletePreReleases((await github!.installationToken(REPO)).token, REPO, issueNumber)
+    const { token } = await github!.installationToken(REPO)
+    await deletePreReleases(token, REPO, issueNumber)
+    await resetIntegrationBranches(token, REPO)
     await app(`/issues/${issueNumber}`, {
       method: 'PATCH',
       body: JSON.stringify({ state: 'closed' }),
@@ -183,10 +185,11 @@ describe.skipIf(!live)('a task that waits for an answer, with the real agent', (
     expect(stages.slice(0, 3)).toEqual(['sandbox', 'build', 'waiting'])
     expect(stages.at(-1)).toBe('done')
 
-    // The answer shaped the work: the file exists and it throws on an inverted range.
-    const file = (await (
-      await app(`/contents/src/clamp.js?ref=factory/${issueNumber}`)
-    ).json()) as { content: string }
+    // The answer shaped the work: the file is on workspace, where the factory merged it, and it throws on
+    // an inverted range.
+    const file = (await (await app('/contents/src/clamp.js?ref=workspace')).json()) as {
+      content: string
+    }
     expect(Buffer.from(file.content, 'base64').toString()).toMatch(/RangeError/)
   }, 1_700_000)
 })

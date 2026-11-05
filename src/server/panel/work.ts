@@ -2,9 +2,11 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
 import { plan, planItem, repository } from '../db/schema'
+import { ensureBranches, integrationBranch } from '../factory/branches'
 import { DOMAIN, validBranch } from '../factory/repo-config'
 import type { AppRepos, GithubApp, ReachableRepository } from '../github/app'
 import type { IssuesApi } from '../github/issues-api'
+import type { GithubApi } from '../github/pulls'
 import type { PlanItemView, PlanView, RepositoriesView, RepositoryView } from '../../shared/panel'
 
 import { ActionRefused } from './actions'
@@ -16,6 +18,8 @@ export type WorkDeps = {
   db: Database
   github: GithubApp & AppRepos
   issues: IssuesApi
+  /** What it takes to make sure a repository has its integration and pre-release branches. */
+  api: Pick<GithubApi, 'defaultBranch' | 'branchHead' | 'createBranch'>
   /** Where GitHub lets the owner pick the repositories the App reaches. */
   installUrl?: string
   /** The agents the owner may pick for a repository. */
@@ -172,6 +176,18 @@ export async function saveRepository(
       )
     }
     canonical = match.fullName
+  }
+  const enabledAfter = patch.enabled ?? existing?.enabled ?? false
+  if (enabledAfter) {
+    const base = patch.baseBranch === undefined ? existing?.baseBranch : patch.baseBranch
+    try {
+      const { token } = await deps.github.installationToken(canonical!)
+      await ensureBranches(deps.api, canonical!, token, integrationBranch({ baseBranch: base }))
+    } catch (error) {
+      throw new ActionRefused(
+        `${canonical} could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
   }
   const values = {
     ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),

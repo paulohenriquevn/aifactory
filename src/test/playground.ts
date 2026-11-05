@@ -19,3 +19,35 @@ export async function deletePreReleases(token: string, repo: string, issue: numb
     )
   }
 }
+
+/**
+ * Puts the integration and pre-release branches of the playground back where the default branch is. A
+ * run now merges its pull request into `workspace` and advances `develop`, so a second run would find
+ * the first one's change already there and have nothing to commit.
+ */
+export async function resetIntegrationBranches(token: string, repo: string) {
+  const headers = { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' }
+  const base = `https://api.github.com/repos/${repo}`
+  const { default_branch: main } = (await (await fetch(base, { headers })).json()) as {
+    default_branch: string
+  }
+  const head = (
+    (await (await fetch(`${base}/git/ref/heads/${main}`, { headers })).json()) as {
+      object: { sha: string }
+    }
+  ).object.sha
+  for (const branch of ['workspace', 'develop']) {
+    const moved = await fetch(`${base}/git/refs/heads/${branch}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ sha: head, force: true }),
+    })
+    if (moved.status === 404) {
+      await fetch(`${base}/git/refs`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: head }),
+      })
+    }
+  }
+}

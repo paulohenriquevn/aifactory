@@ -81,6 +81,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       createdAt: iso(r.createdAt),
       updatedAt: iso(new Date(seen?.last ?? r.createdAt)),
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
+      integrated: r.mergedSha !== null,
       preRelease: lastDelivery(delivered, r, 'prerelease'),
       release: lastDelivery(delivered, r, 'release'),
       mainRed: watched.some((w) => w.taskId === r.id && w.status === 'red' && !w.acknowledgedAt),
@@ -90,10 +91,16 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
 
 type DeliveryRow = typeof delivery.$inferSelect
 
-/** The latest delivery of a kind for a task. A pre-release counts for the commit the task is at. */
+/**
+ * The latest delivery of a kind for a task. Before an integration a pre-release counts for the commit
+ * the task is at; after it, the tag is on the pre-release branch, at a commit of its own.
+ */
 function lastDelivery(rows: DeliveryRow[], t: TaskRow, kind: 'prerelease' | 'release') {
   const mine = rows.filter(
-    (d) => d.taskId === t.id && d.kind === kind && (kind === 'release' || d.sha === t.headSha),
+    (d) =>
+      d.taskId === t.id &&
+      d.kind === kind &&
+      (kind === 'release' || t.mergedSha !== null || d.sha === t.headSha),
   )
   const last = mine.at(-1)
   return last ? { tag: last.tag, url: last.url } : null

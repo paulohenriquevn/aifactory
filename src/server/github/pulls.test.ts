@@ -16,7 +16,10 @@ function fakeFetch(answers: Record<string, { status: number; body?: unknown }>) 
       auth: (init.headers as Record<string, string>).authorization,
     })
     const answer = answers[`${method} ${path.split('?')[0]}`] ?? { status: 404 }
-    return new Response(JSON.stringify(answer.body ?? {}), { status: answer.status })
+    // A 204 has no body, and the Response constructor refuses one.
+    return new Response(answer.status === 204 ? null : JSON.stringify(answer.body ?? {}), {
+      status: answer.status,
+    })
   }
   return { fetch, calls }
 }
@@ -352,5 +355,74 @@ describe('revertPullRequest', () => {
     await expect(createGithubApi(fetch).revertPullRequest('o/r', 't', 12, revert)).rejects.toThrow(
       /would not open a revert of o\/r#12: Pull request is not merged/,
     )
+  })
+})
+
+describe('the branches of a repository', () => {
+  it('reads the default branch', async () => {
+    const { fetch } = fakeFetch({ 'GET /': { status: 200, body: { default_branch: 'trunk' } } })
+    expect(await createGithubApi(fetch).defaultBranch('o/r', 'tok')).toBe('trunk')
+  })
+
+  it('reads where a branch is, and says a missing one is missing instead of failing', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /git/ref/heads/release/1': { status: 200, body: { object: { sha: 'abc' } } },
+      'GET /git/ref/heads/gone': { status: 404, body: { message: 'Not Found' } },
+    })
+    const api = createGithubApi(fetch)
+    expect(await api.branchHead('o/r', 'tok', 'release/1')).toBe('abc')
+    expect(await api.branchHead('o/r', 'tok', 'gone')).toBeUndefined()
+    expect(calls[0].url).toContain('/git/ref/heads/release/1')
+  })
+
+  it('fails on any other answer when reading a branch', async () => {
+    const { fetch } = fakeFetch({ 'GET /git/ref/heads/x': { status: 500, body: 'boom' } })
+    await expect(createGithubApi(fetch).branchHead('o/r', 'tok', 'x')).rejects.toThrow(/500/)
+  })
+
+  it('creates a branch at a commit', async () => {
+    const { fetch, calls } = fakeFetch({ 'POST /git/refs': { status: 201, body: {} } })
+    await createGithubApi(fetch).createBranch('o/r', 'tok', 'workspace', 'deadbeef')
+    expect(calls[0].body).toEqual({ ref: 'refs/heads/workspace', sha: 'deadbeef' })
+  })
+
+  it('refuses to say a branch was created when GitHub says otherwise', async () => {
+    const { fetch } = fakeFetch({
+      'POST /git/refs': { status: 422, body: 'Reference already exists' },
+    })
+    await expect(createGithubApi(fetch).createBranch('o/r', 'tok', 'w', 'sha')).rejects.toThrow(
+      /422/,
+    )
+  })
+
+  it('merges one branch or commit into another and returns where the base is', async () => {
+    const { fetch, calls } = fakeFetch({
+      'POST /merges': { status: 201, body: { sha: 'merged1' } },
+    })
+    const result = await createGithubApi(fetch).mergeBranch('o/r', 'tok', 'develop', 'a'.repeat(40))
+    expect(result).toEqual({ sha: 'merged1', changed: true })
+    expect(calls[0].body).toMatchObject({ base: 'develop', head: 'a'.repeat(40) })
+  })
+
+  it('reads where the base is when it already had everything', async () => {
+    const { fetch } = fakeFetch({
+      'POST /merges': { status: 204, body: '' },
+      'GET /git/ref/heads/develop': { status: 200, body: { object: { sha: 'head1' } } },
+    })
+    expect(await createGithubApi(fetch).mergeBranch('o/r', 'tok', 'develop', 'x')).toEqual({
+      sha: 'head1',
+      changed: false,
+    })
+  })
+
+  it('fails on a conflict and on a branch the App cannot write to', async () => {
+    const conflict = fakeFetch({ 'POST /merges': { status: 409, body: 'Merge conflict' } })
+    await expect(
+      createGithubApi(conflict.fetch).mergeBranch('o/r', 'tok', 'd', 'x'),
+    ).rejects.toThrow(/409/)
+    const protectedBranch = fakeFetch({ 'POST /merges': { status: 403, body: 'protected' } })
+    await expect(
+      createGithubApi(protectedBranch.fetch).mergeBranch('o/r', 'tok', 'd', 'x'),
+    ).rejects.toThrow(/403/)
   })
 })

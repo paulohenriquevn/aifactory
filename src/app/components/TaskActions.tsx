@@ -71,7 +71,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
               onClick={() => {
                 if (
                   window.confirm(
-                    'Merge the pull request into the default branch and publish a release? This cannot be undone from here.',
+                    'Promote the pre-release branch to the default branch and publish a release? Everything on the pre-release branch goes with it. This cannot be undone from here.',
                   )
                 ) {
                   void run('release', { bump }, 'Released.')
@@ -101,7 +101,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
           </Button>
         ) : null}
       </div>
-      {hasPullRequest ? (
+      {hasPullRequest && !task.integrated ? (
         <div className="mt-4">
           <label className="block text-sm">
             <span className="text-foreground">Ask for changes</span>

@@ -1,3 +1,5 @@
+import { createGithubApi } from '../github/pulls'
+
 import { factoryDeps } from './deps'
 import type { PlanDeps } from './plan'
 
@@ -8,6 +10,7 @@ export function planDeps(env: NodeJS.ProcessEnv = process.env): PlanDeps {
   return {
     db: deps.db,
     github: deps.github,
+    api: createGithubApi(),
     sandbox: deps.sandbox,
     harness: typeof choice === 'function' ? choice : () => choice,
   }

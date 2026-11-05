@@ -7,6 +7,8 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { plan, planItem } from '../db/schema'
 
+import { FakeBranches } from '../../test/fake-branches'
+
 import { FakeSandbox } from './fake-sandbox'
 import type { CodingHarness, HarnessResult } from './harness'
 import { runPlan, type PlanDeps } from './plan'
@@ -54,9 +56,11 @@ function agent(result: HarnessResult | (() => never)) {
 const deps = (
   harness: CodingHarness & { labels: string[][] },
   sandbox = new FakeSandbox(),
+  branches = FakeBranches.prepared(),
 ): PlanDeps => ({
   db: getDb(),
   github,
+  api: branches.api,
   sandbox,
   harness: (labels) => {
     harness.labels.push(labels)
@@ -101,6 +105,46 @@ describe('runPlan', () => {
     expect(harness.prompts[0]).toContain('paulo/app')
     expect(asked).toContain('paulo/app')
     expect(sandbox.stopped).toBe(1)
+  })
+
+  it('reads the integration branch, creating it and the pre-release branch when the repository has none', async () => {
+    const id = await newPlan()
+    const sandbox = new FakeSandbox()
+    const branches = new FakeBranches()
+
+    await runPlan(deps(agent(answer(planned)), sandbox, branches), id)
+
+    expect(branches.created).toEqual(['workspace', 'develop'])
+    expect(sandbox.backend.commands.some((c) => /checkout .*workspace/.test(c))).toBe(true)
+    const [row] = await getDb().select().from(plan).where(eq(plan.id, id))
+    expect(row.status).toBe('ready')
+  })
+
+  it('reads the branch the owner chose for the repository', async () => {
+    await getPool().query(
+      `insert into repository (full_name, enabled, base_branch) values ('Paulo/App', true, 'staging')`,
+    )
+    const id = await newPlan()
+    const sandbox = new FakeSandbox()
+
+    await runPlan(deps(agent(answer(planned)), sandbox), id)
+
+    expect(sandbox.backend.commands.some((c) => /checkout .*staging/.test(c))).toBe(true)
+  })
+
+  it('fails the plan, without a sandbox, when the repository cannot be prepared', async () => {
+    await getPool().query(
+      `insert into repository (full_name, enabled, base_branch) values ('Paulo/App', true, 'main')`,
+    )
+    const id = await newPlan()
+    const sandbox = new FakeSandbox()
+
+    await runPlan(deps(agent(answer(planned)), sandbox), id)
+
+    const [row] = await getDb().select().from(plan).where(eq(plan.id, id))
+    expect(row.status).toBe('failed')
+    expect(row.error).toContain('only a release reaches')
+    expect(sandbox.specs).toEqual([])
   })
 
   it('opens the sandbox to GitHub with the token, the agent, npm and what the owner added', async () => {

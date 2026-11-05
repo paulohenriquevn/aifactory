@@ -59,6 +59,8 @@ export const task = pgTable(
     /** The commit the factory pushed. Evidence counts only when it names this SHA. */
     headSha: text('head_sha'),
     pullRequestUrl: text('pull_request_url'),
+    /** The commit on the integration branch once the factory merged the pull request. */
+    mergedSha: text('merged_sha'),
     /** What the run has spent so far, agents included. It grows while the run is going. */
     costUsd: real('cost_usd').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

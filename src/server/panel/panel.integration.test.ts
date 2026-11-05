@@ -102,6 +102,7 @@ describe('listTasks', () => {
       costUsd: 0.21,
       pullRequestUrl: 'https://github.com/paulo/app/pull/1',
       approved: false,
+      integrated: false,
     })
     expect(cards.find((c) => c.id !== id)?.column).toBe('attention')
     expect(new Set(cards.map((c) => c.column))).toEqual(new Set(['review', 'attention']))
@@ -289,6 +290,15 @@ describe('actions', () => {
     expect(queued).toHaveLength(1)
   })
 
+  it('refuses to send back work that is already integrated, and says to open a new job', async () => {
+    const id = await seed('done', { headSha: 'abc', mergedSha: 'merged1' })
+    await expect(requestChanges(deps(), id, 'Rename it.')).rejects.toThrow(
+      /already integrated.*open a new job/,
+    )
+    expect(queued).toEqual([])
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+  })
+
   it('refuses an empty note, and a task that is not at a pull request', async () => {
     const id = await seed('done', { headSha: 'abc' })
     await expect(requestChanges(deps(), id, '   ')).rejects.toThrow(/say what should change/)
@@ -379,6 +389,12 @@ describe('deliveries on the panel', () => {
     await getDb().update(task).set({ headSha: 'sha-3' }).where(eq(task.id, id))
     ;[card] = await listTasks(getDb())
     expect(card.preRelease).toBeNull() // the commit it is at now was not delivered
+
+    // Once the work is integrated its pre-release is a tag on the pre-release branch, at a commit of its
+    // own, so it counts whatever commit the task is at.
+    await getDb().update(task).set({ mergedSha: 'merged-1' }).where(eq(task.id, id))
+    ;[card] = await listTasks(getDb())
+    expect(card).toMatchObject({ integrated: true, preRelease: { tag: 'pre/1-sha-2' } })
 
     await getDb().update(task).set({ headSha: 'sha-2', stage: 'released' }).where(eq(task.id, id))
     await add('release', 'v0.1.0', 'merge1', 'human')
