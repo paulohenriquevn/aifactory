@@ -14,7 +14,7 @@ const MAX_OUTPUT = 20 * 1024 * 1024
 
 /** Everything this provider creates carries this label, so what a crash left behind can be found. */
 const LABEL = 'aifactory.sandbox'
-const IMAGE = 'aifactory-sandbox:1'
+const IMAGE = 'aifactory-sandbox:3'
 const PROXY_IMAGE = 'mitmproxy/mitmproxy:11'
 const CA_VOLUME = 'aifactory-mitm-ca'
 const WORKDIR = '/work'
@@ -99,7 +99,8 @@ class DockerBackend extends SandboxBackend {
   }
 
   async execute(command: string, opts: { timeoutMs?: number } = {}) {
-    const timeoutMs = opts.timeoutMs ?? this.config.timeoutMs ?? 30_000
+    // A clone or an install through the proxy takes longer than the 30 seconds a microVM's own network needs.
+    const timeoutMs = opts.timeoutMs ?? this.config.timeoutMs ?? 10 * 60_000
     const seconds = Math.max(1, Math.ceil(timeoutMs / 1000))
     const result = await this.docker([
       'exec',
@@ -293,7 +294,16 @@ export function proxyArgs(name: string, rulesDir: string): string[] {
 }
 
 /** The sandbox: on a network with no way out, no capabilities, and limits on memory, CPU and processes. */
-export function sandboxArgs(name: string, net: string, env: NodeJS.ProcessEnv): string[] {
+/** The name of the volume that keeps a repository's downloads between its sandboxes. */
+export const cacheVolume = (key: string) =>
+  `aifactory-cache-${key.toLowerCase().replace(/[^a-z0-9_.-]+/g, '-')}`
+
+export function sandboxArgs(
+  name: string,
+  net: string,
+  env: NodeJS.ProcessEnv,
+  cacheKey?: string,
+): string[] {
   const memory = env.FACTORY_SANDBOX_MEMORY ?? '5g'
   return [
     'run',
@@ -316,6 +326,7 @@ export function sandboxArgs(name: string, net: string, env: NodeJS.ProcessEnv): 
     'ALL',
     '--security-opt',
     'no-new-privileges',
+    ...(cacheKey ? ['-v', `${cacheVolume(cacheKey)}:/cache`] : []),
     ...Object.entries(sandboxEnv('http://proxy:8080')).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
     IMAGE,
   ]
@@ -402,7 +413,7 @@ export function dockerSandboxProvider(deps: DockerProviderDeps = {}): IsolatedSa
         await must(docker, ['network', 'create', '--internal', '--label', `${LABEL}=1`, net])
         await must(docker, proxyArgs(proxy, rulesDir))
         await must(docker, ['network', 'connect', '--alias', 'proxy', net, proxy])
-        await must(docker, sandboxArgs(name, net, env))
+        await must(docker, sandboxArgs(name, net, env, spec.cacheKey))
         const backend = new DockerBackend(docker, name)
         await trustProxy(docker, backend, name, cert)
         await waitForProxy(docker, name, sleep)

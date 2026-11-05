@@ -176,6 +176,7 @@ export class Run {
 
     const spec: SandboxSpec = {
       timeoutMs: (deps.timeouts ?? DEFAULT_TIMEOUTS).sandboxMs,
+      cacheKey: c.row.repository,
       egress: [
         {
           domain: 'github.com',

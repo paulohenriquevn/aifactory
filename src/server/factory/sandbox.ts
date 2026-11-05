@@ -11,6 +11,11 @@ export type SandboxSpec = {
   /** The only destinations the sandbox can reach. */
   egress: EgressRule[]
   timeoutMs: number
+  /**
+   * What to keep between the sandboxes of one repository (the repository's name): a package manager's
+   * downloads, so the next sandbox does not fetch them again. A provider that cannot keeps nothing.
+   */
+  cacheKey?: string
 }
 
 /**

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
+  cacheVolume,
   dockerSandboxProvider,
   egressRules,
   orphanNetworks,
@@ -156,7 +157,7 @@ describe('creating a docker sandbox', () => {
 
   it('cleans up what it made when a step fails, and says which', async () => {
     const { docker, all } = fakeDocker((args) =>
-      args[0] === 'run' && args.includes('aifactory-sandbox:1')
+      args[0] === 'run' && args.includes('HTTPS_PROXY=http://proxy:8080')
         ? { stdout: '', stderr: 'no space left on device', code: 125 }
         : undefined,
     )
@@ -243,6 +244,13 @@ describe('creating a docker sandbox', () => {
     expect(proxy).toContain('--memory 512m')
     expect(proxy).toContain('/rules-dir:/rules:ro')
     expect(sandboxArgs('n', 'net', {})).not.toContain('-v')
+  })
+
+  it('keeps a repository downloads in a volume of its own, shared only by its sandboxes', () => {
+    const args = sandboxArgs('n', 'net', {}, 'usetheokit/Theokit-SDK')
+    expect(args.join(' ')).toContain('-v aifactory-cache-usetheokit-theokit-sdk:/cache')
+    expect(cacheVolume('a/b')).not.toBe(cacheVolume('a/c'))
+    expect(cacheVolume('weird name!!')).toBe('aifactory-cache-weird-name-')
   })
 })
 

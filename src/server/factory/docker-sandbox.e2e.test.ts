@@ -103,6 +103,38 @@ describe('the docker sandbox', () => {
     expect(inside.stdout).not.toContain('the-real-secret')
   })
 
+  it('keeps the downloads of a repository for its next sandbox, and gives them to no other repository', async () => {
+    const key = `e2e-${Date.now()}`
+    const make = (cacheKey: string) =>
+      createIsolatedSandbox(dockerSandboxProvider(), {
+        timeoutMs: 5 * 60_000,
+        cacheKey,
+        egress: [{ domain: 'registry.npmjs.org' }],
+      })
+    const first = await make(key)
+    expect(
+      (
+        await first.backend.execute(
+          `mkdir -p p && cd p && echo '{"packageManager":"pnpm@10.34.1"}' > package.json && pnpm store path && echo kept > /cache/marker`,
+          { timeoutMs: 90_000 },
+        )
+      ).stdout,
+    ).toContain('/cache/pnpm')
+    await first.stop()
+
+    const second = await make(key)
+    expect((await second.backend.execute('cat /cache/marker', { timeoutMs: 30_000 })).stdout).toBe(
+      'kept\n',
+    )
+    await second.stop()
+
+    const other = await make(`${key}-other`)
+    expect(
+      (await other.backend.execute('cat /cache/marker 2>&1; true', { timeoutMs: 30_000 })).stdout,
+    ).toContain('No such file')
+    await other.stop()
+  }, 180_000)
+
   it('is gone, with its proxy and its network, once it is stopped', async () => {
     const temporary = await createIsolatedSandbox(dockerSandboxProvider(), {
       timeoutMs: 5 * 60_000,
