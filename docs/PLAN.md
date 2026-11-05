@@ -658,6 +658,21 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   `[planId]`), e a lista de 120 repositórios levava 4,5 segundos, então ficou guardada por 15. O GitHub
   Projects ficou de fora: uma App não alcança o Project de uma conta pessoal. Falta do M10: a receita
   `.factory/setup.json` (hoje o dono ajusta no painel) e o primeiro projeto que não seja o playground.
+- Primeira execução real sobre o backlog do theokit (2026-11-05). O item B-682 (servir uma lista de tools
+  por MCP) virou a issue `usetheokit/theokit#1154`, escrita para se sustentar sozinha, e a fábrica a
+  entregou: PR `#1155` contra `develop`, 4 arquivos (+278 −64), os 4 checks verdes (install, tests, types,
+  lint), review independente aprovado na primeira rodada, pré-release `pre/1154-d8da4fa`, US$ 0,72 no
+  total. A primeira tentativa falhou, e a causa não foi o código: o `build:packages` estourou a memória do
+  sandbox da Vercel (`ERR_WORKER_OUT_OF_MEMORY`, Node 24), o `.d.ts` não foi gerado e o check de tipos
+  caiu; a fábrica pediu retrabalho e o agente, com razão, não mudou nada. Com `NODE_OPTIONS=--max-old-space-size=3072`
+  no check de instalação e um `retry`, passou. Três achados: (1) um check de instalação que falha por
+  ambiente vira "retrabalho" que o agente não consegue fazer, e a tarefa falha sem dizer que o problema
+  é o ambiente; (2) o tamanho do sandbox (`resources.vcpus`, 2 GB por vCPU) não é configurável pela
+  fábrica; (3) o repositório tem o `promotion-gate` (workflow compartilhado da organização): `develop` só
+  aceita PR vindo da branch `workspace`, então o PR da fábrica (`factory/1154`) falha esse check mesmo
+  estando correto. A App não tem a permissão `workflows` e não deve ter: workflows ficam para uma pessoa.
+  Decisão pendente do Paulo: a base do theokit deve ser `workspace` (onde o squad integra, e onde o
+  código do TheoClaw existe) em vez de `develop`. O PR #1155 não foi mergeado nem retargetado.
 - Branch de base por repositório (2026-11-05). Alimentar a fábrica com o backlog do theokit (a fábrica antiga, o
   squad) esbarrou numa limitação medida: a fábrica sempre parte da branch padrão e abre o PR contra ela,
   e o theokit integra em `develop` (a `main` só recebe release, e o `promotion-gate` roda nos PRs para
