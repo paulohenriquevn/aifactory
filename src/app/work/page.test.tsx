@@ -104,6 +104,35 @@ describe('board', () => {
     expect(inColumn('Needs a person').queryByText('Out of quota')).toBeNull()
   })
 
+  it('keeps all seven columns in one row, and gives the width to the ones that have cards', async () => {
+    serve({
+      tasks: [
+        card({ id: 1, title: 'Building one' }),
+        card({ id: 4, title: 'Broken one', stage: 'failed', column: 'attention' }),
+      ],
+    })
+    render(
+      <MemoryRouter>
+        <Page />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('Building one')).toBeDefined())
+    const row = screen.getByRole('region', { name: 'Released' }).parentElement as HTMLElement
+    expect(row.querySelectorAll(':scope > section')).toHaveLength(7)
+    const widths = row.style.gridTemplateColumns.split(/ (?![^(]*\))/)
+    expect(widths).toEqual([
+      '90px',
+      'minmax(150px, 1fr)',
+      '90px',
+      '90px',
+      '90px',
+      '90px',
+      'minmax(150px, 1fr)',
+    ])
+    expect(screen.getByRole('region', { name: 'Needs a person' })).toBeDefined()
+    expect(screen.getByRole('region', { name: 'Released' })).toBeDefined()
+  })
+
   it('says how to start when there are no tasks, and shows an error as one', async () => {
     serve({ tasks: [] })
     render(

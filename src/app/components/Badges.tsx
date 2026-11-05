@@ -24,15 +24,21 @@ export function StageBadge({
   stage,
   integrated,
   retryable,
+  wrap = false,
 }: {
   stage: Stage
   integrated?: boolean
   retryable?: Retryable
+  /** Let the label go to a second line, for a card too narrow to hold it. */
+  wrap?: boolean
 }) {
   // A failure that will pass by itself is a wait, not an alarm.
   const variant = stage === 'failed' && retryable ? 'warning' : TONE[stage]
   return (
-    <Badge variant={variant} className="whitespace-nowrap">
+    <Badge
+      variant={variant}
+      className={wrap ? 'max-w-full whitespace-normal leading-tight' : 'whitespace-nowrap'}
+    >
       {stageLabel(stage, { integrated, retryable })}
     </Badge>
   )

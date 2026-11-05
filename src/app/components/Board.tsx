@@ -18,7 +18,12 @@ export function Card({ task }: { task: TaskCard }) {
         </div>
         <div className="mt-1 text-sm font-medium text-foreground">{task.title}</div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <StageBadge stage={task.stage} integrated={task.integrated} retryable={task.retryable} />
+          <StageBadge
+            stage={task.stage}
+            integrated={task.integrated}
+            retryable={task.retryable}
+            wrap
+          />
           <span className="text-xs text-muted-foreground">
             {money(task.costUsd)} · {ago(task.updatedAt)}
           </span>
@@ -36,16 +41,29 @@ export function Card({ task }: { task: TaskCard }) {
   )
 }
 
+/** A column with nothing in it is a slim label, so the width goes to the columns that have cards. */
+const EMPTY = '90px'
+const FULL = 'minmax(150px, 1fr)'
+
+/**
+ * Every column of the board, side by side and always in one row: a column that wrapped to a second line
+ * would sit below the longest one, out of sight. When the screen is too narrow even for that, the board
+ * scrolls sideways.
+ */
 export function Board({ tasks }: { tasks: TaskCard[] }) {
+  const counts = COLUMNS.map((column) => tasks.filter((t) => t.column === column.id).length)
   return (
-    <div className="grid auto-cols-[minmax(230px,1fr)] gap-4 overflow-x-auto pb-2 lg:grid-flow-col">
-      {COLUMNS.map((column) => {
+    <div
+      className="grid gap-3 overflow-x-auto pb-2"
+      style={{ gridTemplateColumns: counts.map((n) => (n === 0 ? EMPTY : FULL)).join(' ') }}
+    >
+      {COLUMNS.map((column, index) => {
         const inColumn = tasks.filter((t) => t.column === column.id)
         return (
           <section key={column.id} aria-label={column.title} className="min-w-0">
             <h2 className="mb-2 text-sm font-semibold text-foreground">
               {column.title}{' '}
-              <span className="font-normal text-muted-foreground">{inColumn.length}</span>
+              <span className="font-normal text-muted-foreground">{counts[index]}</span>
             </h2>
             <div className="space-y-2">
               {inColumn.map((task) => (

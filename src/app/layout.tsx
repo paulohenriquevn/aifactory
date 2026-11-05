@@ -97,7 +97,7 @@ export default function RootLayout() {
               {signedIn ? <TopBar /> : null}
               <main className="min-h-0 flex-1 overflow-y-auto">
                 {signedIn && inWork(location.pathname) ? (
-                  <div className="mx-auto max-w-7xl px-6 pb-10 pt-2">
+                  <div className="mx-auto max-w-[1800px] px-6 pb-10 pt-2">
                     <Outlet />
                   </div>
                 ) : signedIn || onLogin ? (
