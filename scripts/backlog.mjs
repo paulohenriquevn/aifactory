@@ -218,7 +218,7 @@ export function classify(detail) {
 export const TERMINAL = ['done', 'failed', 'handoff', 'released']
 
 const INFRA =
-  /Internal Server Error|remote rejected|GitHub answered 5\d\d|\b50[234]\b|\b429\b|ECONN|ETIMEDOUT|ENOTFOUND|socket|fetch failed|sandbox (could not|failed)|out of memory|OOM|heap|was restarted|usage limit exceeded|Status code 402/i
+  /Internal Server Error|remote rejected|GitHub answered 5\d\d|\b50[234]\b|\b429\b|ECONN|ETIMEDOUT|ENOTFOUND|socket|fetch failed|sandbox (could not|failed)|out of memory|OOM|heap|was restarted|usage limit exceeded|Status code 402|timed out after \d+ ms/i
 
 /** Whether a failure came from the environment (GitHub, the network, the sandbox) and not from the work. */
 export const isInfraFailure = (reason) => INFRA.test(String(reason ?? ''))

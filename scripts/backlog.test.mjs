@@ -305,6 +305,7 @@ describe('isInfraFailure', () => {
       'Worker terminated: JS heap out of memory',
       'the factory was restarted while this run was working',
       'Status code 402 is not ok: Hobby plan usage limit exceeded',
+      '[work] clone failed: timed out after 30000 ms',
     ]) {
       expect(isInfraFailure(reason), reason).toBe(true)
     }
