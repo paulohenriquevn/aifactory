@@ -6,6 +6,7 @@ import { inTransaction } from '../factory/resume-queue'
 import { SNAPSHOT_TTL_MS } from '../factory/vercel-sandbox'
 import { pollAnswers } from '../factory/waiting'
 import { createGithubApi } from '../github/pulls'
+import { isWorkerOnly } from '../factory/worker-only'
 
 /**
  * Looks for answers to the questions agents asked, every minute. A comment webhook would be quicker,
@@ -15,6 +16,8 @@ import { createGithubApi } from '../github/pulls'
 export default defineCron('poll-answers', {
   schedule: '* * * * *',
   async handler() {
+    // A worker-only process (see worker-only.ts) leaves the crons to the main one.
+    if (isWorkerOnly()) return
     let deps
     try {
       deps = factoryDeps()

@@ -4,6 +4,7 @@ import { getDb } from '../db'
 import { factoryDeps } from '../factory/deps'
 import { pollWatches } from '../factory/watch'
 import { createGithubApi } from '../github/pulls'
+import { isWorkerOnly } from '../factory/worker-only'
 
 /**
  * Watches the default branch after a release, every minute. A red merge commit gets a pull request
@@ -12,6 +13,8 @@ import { createGithubApi } from '../github/pulls'
 export default defineCron('watch-main', {
   schedule: '* * * * *',
   async handler() {
+    // A worker-only process (see worker-only.ts) leaves the crons to the main one.
+    if (isWorkerOnly()) return
     let deps
     try {
       deps = factoryDeps()

@@ -3,6 +3,7 @@ import { defineCron } from 'theokit/server/cron'
 import { getDb } from '../db'
 import { catchUp } from '../factory/catch-up'
 import { githubAppFromEnv } from '../factory/deps'
+import { isWorkerOnly } from '../factory/worker-only'
 
 /**
  * Asks GitHub for the webhooks that did not get through while the factory was down. It runs every
@@ -11,6 +12,8 @@ import { githubAppFromEnv } from '../factory/deps'
 export default defineCron('catch-up', {
   schedule: '*/5 * * * *',
   async handler() {
+    // A worker-only process (see worker-only.ts) leaves the crons to the main one.
+    if (isWorkerOnly()) return
     let app
     try {
       app = githubAppFromEnv()

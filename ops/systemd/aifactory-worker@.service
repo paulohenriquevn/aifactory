@@ -1,0 +1,15 @@
+[Unit]
+Description=aifactory worker %i (runs jobs only, so more tasks run at once)
+After=aifactory.service
+
+[Service]
+WorkingDirectory=@ROOT@
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+Environment=FACTORY_WORKER_ONLY=1
+Environment=PORT=300%i
+ExecStart=@ROOT@/scripts/run-server.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

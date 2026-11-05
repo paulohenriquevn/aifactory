@@ -3,6 +3,7 @@ import { defineCron } from 'theokit/server/cron'
 import { getDb } from '../db'
 import { factoryDeps } from '../factory/deps'
 import { supervise } from '../factory/supervise'
+import { isWorkerOnly } from '../factory/worker-only'
 
 /**
  * Checks the factory itself every five minutes: work that stopped moving, and things waiting for
@@ -11,6 +12,8 @@ import { supervise } from '../factory/supervise'
 export default defineCron('supervise', {
   schedule: '*/5 * * * *',
   async handler() {
+    // A worker-only process (see worker-only.ts) leaves the crons to the main one.
+    if (isWorkerOnly()) return
     let deps
     try {
       deps = factoryDeps()
