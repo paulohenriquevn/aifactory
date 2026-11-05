@@ -290,6 +290,8 @@ export const repository = pgTable('repository', {
   egress: jsonb('egress').$type<string[]>().notNull().default([]),
   /** The branch the work starts from and the pull request targets, when it is not the default branch. */
   baseBranch: text('base_branch'),
+  /** The branch a release promotes into, when it is not the repository's default branch. */
+  releaseBranch: text('release_branch'),
   /** The agent that builds and the one that reviews, when not the factory's default. */
   harness: text('harness'),
   reviewer: text('reviewer'),

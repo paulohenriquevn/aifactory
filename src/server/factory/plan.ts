@@ -110,7 +110,10 @@ export async function runPlan(deps: PlanDeps, planId: number): Promise<void> {
     const config = await loadRepoConfig(db, row.repository)
     const agent = deps.harness(labelsWithRepoChoice([], config))
     const { token } = await deps.github.installationToken(row.repository)
-    await ensureBranches(deps.api, row.repository, token, integrationBranch(config))
+    await ensureBranches(deps.api, row.repository, token, {
+      integration: integrationBranch(config),
+      release: config.releaseBranch,
+    })
     const sandbox = await createIsolatedSandbox(deps.sandbox, {
       timeoutMs: (deps.timeoutMs ?? 15 * 60_000) + 5 * 60_000,
       egress: [

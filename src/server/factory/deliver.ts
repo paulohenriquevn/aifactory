@@ -1,11 +1,11 @@
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { decision, delivery, evidence, review, task, watch } from '../db/schema'
+import { decision, delivery, evidence, repository, review, task, watch } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
 
-import { PRE_RELEASE_BRANCH } from './branches'
+import { PRE_RELEASE_BRANCH, releaseBranchOf } from './branches'
 import { nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
 import { enterStage } from './stages'
 
@@ -162,7 +162,11 @@ export async function release(
   }
 
   const { token } = await deps.github.installationToken(row.repository)
-  const target = await deps.api.defaultBranch(row.repository, token)
+  const [saved] = await deps.db
+    .select({ releaseBranch: repository.releaseBranch })
+    .from(repository)
+    .where(sql`lower(${repository.fullName}) = lower(${row.repository})`)
+  const target = await releaseBranchOf(deps.api, row.repository, token, saved ?? {})
   let opened: { number: number; url: string }
   try {
     opened = await deps.api.openPullRequest(row.repository, token, {

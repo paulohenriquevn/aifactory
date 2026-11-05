@@ -259,6 +259,12 @@ vai junto** com o item pedido. Quem a faz:
 O merge é fixado ao commit que a fábrica viu em `develop`. Se o merge acontece mas a release não pôde ser
 criada, a task fica `released` com o erro registrado, porque o merge não se desfaz.
 
+**A branch de release.** É a branch padrão do repositório, a não ser que o dono nomeie outra em "Branch a
+release lands on". Um repositório cuja branch padrão é `develop` (os gateways do theokit) precisa nomear a
+sua (`main`), porque `develop` é onde vai a pré-release e a fábrica se recusa a tratar a mesma branch como
+pré-release e como release. As branches que faltam são criadas a partir da branch de release, e a promoção
+abre o PR `develop → <branch de release>`.
+
 **A fábrica nunca mergeia em `main` por conta própria.** A branch de integração não pode ser a branch
 padrão: a fábrica se recusa (ao habilitar o repositório e ao começar uma execução), porque integrar ali é
 liberar, e liberar é a única coisa que pede uma decisão. As branches que faltam são criadas a partir da
@@ -572,6 +578,26 @@ fazer o login de novo. Cada execução simultânea do Codex por assinatura preci
 (`~/.codex-factory-2` e assim por diante); o Claude por token não tem essa restrição. A renovação
 foi coberta por teste de unidade e exercitada contra a OpenAI em 2026-11-04. A OpenAI recomenda não
 usar login de assinatura em repositório público.
+
+## Alimentando a fábrica com um backlog
+
+`scripts/backlog-feed.mjs` lê o `BACKLOG.md` do squad que veio antes da fábrica e transforma cada item
+aberto (`approved`, `planned`, `triaged`, `raw`) numa issue que se sustenta sozinha: o que fazer, por que
+agora, onde, as condições de "pronto" com as emendas e o que o sandbox não consegue provar. O item vai para
+o repositório certo (`theokit`, `theokit-sdk` ou `theokit-gateways`), respeitando `blocked_by`: um item só
+começa quando o que o bloqueia foi integrado, e se o bloqueio falhou o item não começa e o relatório diz
+atrás de quem ele ficou. Itens que mudam um workflow do GitHub são pulados, porque a App não tem essa
+permissão.
+
+```bash
+node scripts/backlog-feed.mjs --dry-run --limit 12     # a ordem, sem criar nada
+node scripts/backlog-feed.mjs --concurrency 1          # alimenta e espera cada item terminar
+```
+
+O estado fica em `.backlog-feed/state.json` e a execução pode ser parada e retomada. O resultado de cada
+item é `integrated` (mergeado em `workspace`), `pr-open` (o PR ficou para uma pessoa), `handoff`, `failed` ou
+`not-started`. Uma parada por cota do agente faz todo o resto esperar até a hora de reset e repete a tarefa.
+Uma falha de ambiente (sandbox, rede) é repetida uma vez.
 
 ## Escolhendo o agente
 

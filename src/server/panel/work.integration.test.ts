@@ -270,6 +270,28 @@ describe('the repositories page', () => {
     expect(row.baseBranch).toBe('develop')
   })
 
+  it('saves the release branch, prepares the repository from it, and clears it with null', async () => {
+    branches.defaultName = 'develop'
+    branches.heads.set('develop', 'd'.repeat(40))
+    branches.heads.set('main', 'e'.repeat(40))
+    await expect(saveRepository(deps(), 'paulo/app', { enabled: true })).rejects.toThrow(
+      /default branch is develop.*name another release branch/,
+    )
+
+    await saveRepository(deps(), 'paulo/app', { enabled: true, releaseBranch: 'main' })
+    const [row] = await getDb().select().from(repository)
+    expect(row.releaseBranch).toBe('main')
+    expect(branches.heads.get('workspace')).toBe('e'.repeat(40))
+    const view = await listRepositories(deps())
+    expect(view.repositories.find((r) => r.fullName === 'Paulo/App')?.releaseBranch).toBe('main')
+
+    // Going back to the default branch is refused while the default branch is develop, and nothing changes.
+    await expect(saveRepository(deps(), 'paulo/app', { releaseBranch: null })).rejects.toThrow(
+      /name another release branch/,
+    )
+    expect((await getDb().select().from(repository))[0].releaseBranch).toBe('main')
+  })
+
   it('refuses a branch name git would not take', async () => {
     await enable()
     await expect(saveRepository(deps(), 'paulo/app', { baseBranch: '-x' })).rejects.toThrow(

@@ -41,6 +41,8 @@ export type RepositoryPatch = {
   egress?: string[]
   /** `null` clears it, so the default branch applies. */
   baseBranch?: string | null
+  /** `null` clears it, so the default branch is the release branch. */
+  releaseBranch?: string | null
   harness?: string | null
   reviewer?: string | null
   releaseMode?: 'manual' | 'trial' | 'auto' | null
@@ -67,8 +69,8 @@ export function patchProblem(patch: RepositoryPatch, agents: string[]): string |
       }
     }
   }
-  if (patch.baseBranch && !validBranch(patch.baseBranch)) {
-    return `"${patch.baseBranch}" is not a branch name`
+  for (const name of [patch.baseBranch, patch.releaseBranch]) {
+    if (name && !validBranch(name)) return `"${name}" is not a branch name`
   }
   if (patch.egress) {
     if (patch.egress.length > MAX_DOMAINS) return `at most ${MAX_DOMAINS} domains`
@@ -118,6 +120,7 @@ export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView
       checks: row?.checks ?? null,
       egress: row?.egress ?? [],
       baseBranch: row?.baseBranch ?? null,
+      releaseBranch: row?.releaseBranch ?? null,
       harness: row?.harness ?? null,
       reviewer: row?.reviewer ?? null,
       releaseMode: row?.releaseMode ?? null,
@@ -182,7 +185,12 @@ export async function saveRepository(
     const base = patch.baseBranch === undefined ? existing?.baseBranch : patch.baseBranch
     try {
       const { token } = await deps.github.installationToken(canonical!)
-      await ensureBranches(deps.api, canonical!, token, integrationBranch({ baseBranch: base }))
+      const release =
+        patch.releaseBranch === undefined ? existing?.releaseBranch : patch.releaseBranch
+      await ensureBranches(deps.api, canonical!, token, {
+        integration: integrationBranch({ baseBranch: base }),
+        release,
+      })
     } catch (error) {
       throw new ActionRefused(
         `${canonical} could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
@@ -202,6 +210,7 @@ export async function saveRepository(
       ? {}
       : { egress: [...new Set(patch.egress.map((d) => d.toLowerCase()))] }),
     ...(patch.baseBranch === undefined ? {} : { baseBranch: patch.baseBranch }),
+    ...(patch.releaseBranch === undefined ? {} : { releaseBranch: patch.releaseBranch }),
     ...(patch.harness === undefined ? {} : { harness: patch.harness }),
     ...(patch.reviewer === undefined ? {} : { reviewer: patch.reviewer }),
     ...(patch.releaseMode === undefined ? {} : { releaseMode: patch.releaseMode }),

@@ -1,0 +1,267 @@
+#!/usr/bin/env node
+// Feeds the backlog of the squad that preceded the factory to the factory, one issue per open item, and
+// records what became of each. It can be stopped and started again: the state file says where it was.
+//
+//   node scripts/backlog-feed.mjs --backlog ~/theokit/BACKLOG.md [--concurrency 1] [--limit 10]
+//        [--only B-1,B-2] [--dry-run] [--state .backlog-feed/state.json]
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, resolve } from 'node:path'
+
+import {
+  classify,
+  issueFor,
+  needsAPerson,
+  nextRunnable,
+  OPEN,
+  parseBacklog,
+  repoFor,
+  resetAt,
+  stuckBehind,
+} from './backlog.mjs'
+
+const arg = (name, fallback) => {
+  const i = process.argv.indexOf(`--${name}`)
+  return i === -1 ? fallback : (process.argv[i + 1] ?? true)
+}
+const flag = (name) => process.argv.includes(`--${name}`)
+
+const BACKLOG = resolve(
+  arg('backlog', `${homedir()}/Projetos/theo/theokit-framework/theokit/BACKLOG.md`),
+)
+const STATE = resolve(arg('state', '.backlog-feed/state.json'))
+const CONCURRENCY = Number(arg('concurrency', 1))
+const LIMIT = Number(arg('limit', Infinity))
+const ONLY = arg('only') ? String(arg('only')).split(',') : undefined
+const BASE = process.env.FACTORY_URL ?? 'http://localhost:3000'
+const POLL_MS = Number(process.env.FEED_POLL_MS ?? 20_000)
+const TASK_TIMEOUT_MS = 100 * 60_000
+const INFRA = /sandbox|ECONN|ETIMEDOUT|socket|fetch failed|429|502|503|504|out of memory|OOM|heap/i
+
+const log = (...parts) => console.log(new Date().toISOString().slice(11, 19), ...parts)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+function panelToken() {
+  if (process.env.FACTORY_PANEL_TOKEN) return process.env.FACTORY_PANEL_TOKEN
+  const env = readFileSync(resolve('.env.local'), 'utf8')
+  return /^FACTORY_PANEL_TOKEN=(.*)$/m.exec(env)?.[1]
+}
+
+let cookie
+async function login() {
+  const r = await fetch(`${BASE}/api/panel/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-theo-action': '1' },
+    body: JSON.stringify({ token: panelToken() }),
+  })
+  if (!r.ok) throw new Error(`the panel refused the login (${r.status})`)
+  cookie = r.headers.get('set-cookie').split(';')[0]
+}
+
+async function call(method, path, body) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!cookie) await login()
+    const r = await fetch(`${BASE}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json', 'x-theo-action': '1', cookie },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    if (r.status === 401 || r.status === 403) {
+      cookie = undefined
+      continue
+    }
+    const text = await r.text()
+    let json
+    try {
+      json = JSON.parse(text)
+    } catch {
+      json = text
+    }
+    return { status: r.status, body: json }
+  }
+  throw new Error(`the panel kept refusing ${method} ${path}`)
+}
+
+const state = existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : { items: {} }
+function save() {
+  mkdirSync(dirname(STATE), { recursive: true })
+  writeFileSync(STATE, `${JSON.stringify(state, null, 2)}\n`)
+}
+const entries = () => state.items
+
+let pausedUntil = 0
+async function respectPause() {
+  while (Date.now() < pausedUntil) await sleep(15_000)
+}
+
+async function findTask(repo, number) {
+  const { body } = await call('GET', '/api/panel/tasks')
+  return body.tasks?.find(
+    (t) => t.repository.toLowerCase() === repo.toLowerCase() && t.issueNumber === number,
+  )
+}
+
+/** Waits for the task of an issue to reach an outcome, or for the clock to run out. */
+async function outcomeOf(entry) {
+  const started = Date.now()
+  while (Date.now() - started < TASK_TIMEOUT_MS) {
+    if (!entry.taskId) {
+      const found = await findTask(entry.repo, entry.issue)
+      if (found) {
+        entry.taskId = found.id
+        save()
+      }
+    }
+    if (entry.taskId) {
+      const { body } = await call('GET', `/api/panel/tasks/${entry.taskId}`)
+      if (body?.task) {
+        const result = classify(body)
+        if (result.outcome) return result
+      }
+    }
+    await sleep(POLL_MS)
+  }
+  return { outcome: 'failed', reason: 'the task did not finish in time', failedAt: 'timeout' }
+}
+
+async function work(item) {
+  const repo = repoFor(item)
+  const entry = (entries()[item.id] ??= { repo, startedAt: new Date().toISOString(), attempts: 0 })
+  if (!entry.issue) {
+    const issue = issueFor(item)
+    const made = await call('POST', '/api/panel/jobs', { repository: repo, ...issue, start: true })
+    if (made.status !== 200) {
+      Object.assign(entry, {
+        outcome: 'not-started',
+        reason: JSON.stringify(made.body).slice(0, 300),
+      })
+      save()
+      log(item.id, 'could not be started:', entry.reason)
+      return
+    }
+    entry.issue = made.body.number
+    save()
+    log(item.id, `issue ${repo}#${entry.issue} opened`)
+  }
+  for (;;) {
+    await respectPause()
+    const result = await outcomeOf(entry)
+    if (result.outcome === 'quota') {
+      const at = resetAt(result.resetsAt)
+      pausedUntil =
+        (at && at.getTime() > Date.now() ? at.getTime() : Date.now() + 30 * 60_000) + 60_000
+      log(
+        item.id,
+        `usage limit, everything waits until ${new Date(pausedUntil).toISOString().slice(11, 19)}`,
+      )
+    } else if (result.outcome === 'failed' && INFRA.test(result.reason) && entry.attempts < 2) {
+      log(item.id, `failed on the environment (${result.reason.slice(0, 80)}), trying again`)
+    } else {
+      Object.assign(entry, result, { finishedAt: new Date().toISOString() })
+      save()
+      log(
+        item.id,
+        result.outcome,
+        result.reason ? `- ${result.reason.slice(0, 120)}` : '',
+        entry.prerelease ?? '',
+      )
+      return
+    }
+    entry.attempts += 1
+    await respectPause()
+    const retried = await call('POST', `/api/panel/tasks/${entry.taskId}/retry`, {})
+    if (retried.status !== 200) {
+      Object.assign(entry, {
+        outcome: 'failed',
+        reason: `could not retry: ${JSON.stringify(retried.body).slice(0, 200)}`,
+      })
+      save()
+      return
+    }
+    entry.taskId = undefined // a retry may be a new task row in the same issue
+    const again = await findTask(entry.repo, entry.issue)
+    if (again) entry.taskId = again.id
+  }
+}
+
+function summary(items) {
+  const counts = {}
+  for (const i of items.filter((x) => OPEN.includes(x.status))) {
+    const key =
+      entries()[i.id]?.outcome ??
+      (entries()[i.id] ? 'running' : needsAPerson(i) ? 'needs-a-person' : 'waiting')
+    counts[key] = (counts[key] ?? 0) + 1
+  }
+  return counts
+}
+
+async function main() {
+  const items = parseBacklog(readFileSync(BACKLOG, 'utf8')).filter(
+    (i) => !ONLY || ONLY.includes(i.id),
+  )
+  const open = items.filter((i) => OPEN.includes(i.status))
+  log(`${open.length} open items in ${BACKLOG}`, JSON.stringify(summary(items)))
+  if (flag('dry-run')) {
+    const copy = JSON.parse(JSON.stringify(state))
+    for (let n = 0; n < Math.min(LIMIT, 15); n++) {
+      const item = nextRunnable(items, copy.items)
+      if (!item) break
+      copy.items[item.id] = { outcome: 'integrated' }
+      console.log(`${item.id} [${item.status}] -> ${repoFor(item)}  ${item.title.slice(0, 80)}`)
+    }
+    return
+  }
+  const inFlight = new Set(
+    Object.entries(entries())
+      .filter(([, e]) => e.issue && !e.outcome)
+      .map(([id]) => id),
+  )
+  let started = 0
+  const worker = async () => {
+    for (;;) {
+      await respectPause()
+      const resumed = [...inFlight].find(
+        (id) =>
+          items.some((i) => i.id === id) &&
+          !entries()[id]?.outcome &&
+          entries()[id]?.claimed !== true,
+      )
+      let item
+      if (resumed) {
+        entries()[resumed].claimed = true
+        item = items.find((i) => i.id === resumed)
+      } else if (started < LIMIT) {
+        item = nextRunnable(items, entries(), inFlight)
+        if (item) started += 1
+      }
+      if (!item) {
+        if (inFlight.size === 0) return
+        await sleep(10_000)
+        continue
+      }
+      inFlight.add(item.id)
+      try {
+        await work(item)
+      } catch (error) {
+        Object.assign((entries()[item.id] ??= {}), {
+          outcome: 'failed',
+          reason: String(error.message ?? error).slice(0, 300),
+        })
+        save()
+        log(item.id, 'the feeder failed:', error.message)
+      }
+      delete entries()[item.id].claimed
+      inFlight.delete(item.id)
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker))
+  log('done', JSON.stringify(summary(items)))
+  for (const { item, blockers } of stuckBehind(items, entries())) {
+    log(item.id, `will not start: blocked by ${blockers.join(', ')}, which did not integrate`)
+  }
+}
+
+main().catch((error) => {
+  console.error(error)
+  process.exit(1)
+})

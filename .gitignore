@@ -57,3 +57,6 @@ pnpm-debug.log*
 coverage/
 .stryker-tmp/
 reports/
+
+# What the backlog feeder records about its run
+.backlog-feed/

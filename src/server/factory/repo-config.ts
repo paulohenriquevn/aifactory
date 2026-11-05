@@ -13,6 +13,8 @@ export type RepoConfig = {
   egress: string[]
   /** The branch work starts from and pull requests target; absent means the default branch. */
   baseBranch?: string
+  /** The branch a release lands on; absent means the repository's default branch. */
+  releaseBranch?: string
   harness?: string
   reviewer?: string
   releaseMode?: ReleaseMode
@@ -48,6 +50,7 @@ export async function loadRepoConfig(db: Database, fullName: string): Promise<Re
     checks: row.checks && row.checks.length > 0 ? row.checks : undefined,
     egress: row.egress,
     baseBranch: row.baseBranch ?? undefined,
+    releaseBranch: row.releaseBranch ?? undefined,
     harness: row.harness ?? undefined,
     reviewer: row.reviewer ?? undefined,
     releaseMode: row.releaseMode ?? undefined,

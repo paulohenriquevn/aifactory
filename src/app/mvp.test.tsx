@@ -54,6 +54,7 @@ const repos = (over: Partial<RepositoriesView> = {}): RepositoriesView => ({
       checks: [{ name: 'unit', command: 'pnpm test' }],
       egress: ['pypi.org'],
       baseBranch: null,
+      releaseBranch: null,
       harness: 'codex',
       reviewer: null,
       releaseMode: 'trial',
@@ -67,6 +68,7 @@ const repos = (over: Partial<RepositoriesView> = {}): RepositoriesView => ({
       checks: null,
       egress: [],
       baseBranch: null,
+      releaseBranch: null,
       harness: null,
       reviewer: null,
       releaseMode: null,
@@ -353,6 +355,7 @@ describe('repositories', () => {
       ],
       egress: ['pypi.org', 'crates.io'],
       baseBranch: null,
+      releaseBranch: null,
       harness: 'codex',
       reviewer: 'claude-code',
       releaseMode: null,
@@ -376,6 +379,23 @@ describe('repositories', () => {
     expect(
       (calls.find((c) => c.method === 'PUT')?.body as { baseBranch: unknown }).baseBranch,
     ).toBe('develop')
+  })
+
+  it('saves the branch a release lands on, trimmed, and null when it is left empty', async () => {
+    serve({
+      'GET /api/panel/repositories': repos(),
+      'PUT /api/panel/repositories/paulo/app': {},
+    })
+    mount()
+    await waitFor(() => expect(screen.getByText('Save settings')).toBeDefined())
+    const box = screen.getByLabelText('Branch a release lands on') as HTMLInputElement
+    expect(box.value).toBe('')
+    fireEvent.change(box, { target: { value: '  main  ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(
+      (calls.find((c) => c.method === 'PUT')?.body as { releaseBranch: unknown }).releaseBranch,
+    ).toBe('main')
   })
 
   it('sends null for checks when the box is emptied, so the default applies again', async () => {

@@ -1668,6 +1668,18 @@ describe('release', () => {
     ])
   })
 
+  it('promotes into the release branch the owner named, not the default branch', async () => {
+    await getDb()
+      .insert(repository)
+      .values({ fullName: 'paulo/app', enabled: true, releaseBranch: 'stable' })
+    githubApi.branches.heads.set('stable', 's'.repeat(40))
+    const id = await delivered()
+
+    await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+    expect(githubApi.bases).toEqual(['workspace', 'stable'])
+  })
+
   it('starts at v0.1.0 when the repository has no release yet', async () => {
     const id = await delivered()
     expect((await release(dependencies(), id, { bump: 'major', actor: 'human' })).tag).toBe(

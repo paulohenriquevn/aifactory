@@ -226,6 +226,8 @@ export type RepositoryView = {
   egress: string[]
   /** The branch work starts from and pull requests target; null means the default branch. */
   baseBranch: string | null
+  /** The branch a release lands on; null means the default branch. */
+  releaseBranch: string | null
   harness: string | null
   reviewer: string | null
   releaseMode: 'manual' | 'trial' | 'auto' | null

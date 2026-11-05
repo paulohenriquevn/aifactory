@@ -23,6 +23,7 @@ function Settings({
   const [checks, setChecks] = useState(formatChecks(repo.checks))
   const [domains, setDomains] = useState(formatDomains(repo.egress))
   const [baseBranch, setBaseBranch] = useState(repo.baseBranch ?? '')
+  const [releaseBranch, setReleaseBranch] = useState(repo.releaseBranch ?? '')
   const [harness, setHarness] = useState(repo.harness ?? '')
   const [reviewer, setReviewer] = useState(repo.reviewer ?? '')
   const [release, setRelease] = useState(repo.releaseMode ?? '')
@@ -38,6 +39,7 @@ function Settings({
         checks: parsed.length > 0 ? parsed : null,
         egress: parseDomains(domains),
         baseBranch: baseBranch.trim() || null,
+        releaseBranch: releaseBranch.trim() || null,
         harness: harness || null,
         reviewer: reviewer || null,
         releaseMode: release || null,
@@ -95,6 +97,20 @@ function Settings({
           Finished work is merged here by the factory. Leave it empty to use workspace. The branch
           develop then carries the pre-release, and {repo.defaultBranch || 'the default branch'} the
           release. Missing branches are created for you.
+        </span>
+      </label>
+      <label className="block">
+        <span className="text-foreground">Branch a release lands on</span>
+        <Input
+          aria-label="Branch a release lands on"
+          value={releaseBranch}
+          placeholder={`${repo.defaultBranch || 'the default branch'} (the default)`}
+          onChange={(e) => setReleaseBranch(e.target.value)}
+          className="mt-1 w-full"
+        />
+        <span className="text-muted-foreground">
+          Only needed when the default branch is develop, which is where the pre-release goes: name
+          main, or the branch your releases use.
         </span>
       </label>
       <div className="grid grid-cols-3 gap-3">

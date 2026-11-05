@@ -159,7 +159,10 @@ export class Run {
     const { deps, issue, resuming } = c
     // Before any sandbox exists: a repository without the integration and pre-release branches gets them.
     if (!resuming) {
-      await ensureBranches(c.api, c.row.repository, c.token, integrationBranch(c.repo))
+      await ensureBranches(c.api, c.row.repository, c.token, {
+        integration: integrationBranch(c.repo),
+        release: c.repo.releaseBranch,
+      })
     }
     const labels = labelsWithRepoChoice(issue.labels ?? [], c.repo)
     const builder = typeof deps.harness === 'function' ? deps.harness(labels) : deps.harness

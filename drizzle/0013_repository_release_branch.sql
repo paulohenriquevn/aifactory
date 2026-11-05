@@ -1,0 +1,1 @@
+ALTER TABLE "repository" ADD COLUMN "release_branch" text;

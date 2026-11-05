@@ -67,6 +67,17 @@ describe('patchProblem', () => {
   })
 })
 
+describe('patchProblem and the release branch', () => {
+  it('accepts a branch name, and null to go back to the default branch', () => {
+    expect(problem({ releaseBranch: 'main' })).toBeUndefined()
+    expect(problem({ releaseBranch: null })).toBeUndefined()
+  })
+
+  it('refuses a name git would not take', () => {
+    expect(problem({ releaseBranch: '--force' })).toBe('"--force" is not a branch name')
+  })
+})
+
 describe('patchProblem and the branch', () => {
   it('accepts a branch name, and null to go back to the default', () => {
     expect(problem({ baseBranch: 'develop' })).toBeUndefined()

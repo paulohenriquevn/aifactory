@@ -658,6 +658,16 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   `[planId]`), e a lista de 120 repositórios levava 4,5 segundos, então ficou guardada por 15. O GitHub
   Projects ficou de fora: uma App não alcança o Project de uma conta pessoal. Falta do M10: a receita
   `.factory/setup.json` (hoje o dono ajusta no painel) e o primeiro projeto que não seja o playground.
+- Alimentador do backlog e branch de release (2026-11-05, objetivo do Paulo: a fábrica implementar todos os
+  itens do backlog, com o Codex). `scripts/backlog.mjs` (lógica pura, 27 testes) e `scripts/backlog-feed.mjs`
+  (o laço) transformam os 191 itens abertos do BACKLOG.md do theokit em issues autocontidas, por repositório
+  e na ordem dos bloqueios, e guardam o resultado de cada um. Ao medir os repositórios para habilitá-los
+  apareceu um risco: a branch padrão dos gateways é `develop`, que é onde a fábrica avança a pré-release,
+  então ela avançaria a branch de release sem decisão. Cada repositório ganhou `release_branch` (migration
+  0013), e a fábrica recusa a mesma branch como pré-release e como release. Medido em clones limpos: os
+  gateways precisam do build completo antes de tipos e testes (2 min), o SDK leva 6 min só nos testes, e o
+  teste `changesets-name-ignored-packages-alone` do pacote `tools` dos gateways já falha na base. Por isso
+  os checks rodam só o que mudou (`--filter='[HEAD~1]'`, `vitest related`).
 - Primeira integração real em `workspace` (2026-11-05). O B-682 refeito contra `workspace`: PR `#1157`,
   checks verdes, review aprovado, e **a fábrica mergeou o PR sozinha** (commit `4fb965a`), por US$ 0,25. O
   theokit mostrou o caso que os testes não tinham: `develop` é protegida ("Changes must be made through a
