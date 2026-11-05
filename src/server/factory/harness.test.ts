@@ -174,6 +174,26 @@ describe('buildPrompt', () => {
     expect(prompt).toMatch(/Do not run git commit, git push/)
   })
 
+  it('lets the agent ask by default, with a QUESTION: line', () => {
+    const prompt = buildPrompt({ repo: 'o/r', issueNumber: 1, title: 't', body: 'b', branch: 'x' })
+    expect(prompt).toContain('QUESTION:')
+    expect(prompt).not.toContain('Nobody is there to answer')
+  })
+
+  it('tells the agent to decide and say what it assumed when nobody is there to answer', () => {
+    const prompt = buildPrompt({
+      repo: 'o/r',
+      issueNumber: 1,
+      title: 't',
+      body: 'b',
+      branch: 'x',
+      askQuestions: false,
+    })
+    expect(prompt).toContain('Nobody is there to answer a question, so do not ask one')
+    expect(prompt).toContain('say in your final message what you assumed')
+    expect(prompt).not.toContain('QUESTION:')
+  })
+
   it('says when the issue has no description', () => {
     const prompt = buildPrompt({ repo: 'o/r', issueNumber: 1, title: 't', body: '', branch: 'b' })
     expect(prompt).toContain('the issue has no description')

@@ -15,6 +15,8 @@ export type RepoConfig = {
   baseBranch?: string
   /** The branch a release lands on; absent means the repository's default branch. */
   releaseBranch?: string
+  /** False means the agent never asks, it decides and says what it assumed. Absent means it may ask. */
+  askQuestions?: boolean
   harness?: string
   reviewer?: string
   releaseMode?: ReleaseMode
@@ -51,6 +53,7 @@ export async function loadRepoConfig(db: Database, fullName: string): Promise<Re
     egress: row.egress,
     baseBranch: row.baseBranch ?? undefined,
     releaseBranch: row.releaseBranch ?? undefined,
+    askQuestions: row.askQuestions,
     harness: row.harness ?? undefined,
     reviewer: row.reviewer ?? undefined,
     releaseMode: row.releaseMode ?? undefined,

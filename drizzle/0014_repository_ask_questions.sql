@@ -1,0 +1,1 @@
+ALTER TABLE "repository" ADD COLUMN "ask_questions" boolean DEFAULT true NOT NULL;

@@ -292,6 +292,8 @@ export const repository = pgTable('repository', {
   baseBranch: text('base_branch'),
   /** The branch a release promotes into, when it is not the repository's default branch. */
   releaseBranch: text('release_branch'),
+  /** False for a repository nobody watches: the agent decides what is unclear instead of asking. */
+  askQuestions: boolean('ask_questions').notNull().default(true),
   /** The agent that builds and the one that reviews, when not the factory's default. */
   harness: text('harness'),
   reviewer: text('reviewer'),

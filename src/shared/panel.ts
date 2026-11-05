@@ -228,6 +228,8 @@ export type RepositoryView = {
   baseBranch: string | null
   /** The branch a release lands on; null means the default branch. */
   releaseBranch: string | null
+  /** False when the agent decides what is unclear instead of asking on the issue. */
+  askQuestions: boolean
   harness: string | null
   reviewer: string | null
   releaseMode: 'manual' | 'trial' | 'auto' | null

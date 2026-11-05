@@ -330,7 +330,11 @@ export class Run {
     await enterStage(deps.db, taskId, 'push', { branch, ...detail })
     const changes = await must(backend, `git -C ${this.repoDir} status --porcelain`)
     if (changes.stdout.trim() === '') {
-      throw new StageFailure('the agent made no change to the repository')
+      throw new StageFailure(
+        `the agent made no change to the repository${
+          this.summary ? `. The agent said: ${oneLine(this.summary).slice(0, 700)}` : ''
+        }`,
+      )
     }
     // Text that came from outside (the issue title, the author) goes in by file, so none of it is
     // ever parsed by a shell (the SDK does not export its quoting helper: usetheokit/theokit#1131).
@@ -341,7 +345,7 @@ export class Run {
     // What is about to leave the sandbox, kept so a refused push can be explained.
     const files = (await must(backend, `${git} diff --name-status HEAD~1 HEAD`)).stdout.trim()
     try {
-      await pushWithRetry(backend, `${git} push origin ${branch}`, deps.pushRetryDelayMs ?? 2_000)
+      await pushWithRetry(backend, `${git} push origin ${branch}`, deps.pushRetryDelayMs ?? 5_000)
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       throw new StageFailure(`${reason}\ncommit being pushed:\n${files.slice(0, 1500)}`)
@@ -385,6 +389,7 @@ export class Run {
           body: issue.body,
           branch,
           feedback: continuation?.feedback,
+          askQuestions: this.c.repo.askQuestions,
         }),
       }),
     )

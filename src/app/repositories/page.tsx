@@ -24,6 +24,7 @@ function Settings({
   const [domains, setDomains] = useState(formatDomains(repo.egress))
   const [baseBranch, setBaseBranch] = useState(repo.baseBranch ?? '')
   const [releaseBranch, setReleaseBranch] = useState(repo.releaseBranch ?? '')
+  const [ask, setAsk] = useState(repo.askQuestions)
   const [harness, setHarness] = useState(repo.harness ?? '')
   const [reviewer, setReviewer] = useState(repo.reviewer ?? '')
   const [release, setRelease] = useState(repo.releaseMode ?? '')
@@ -40,6 +41,7 @@ function Settings({
         egress: parseDomains(domains),
         baseBranch: baseBranch.trim() || null,
         releaseBranch: releaseBranch.trim() || null,
+        askQuestions: ask,
         harness: harness || null,
         reviewer: reviewer || null,
         releaseMode: release || null,
@@ -111,6 +113,12 @@ function Settings({
         <span className="text-muted-foreground">
           Only needed when the default branch is develop, which is where the pre-release goes: name
           main, or the branch your releases use.
+        </span>
+      </label>
+      <label className="flex items-center gap-2">
+        <input type="checkbox" checked={ask} onChange={(e) => setAsk(e.target.checked)} />
+        <span className="text-foreground">
+          Let the agent ask me questions on the issue when something is unclear
         </span>
       </label>
       <div className="grid grid-cols-3 gap-3">

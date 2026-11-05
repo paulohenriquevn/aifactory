@@ -55,6 +55,7 @@ const repos = (over: Partial<RepositoriesView> = {}): RepositoriesView => ({
       egress: ['pypi.org'],
       baseBranch: null,
       releaseBranch: null,
+      askQuestions: true,
       harness: 'codex',
       reviewer: null,
       releaseMode: 'trial',
@@ -69,6 +70,7 @@ const repos = (over: Partial<RepositoriesView> = {}): RepositoriesView => ({
       egress: [],
       baseBranch: null,
       releaseBranch: null,
+      askQuestions: true,
       harness: null,
       reviewer: null,
       releaseMode: null,
@@ -356,6 +358,7 @@ describe('repositories', () => {
       egress: ['pypi.org', 'crates.io'],
       baseBranch: null,
       releaseBranch: null,
+      askQuestions: true,
       harness: 'codex',
       reviewer: 'claude-code',
       releaseMode: null,
@@ -379,6 +382,23 @@ describe('repositories', () => {
     expect(
       (calls.find((c) => c.method === 'PUT')?.body as { baseBranch: unknown }).baseBranch,
     ).toBe('develop')
+  })
+
+  it('lets the owner turn the questions off, and sends the choice', async () => {
+    serve({
+      'GET /api/panel/repositories': repos(),
+      'PUT /api/panel/repositories/paulo/app': {},
+    })
+    mount()
+    await waitFor(() => expect(screen.getByText('Save settings')).toBeDefined())
+    const box = screen.getByLabelText(/Let the agent ask me questions/) as HTMLInputElement
+    expect(box.checked).toBe(true)
+    fireEvent.click(box)
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true))
+    expect(
+      (calls.find((c) => c.method === 'PUT')?.body as { askQuestions: unknown }).askQuestions,
+    ).toBe(false)
   })
 
   it('saves the branch a release lands on, trimmed, and null when it is left empty', async () => {

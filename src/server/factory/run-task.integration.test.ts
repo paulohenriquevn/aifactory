@@ -49,12 +49,12 @@ beforeEach(async () => {
 })
 afterAll(() => getStorageManager().dispose())
 
-async function seedTask(): Promise<number> {
+async function seedTask(issueNumber = 7): Promise<number> {
   const db = getDb()
   const [i] = await db
     .insert(ingress)
     .values({
-      deliveryId: 'd-1',
+      deliveryId: `d-${issueNumber}`,
       event: 'issues',
       payload: {},
       outcome: 'task_created',
@@ -67,7 +67,7 @@ async function seedTask(): Promise<number> {
     .values({
       ingressId: i.id,
       repository: 'paulo/app',
-      issueNumber: 7,
+      issueNumber,
       issueTitle: 'Add truncate',
     })
     .returning({ id: task.id })
@@ -664,7 +664,7 @@ describe('runTask', () => {
     expect(pushes).toBe(2)
   })
 
-  it('gives up after three failed pushes and says why', async () => {
+  it('gives up after six failed pushes and says why', async () => {
     const id = await seedTask()
     let pushes = 0
     const sandbox = new FakeSandbox(
@@ -678,7 +678,7 @@ describe('runTask', () => {
     const result = await runTask(deps(sandbox), id)
 
     expect(result).toMatchObject({ status: 'failed', stage: 'push' })
-    expect(pushes).toBe(3)
+    expect(pushes).toBe(6)
     expect(result.status === 'failed' && result.error).toContain('permission denied')
   })
 
@@ -981,6 +981,49 @@ describe('runTask review loop', () => {
     const reviewed = commands.findIndex((c) => c.includes('reset --hard abc123def'))
     expect(reviewed).toBeGreaterThan(-1)
     expect(commands[reviewed + 1]).toContain('clean -fd')
+  })
+
+  it('says what the agent said when it changed nothing, because that is usually the reason', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) => (c.includes('status --porcelain') ? { stdout: '' } : undefined)),
+    )
+    const already: CodingHarness = {
+      name: 'already',
+      egress: agentEgress,
+      run: async () => ({
+        ok: true,
+        summary: 'The behaviour already exists in\nsrc/truncate.js, so there is nothing to add.',
+      }),
+    }
+
+    const result = await runTask(deps(sandbox, { harness: already }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
+    expect(result.status === 'failed' && result.error).toContain(
+      'The agent said: The behaviour already exists in src/truncate.js, so there is nothing to add.',
+    )
+  })
+
+  it('tells the agent not to ask when the owner marked the repository as unwatched, and lets it ask otherwise', async () => {
+    const prompts: string[] = []
+    const capture: CodingHarness = {
+      name: 'capture',
+      egress: agentEgress,
+      run: async (_backend, { prompt }) => {
+        prompts.push(prompt)
+        return { ok: true, summary: 'done' }
+      },
+    }
+    await runTask(deps(new FakeSandbox(changed()), { harness: capture }), await seedTask())
+    await getDb()
+      .insert(repository)
+      .values({ fullName: 'paulo/app', enabled: true, askQuestions: false })
+    await runTask(deps(new FakeSandbox(changed()), { harness: capture }), await seedTask(8))
+
+    expect(prompts[0]).toContain('QUESTION:')
+    expect(prompts[1]).toContain('Nobody is there to answer a question')
+    expect(prompts[1]).not.toContain('QUESTION:')
   })
 
   it('stops a rework that changes nothing instead of reviewing the same commit again', async () => {

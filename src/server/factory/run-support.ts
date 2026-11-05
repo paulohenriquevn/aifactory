@@ -45,12 +45,14 @@ export function mergeEgress(lists: EgressRule[][]): EgressRule[] {
   return [...byDomain.values()]
 }
 
-const PUSH_ATTEMPTS = 3
+const PUSH_ATTEMPTS = 6
 
 /**
- * Pushes the same commit up to three times. GitHub now and then answers a push with an internal
- * `fatal error in commit_refs` that a second try does not repeat (seen once in three live pushes), and
- * the push is idempotent: it sends one commit to one branch the run created. Only the push is retried.
+ * Pushes the same commit up to six times, waiting twice as long after each failure (5, 10, 20, 40 and 80
+ * seconds with the default delay). GitHub now and then answers a push with an internal error
+ * (`fatal error in commit_refs`, a 500), and during an incident it keeps doing so for minutes: giving up
+ * after a few seconds threw away a whole agent run for something that passes by itself. The push is
+ * idempotent: it sends one commit to one branch the run created. Only the push is retried.
  */
 export async function pushWithRetry(backend: SandboxBackend, command: string, delayMs: number) {
   for (let attempt = 1; ; attempt++) {
@@ -58,7 +60,7 @@ export async function pushWithRetry(backend: SandboxBackend, command: string, de
       return await must(backend, command)
     } catch (error) {
       if (attempt >= PUSH_ATTEMPTS) throw error
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      await new Promise((resolve) => setTimeout(resolve, delayMs * 2 ** (attempt - 1)))
     }
   }
 }

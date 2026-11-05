@@ -74,6 +74,8 @@ export function buildPrompt(input: {
   branch: string
   /** What a person asked to change in an earlier pull request from this branch. */
   feedback?: string
+  /** False when nobody is there to answer: the agent decides, and says what it assumed. */
+  askQuestions?: boolean
 }): string {
   return `You are working on the repository ${input.repo}, on the branch ${input.branch}.
 
@@ -89,7 +91,11 @@ Rules:
 - Keep the change small and limited to what the issue asks.
 - Do not run git commit, git push or any other git command that writes. The factory commits and pushes.
 - Do not edit anything under .github/.
-- If you cannot go on without a decision only a person can make, do not guess. Leave the repository as it is and end your final message with a line that starts with \`QUESTION:\`, followed by one specific question (offer the options you see).
+${
+  input.askQuestions === false
+    ? '- Nobody is there to answer a question, so do not ask one. When a decision is missing, choose the most reasonable option, say in your final message what you assumed, and go on.'
+    : '- If you cannot go on without a decision only a person can make, do not guess. Leave the repository as it is and end your final message with a line that starts with `QUESTION:`, followed by one specific question (offer the options you see).'
+}
 - Finish with a short summary of what you changed.
 ${
   input.feedback

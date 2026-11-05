@@ -292,6 +292,24 @@ describe('the repositories page', () => {
     expect((await getDb().select().from(repository))[0].releaseBranch).toBe('main')
   })
 
+  it('saves whether the agent may ask questions, which is on until the owner turns it off', async () => {
+    await enable()
+    const asks = async () =>
+      (await listRepositories(deps())).repositories.find((r) => r.fullName === 'Paulo/App')
+        ?.askQuestions
+    expect(await asks()).toBe(true)
+
+    await saveRepository(deps(), 'paulo/app', { askQuestions: false })
+    expect((await getDb().select().from(repository))[0].askQuestions).toBe(false)
+    expect(await asks()).toBe(false)
+
+    await saveRepository(deps(), 'paulo/app', { harness: 'codex' })
+    expect(await asks()).toBe(false)
+
+    await saveRepository(deps(), 'paulo/app', { askQuestions: true })
+    expect(await asks()).toBe(true)
+  })
+
   it('refuses a branch name git would not take', async () => {
     await enable()
     await expect(saveRepository(deps(), 'paulo/app', { baseBranch: '-x' })).rejects.toThrow(
