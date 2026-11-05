@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   classify,
+  isInfraFailure,
   issueFor,
   needsAPerson,
   nextRunnable,
@@ -278,5 +279,34 @@ describe('classify', () => {
 
   it('cuts a very long failure to a line a table can hold', () => {
     expect(classify(detail('failed', {}, { error: 'e'.repeat(1000) })).reason).toHaveLength(400)
+  })
+})
+
+describe('isInfraFailure', () => {
+  it('recognises what GitHub, the network and the sandbox do to a run', () => {
+    for (const reason of [
+      '`git push origin factory/1` exited 1: remote: Internal Server Error',
+      '! [remote rejected] factory/182 -> factory/182 (Internal Server Error)',
+      'GitHub answered 502 creating an issue',
+      'GitHub answered 503 reading the repository',
+      'connect ETIMEDOUT 140.82.112.3:443',
+      'fetch failed',
+      'Worker terminated: JS heap out of memory',
+      'the factory was restarted while this run was working',
+    ]) {
+      expect(isInfraFailure(reason), reason).toBe(true)
+    }
+  })
+
+  it('does not call a failure of the work an environment failure', () => {
+    for (const reason of [
+      'the agent made no change to the repository',
+      'the checks did not pass: tests exited 1',
+      'the reviewer still asked for changes after 3 attempts',
+      undefined,
+      '',
+    ]) {
+      expect(isInfraFailure(reason), String(reason)).toBe(false)
+    }
   })
 })

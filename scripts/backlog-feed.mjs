@@ -10,6 +10,7 @@ import { dirname, resolve } from 'node:path'
 
 import {
   classify,
+  isInfraFailure,
   issueFor,
   needsAPerson,
   nextRunnable,
@@ -36,7 +37,6 @@ const ONLY = arg('only') ? String(arg('only')).split(',') : undefined
 const BASE = process.env.FACTORY_URL ?? 'http://localhost:3000'
 const POLL_MS = Number(process.env.FEED_POLL_MS ?? 20_000)
 const TASK_TIMEOUT_MS = 100 * 60_000
-const INFRA = /sandbox|ECONN|ETIMEDOUT|socket|fetch failed|429|502|503|504|out of memory|OOM|heap/i
 
 const log = (...parts) => console.log(new Date().toISOString().slice(11, 19), ...parts)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -129,7 +129,13 @@ async function work(item) {
   const entry = (entries()[item.id] ??= { repo, startedAt: new Date().toISOString(), attempts: 0 })
   if (!entry.issue) {
     const issue = issueFor(item)
-    const made = await call('POST', '/api/panel/jobs', { repository: repo, ...issue, start: true })
+    // GitHub answers 5xx now and then: that is worth a few tries, and is not a verdict on the item.
+    let made
+    for (let attempt = 0; attempt < 4; attempt++) {
+      made = await call('POST', '/api/panel/jobs', { repository: repo, ...issue, start: true })
+      if (made.status === 200 || !isInfraFailure(JSON.stringify(made.body))) break
+      await sleep(20_000 * (attempt + 1))
+    }
     if (made.status !== 200) {
       Object.assign(entry, {
         outcome: 'not-started',
@@ -154,7 +160,7 @@ async function work(item) {
         item.id,
         `usage limit, everything waits until ${new Date(pausedUntil).toISOString().slice(11, 19)}`,
       )
-    } else if (result.outcome === 'failed' && INFRA.test(result.reason) && entry.attempts < 2) {
+    } else if (result.outcome === 'failed' && isInfraFailure(result.reason) && entry.attempts < 3) {
       log(item.id, `failed on the environment (${result.reason.slice(0, 80)}), trying again`)
     } else {
       Object.assign(entry, result, { finishedAt: new Date().toISOString() })
@@ -184,6 +190,28 @@ async function work(item) {
   }
 }
 
+/**
+ * A second pass over what failed on the environment: the task is run again, and an issue that never opened
+ * is opened. What failed on the work itself is left as it is.
+ */
+async function retryFailed() {
+  for (const [id, e] of Object.entries(entries())) {
+    if (!['failed', 'not-started'].includes(e.outcome) || !isInfraFailure(e.reason)) continue
+    if (e.issue && e.taskId) {
+      const r = await call('POST', `/api/panel/tasks/${e.taskId}/retry`, {})
+      if (r.status !== 200) continue
+      for (const field of ['outcome', 'reason', 'failedAt', 'finishedAt']) delete e[field]
+      e.taskId = undefined
+      e.attempts = 0
+      log(id, 'run again after an environment failure')
+    } else if (!e.issue) {
+      delete entries()[id]
+      log(id, 'will be started again')
+    }
+  }
+  save()
+}
+
 function summary(items) {
   const counts = {}
   for (const i of items.filter((x) => OPEN.includes(x.status))) {
@@ -211,25 +239,20 @@ async function main() {
     }
     return
   }
-  const inFlight = new Set(
-    Object.entries(entries())
-      .filter(([, e]) => e.issue && !e.outcome)
-      .map(([id]) => id),
-  )
+  // What an earlier run left half done is resumed first, once each. It is a queue of its own: an item a
+  // worker has just started is in `inFlight` too, and must not be taken for one of these.
+  if (flag('retry-failed')) await retryFailed()
+  const inFlight = new Set()
+  const toResume = Object.entries(entries())
+    .filter(([id, e]) => e.issue && !e.outcome && items.some((i) => i.id === id))
+    .map(([id]) => id)
   let started = 0
   const worker = async () => {
     for (;;) {
       await respectPause()
-      const resumed = [...inFlight].find(
-        (id) =>
-          items.some((i) => i.id === id) &&
-          !entries()[id]?.outcome &&
-          entries()[id]?.claimed !== true,
-      )
       let item
-      if (resumed) {
-        entries()[resumed].claimed = true
-        item = items.find((i) => i.id === resumed)
+      if (toResume.length > 0) {
+        item = items.find((i) => i.id === toResume.shift())
       } else if (started < LIMIT) {
         item = nextRunnable(items, entries(), inFlight)
         if (item) started += 1
@@ -250,7 +273,6 @@ async function main() {
         save()
         log(item.id, 'the feeder failed:', error.message)
       }
-      delete entries()[item.id].claimed
       inFlight.delete(item.id)
     }
   }
