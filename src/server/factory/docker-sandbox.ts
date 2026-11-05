@@ -117,6 +117,21 @@ class DockerBackend extends SandboxBackend {
       '-c',
       command,
     ])
+    // A command killed with SIGKILL (137) is either one that ignored the timeout or one the kernel killed
+    // for the sandbox's memory limit. Docker remembers the second, and it is not a timeout: saying so
+    // is the difference between "make it faster" and "give it more memory".
+    if (result.code === 137 && (await this.ranOutOfMemory())) {
+      return {
+        stdout: result.stdout.slice(0, MAX_OUTPUT),
+        stderr:
+          `${result.stderr}\nout of memory: the sandbox hit its memory limit and a process in it was killed`.slice(
+            0,
+            MAX_OUTPUT,
+          ),
+        exitCode: 137,
+        timedOut: false,
+      }
+    }
     const timedOut = result.code === TIMED_OUT || result.code === 137
     return {
       stdout: result.stdout.slice(0, MAX_OUTPUT),
@@ -127,6 +142,11 @@ class DockerBackend extends SandboxBackend {
       exitCode: timedOut ? TIMED_OUT : result.code,
       timedOut,
     }
+  }
+
+  private async ranOutOfMemory(): Promise<boolean> {
+    const state = await this.docker(['inspect', '-f', '{{.State.OOMKilled}}', this.container])
+    return state.stdout.trim() === 'true'
   }
 
   async uploadFile(path: string, content: string | Buffer) {

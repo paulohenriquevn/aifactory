@@ -36,7 +36,7 @@ export const COLUMNS: { id: Column; title: string }[] = [
 export type Retryable = 'quota' | 'environment' | null
 
 const ENVIRONMENT =
-  /Internal Server Error|remote rejected|GitHub answered 5\d\d|\b50[234]\b|\b429\b|ECONN|ETIMEDOUT|ENOTFOUND|socket|fetch failed|out of memory|OOM|heap|was restarted|usage limit exceeded|Status code 402|timed out after \d+ ms|clone failed/i
+  /Internal Server Error|remote rejected|GitHub answered 5\d\d|\b50[234]\b|\b429\b|ECONN|ETIMEDOUT|ENOTFOUND|socket|fetch failed|out of memory|OOM|heap|is not running|killed \(most likely out of memory|was restarted|usage limit exceeded|Status code 402|timed out after \d+ ms|clone failed/i
 
 /** From the detail the factory recorded when a task failed. */
 export function retryableFailure(detail: Record<string, unknown> | null | undefined): Retryable {

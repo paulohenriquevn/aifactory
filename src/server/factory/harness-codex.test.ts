@@ -4,12 +4,17 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { retryableFailure } from '../../shared/panel'
+// @ts-expect-error the feeder is a script, not a typed module
+import { isInfraFailure } from '../../../scripts/backlog.mjs'
+
 import { FakeSandbox } from './fake-sandbox'
 import {
   CODEX_VERSION,
   codexCredentialFromEnv,
   codexHarness,
   loadCodexLogin,
+  cleaned,
   parseCodexResult,
   placeholderAuth,
 } from './harness-codex'
@@ -84,6 +89,38 @@ describe('parseCodexResult', () => {
     const result = parseCodexResult(1, stdout, '')
     expect(result).toMatchObject({ ok: false, summary: 'codex failed: model not found' })
     expect(result.quota).toBeUndefined()
+  })
+})
+
+describe('a failure with no event that says why', () => {
+  const warning =
+    '(node:168) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.\n(Use `node --trace-warnings ...` to show where the warning was created)\n'
+
+  it('does not report what Node says about itself as the reason, and gives the exit code instead', () => {
+    const result = parseCodexResult(1, '', warning)
+    expect(result.ok).toBe(false)
+    expect(result.summary).toBe('codex failed: exit 1')
+    expect(result.summary).not.toContain('UNDICI')
+  })
+
+  it('keeps what the agent did print to stderr, without the noise around it', () => {
+    const result = parseCodexResult(2, '', `${warning}error: unexpected argument\n`)
+    expect(result.summary).toBe('codex failed: error: unexpected argument (exit 2)')
+  })
+
+  it('says a kill with 137 is most likely memory, so it is treated as a failure of the environment', () => {
+    const result = parseCodexResult(137, '', warning)
+    expect(result.summary).toBe('codex failed: killed (most likely out of memory), exit 137')
+    expect(retryableFailure({ error: result.summary })).toBe('environment')
+    expect(isInfraFailure(result.summary)).toBe(true)
+  })
+
+  it('cleans only lines that are Node noise', () => {
+    expect(cleaned('(node:1) Warning: x\nreal error\n(Use `node --trace-warnings`)\n')).toBe(
+      'real error',
+    )
+    expect(cleaned('')).toBe('')
+    expect(cleaned('a (node:1) in the middle\n')).toBe('a (node:1) in the middle')
   })
 })
 

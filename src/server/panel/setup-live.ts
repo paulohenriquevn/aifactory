@@ -6,6 +6,7 @@ import { repository } from '../db/schema'
 import { githubAppFromEnv } from '../factory/deps'
 
 import { setupReport } from './setup'
+import { realProbes } from './setup-probes'
 
 /** What stands between this install and a first pull request, read from the environment and from GitHub. */
 export async function readSetup(env: NodeJS.ProcessEnv = process.env): Promise<SetupReport> {
@@ -19,5 +20,5 @@ export async function readSetup(env: NodeJS.ProcessEnv = process.env): Promise<S
     .select({ id: repository.id })
     .from(repository)
     .where(eq(repository.enabled, true))
-  return setupReport({ env, github, enabledRepositories: enabled.length })
+  return setupReport({ env, github, enabledRepositories: enabled.length, probes: realProbes })
 }

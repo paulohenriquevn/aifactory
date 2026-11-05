@@ -5,8 +5,17 @@ import { claudeCredentialFromEnv } from '../factory/harness-claude'
 import { codexCredentialFromEnv } from '../factory/harness-codex'
 import { vercelCredentials } from '../factory/vercel-sandbox'
 
+/** Questions the report cannot answer from the environment: they ask the machine or another service. */
+export type Probes = {
+  /** The Docker sandboxes running now, or nothing when the daemon does not answer. */
+  docker?: () => Promise<{ running: number } | undefined>
+  /** What an OpenRouter key can still spend, in dollars; nothing when it could not be asked. */
+  openrouterCredit?: (key: string) => Promise<number | undefined>
+}
+
 export type SetupInput = {
   env: NodeJS.ProcessEnv
+  probes?: Probes
   /** The App, when its credentials are there to build it. */
   github: (AppHooks & AppRepos) | undefined
   enabledRepositories: number
@@ -76,6 +85,87 @@ function agentItems(env: NodeJS.ProcessEnv): SetupItem[] {
 }
 
 /**
+ * Where agents run, as it is configured: on this machine in Docker, or on Vercel. Only the one in use is
+ * judged, because the credentials of the other say nothing about whether a run can start.
+ */
+export async function sandboxItem(env: NodeJS.ProcessEnv, probes: Probes): Promise<SetupItem> {
+  if (env.FACTORY_SANDBOX === 'docker') {
+    const docker = await probes.docker?.()
+    if (probes.docker && !docker) {
+      return {
+        id: 'sandbox',
+        label: 'Sandbox',
+        status: 'missing',
+        detail:
+          'FACTORY_SANDBOX is docker, but the Docker daemon does not answer. No agent runs without a sandbox: start Docker.',
+      }
+    }
+    return {
+      id: 'sandbox',
+      label: 'Sandbox',
+      status: 'ok',
+      detail: docker
+        ? `Docker sandboxes on this machine (${docker.running} running now).`
+        : 'Docker sandboxes on this machine.',
+    }
+  }
+  return vercelCredentials(env)
+    ? {
+        id: 'sandbox',
+        label: 'Sandbox',
+        status: 'ok',
+        detail: 'Vercel Sandbox credentials are set.',
+      }
+    : {
+        id: 'sandbox',
+        label: 'Sandbox',
+        status: 'missing',
+        detail:
+          'VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID are not all set. No agent runs without a sandbox.',
+      }
+}
+
+const CREDITS_PAGE = { label: 'Add credit', href: 'https://openrouter.ai/settings/credits' }
+
+/**
+ * The assistant of the chat and the page guides. It runs on OpenRouter or on the owner's ChatGPT, so it
+ * never blocks the factory, but a key with no credit left is the kind of thing that is found out by a chat
+ * that does not answer, and this is where to see it first.
+ */
+export async function chatItem(env: NodeJS.ProcessEnv, probes: Probes): Promise<SetupItem> {
+  const key = env.OPENROUTER_API_KEY
+  if (!key) {
+    return {
+      id: 'chat',
+      label: 'Chat and guides',
+      status: 'warn',
+      detail:
+        'OPENROUTER_API_KEY is not set. The chat and the guides can still use your ChatGPT subscription: choose it in the model picker.',
+    }
+  }
+  const left = await probes.openrouterCredit?.(key)
+  if (left !== undefined && left < 0.05) {
+    return {
+      id: 'chat',
+      label: 'Chat and guides',
+      status: 'warn',
+      detail:
+        'The OpenRouter key has no credit left, so the chat and the guides cannot answer. Add credit, or choose ChatGPT in the model picker.',
+      link: CREDITS_PAGE,
+    }
+  }
+  return {
+    id: 'chat',
+    label: 'Chat and guides',
+    status: 'ok',
+    detail:
+      left === undefined
+        ? 'The OpenRouter key is set.'
+        : `The OpenRouter key has $${left.toFixed(2)} left.`,
+  }
+}
+
+/**
  * What stands between a fresh install and a first pull request, one line each, with the page that fixes
  * it where there is one. It reads configuration and asks GitHub; it never prints a secret, only whether
  * one is there and what pays for it.
@@ -84,6 +174,7 @@ export async function setupReport({
   env,
   github,
   enabledRepositories,
+  probes = {},
 }: SetupInput): Promise<SetupReport> {
   const items: SetupItem[] = []
   const slug = env.GITHUB_APP_SLUG
@@ -172,22 +263,7 @@ export async function setupReport({
           detail: 'GITHUB_WEBHOOK_SECRET is not set, so every delivery is refused.',
         },
   )
-  items.push(
-    vercelCredentials(env)
-      ? {
-          id: 'sandbox',
-          label: 'Sandbox',
-          status: 'ok',
-          detail: 'Vercel Sandbox credentials are set.',
-        }
-      : {
-          id: 'sandbox',
-          label: 'Sandbox',
-          status: 'missing',
-          detail:
-            'VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID are not all set. No agent runs without a sandbox.',
-        },
-  )
+  items.push(await sandboxItem(env, probes))
   const agents = agentItems(env)
   // One working agent is enough to start: the other is a choice, not a blocker.
   if (!agents.some((a) => a.status === 'ok')) {
@@ -195,6 +271,7 @@ export async function setupReport({
   }
   items.push(...agents)
   items.push(assistantItem(env))
+  items.push(await chatItem(env, probes))
   items.push(
     enabledRepositories > 0
       ? {

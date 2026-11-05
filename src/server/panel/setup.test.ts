@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import type { AppHooks, AppRepos, HookDelivery } from '../github/app'
 
-import { setupReport } from './setup'
+import { chatItem, sandboxItem, setupReport } from './setup'
+import { openrouterCredit } from './setup-probes'
 
 const full = {
   GITHUB_APP_SLUG: 'my-app',
@@ -54,6 +55,7 @@ describe('the setup report', () => {
       ['claude', 'ok'],
       ['codex', 'warn'],
       ['assistant', 'warn'],
+      ['chat', 'warn'],
       ['repositories', 'ok'],
     ])
     expect(item(report, 'github').detail).toBe('It reaches 1 repository.')
@@ -258,5 +260,110 @@ describe('the writing assistant', () => {
   it('never carries the key', async () => {
     const shown = await assistant({ ANTHROPIC_API_KEY: 'sk-ant-VERY-SECRET' })
     expect(JSON.stringify(shown)).not.toContain('VERY-SECRET')
+  })
+})
+
+describe('the sandbox line', () => {
+  it('judges Docker, not Vercel, when the factory runs on Docker, and says how many are running', async () => {
+    const env = { FACTORY_SANDBOX: 'docker' }
+    expect(await sandboxItem(env, { docker: async () => ({ running: 3 }) })).toMatchObject({
+      status: 'ok',
+      detail: 'Docker sandboxes on this machine (3 running now).',
+    })
+    expect(await sandboxItem(env, {})).toMatchObject({
+      status: 'ok',
+      detail: 'Docker sandboxes on this machine.',
+    })
+  })
+
+  it('blocks when the Docker daemon does not answer, and says what to do', async () => {
+    const item = await sandboxItem({ FACTORY_SANDBOX: 'docker' }, { docker: async () => undefined })
+    expect(item.status).toBe('missing')
+    expect(item.detail).toContain('start Docker')
+  })
+
+  it('does not call Vercel credentials a ready sandbox when Docker is the one in use', async () => {
+    const item = await sandboxItem(
+      { FACTORY_SANDBOX: 'docker', VERCEL_TOKEN: 't', VERCEL_TEAM_ID: 't', VERCEL_PROJECT_ID: 'p' },
+      { docker: async () => undefined },
+    )
+    expect(item.status).toBe('missing')
+  })
+})
+
+describe('the chat and guides line', () => {
+  it('warns, and points at ChatGPT, when there is no OpenRouter key', async () => {
+    const item = await chatItem({}, {})
+    expect(item.status).toBe('warn')
+    expect(item.detail).toContain('ChatGPT')
+  })
+
+  it('warns, with the page to add credit, when the key has none left', async () => {
+    for (const left of [0, 0.01, -1]) {
+      const item = await chatItem(
+        { OPENROUTER_API_KEY: 'k' },
+        { openrouterCredit: async () => left },
+      )
+      expect(item.status, String(left)).toBe('warn')
+      expect(item.link?.href).toBe('https://openrouter.ai/settings/credits')
+    }
+  })
+
+  it('is ready with credit, saying how much, and still ready when OpenRouter could not be asked', async () => {
+    expect(
+      await chatItem({ OPENROUTER_API_KEY: 'k' }, { openrouterCredit: async () => 12.345 }),
+    ).toMatchObject({
+      status: 'ok',
+      detail: 'The OpenRouter key has $12.35 left.',
+    })
+    expect(
+      await chatItem({ OPENROUTER_API_KEY: 'k' }, { openrouterCredit: async () => undefined }),
+    ).toMatchObject({
+      status: 'ok',
+      detail: 'The OpenRouter key is set.',
+    })
+    expect((await chatItem({ OPENROUTER_API_KEY: 'k' }, {})).status).toBe('ok')
+  })
+
+  it('never keeps the factory from being ready: it is a warning, not a blocker', async () => {
+    const report = await setupReport({
+      env: { ...full, OPENROUTER_API_KEY: 'k' },
+      github: app(),
+      enabledRepositories: 1,
+      probes: { openrouterCredit: async () => 0 },
+    })
+    expect(item(report, 'chat').status).toBe('warn')
+    expect(report.ready).toBe(true)
+  })
+})
+
+describe('asking OpenRouter for the credit left', () => {
+  const answer = (body: unknown, ok = true) =>
+    (async () => ({ ok, json: async () => body })) as unknown as typeof fetch
+
+  it('is what was bought minus what was used', async () => {
+    expect(
+      await openrouterCredit('k', answer({ data: { total_credits: 65, total_usage: 12.5 } })),
+    ).toBe(52.5)
+  })
+
+  it('says nothing when it was refused, malformed or unreachable, and sends the key only as a header', async () => {
+    expect(await openrouterCredit('k', answer({}, false))).toBeUndefined()
+    expect(await openrouterCredit('k', answer({ data: { total_credits: 1 } }))).toBeUndefined()
+    expect(await openrouterCredit('k', answer({}))).toBeUndefined()
+    expect(
+      await openrouterCredit('k', (async () => {
+        throw new Error('offline')
+      }) as unknown as typeof fetch),
+    ).toBeUndefined()
+    let seen: RequestInit | undefined
+    let url = ''
+    await openrouterCredit('secret', (async (u: string, init: RequestInit) => {
+      url = u
+      seen = init
+      return { ok: false }
+    }) as unknown as typeof fetch)
+    expect(url).not.toContain('secret')
+    expect((seen?.headers as Record<string, string>).authorization).toBe('Bearer secret')
   })
 })

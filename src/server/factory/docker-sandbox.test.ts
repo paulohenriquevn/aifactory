@@ -284,6 +284,46 @@ describe('using a docker sandbox', () => {
     }
   })
 
+  it('says a command killed for the sandbox memory limit ran out of memory, and is not a timeout', async () => {
+    const { docker } = fakeDocker((args) =>
+      args.includes('timeout')
+        ? { stdout: 'partial', stderr: 'Killed', code: 137 }
+        : args[0] === 'inspect'
+          ? ok('true\n')
+          : undefined,
+    )
+    const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
+    const result = await sandbox.backend.execute('pnpm build', { timeoutMs: 60_000 })
+    expect(result).toMatchObject({ exitCode: 137, timedOut: false, stdout: 'partial' })
+    expect(result.stderr).toContain('out of memory')
+    expect(result.stderr).toContain('Killed')
+    expect(result.stderr).not.toContain('timed out')
+    await sandbox.stop()
+  })
+
+  it('still calls a 137 a timeout when the sandbox was not out of memory', async () => {
+    const { docker } = fakeDocker((args) =>
+      args.includes('timeout')
+        ? { stdout: '', stderr: '', code: 137 }
+        : args[0] === 'inspect'
+          ? ok('false\n')
+          : undefined,
+    )
+    const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
+    expect(await sandbox.backend.execute('sleep 99', { timeoutMs: 2_000 })).toMatchObject({
+      exitCode: 124,
+      timedOut: true,
+    })
+    await sandbox.stop()
+  })
+
+  it('does not ask docker about memory unless the command was killed', async () => {
+    const { sandbox, calls } = await run({ stdout: '', stderr: '', code: 1 })
+    await sandbox.backend.execute('false')
+    expect(calls.some((c) => c.args[0] === 'inspect')).toBe(false)
+    await sandbox.stop()
+  })
+
   it('rounds the timeout up to a whole second, and never below one', async () => {
     const { sandbox, calls } = await run({ stdout: '', stderr: '', code: 0 })
     await sandbox.backend.execute('a', { timeoutMs: 1_200 })

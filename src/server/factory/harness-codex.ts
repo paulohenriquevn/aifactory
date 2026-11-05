@@ -242,6 +242,26 @@ type CodexEvent = {
  * Reads the JSON lines `codex exec --json` prints: the thread id for `resume`, the last thing the
  * agent said as the summary, and a failure or quota stop in the agent's own words.
  */
+/**
+ * What Node prints to stderr about itself, which says nothing about why the agent stopped. A run that failed
+ * was reported with only this ("EnvHttpProxyAgent is experimental"), and the real reason was lost.
+ */
+const NODE_NOISE = /^\(node:\d+\) |^\(Use `node --trace-/
+
+export function cleaned(stderr: string): string {
+  return stderr
+    .split('\n')
+    .filter((line) => !NODE_NOISE.test(line.trim()))
+    .join('\n')
+    .trim()
+}
+
+/** The exit code is the one fact that is always there: 137 is a kill, almost always for memory. */
+function withExitCode(exitCode: number, text: string): string {
+  const killed = exitCode === 137 ? 'killed (most likely out of memory), ' : ''
+  return text ? `${text} (${killed}exit ${exitCode})` : `${killed}exit ${exitCode}`
+}
+
 export function parseCodexResult(exitCode: number, stdout: string, stderr: string): HarnessResult {
   let sessionId: string | undefined
   let summary = ''
@@ -271,7 +291,8 @@ export function parseCodexResult(exitCode: number, stdout: string, stderr: strin
     }
   }
   const ok = exitCode === 0 && completed && failure === undefined
-  const text = failure ?? (ok ? '' : (stderr || stdout).trim().slice(-1000))
+  const text =
+    failure ?? (ok ? '' : withExitCode(exitCode, (cleaned(stderr) || stdout).trim().slice(-1000)))
   const quota = ok ? undefined : detectQuota(text)
   return {
     ok,

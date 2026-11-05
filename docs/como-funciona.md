@@ -763,6 +763,10 @@ responde `/api/health` mesmo sem as credenciais.
    do servidor.
 2. O túnel do Cloudflare expõe só o webhook e o health check (README, "Exposição pública").
 3. Para publicar uma mudança, `scripts/deploy.sh`: compila e reinicia o servidor, sem tocar no túnel.
+   Ele **recusa** publicar enquanto há tarefas trabalhando, porque reiniciar interrompe as execuções
+   daquele processo e cada uma custa minutos da cota do agente. Espere, pare o alimentador para a fila
+   esvaziar, ou use `FORCE=1 scripts/deploy.sh` sabendo o que se perde. Os workers (`aifactory-worker@N`)
+   rodam o código antigo até serem reiniciados; uma mudança só de interface não precisa reiniciá-los.
 4. Ponha a label `factory` numa issue de um repositório onde o App está instalado.
 5. Acompanhe os estágios:
 
@@ -796,6 +800,17 @@ novo as que falharam, enquanto o servidor ou o túnel estavam fora. Uma entrega 
 tentativa dela foi aceita, se a fábrica já a gravou ou se já foi pedida três vezes. O GitHub guarda três
 dias. Os ids de entrega passam do que um número do JavaScript guarda sem arredondar, então são lidos
 como texto.
+
+### Memória e quantas execuções ao mesmo tempo
+
+Cada execução é um sandbox com limite de memória (`FACTORY_SANDBOX_MEMORY`, 5g). O número de execuções
+simultâneas é o número de processos que tiram jobs da fila: o servidor e cada `aifactory-worker@N`
+ligado. A conta tem de fechar com a RAM da máquina: **execuções × limite + o que a máquina já usa**. Com
+3 execuções de 4g numa máquina de 15 GB que já usava uns 3 GB, dois sandboxes foram mortos pelo kernel
+(`OOMKilled`) construindo o theokit (dois `tsup` de 2,2 GB cada) e a máquina chegou a 8,5 GB de swap.
+Por isso o padrão são 2 execuções de 5g. Uma execução morta por memória aparece como
+`codex failed: killed (most likely out of memory), exit 137` ou `out of memory: the sandbox hit its
+memory limit`, e é tratada como falha do ambiente (a fábrica repete sozinha), não do trabalho.
 
 ## Quando algo falha
 
