@@ -658,6 +658,18 @@ commit_refs`), que não se repetiu; o push agora tenta até três vezes.
   `[planId]`), e a lista de 120 repositórios levava 4,5 segundos, então ficou guardada por 15. O GitHub
   Projects ficou de fora: uma App não alcança o Project de uma conta pessoal. Falta do M10: a receita
   `.factory/setup.json` (hoje o dono ajusta no painel) e o primeiro projeto que não seja o playground.
+- Sandbox em Docker (2026-11-05). Depois de 25 execuções a Vercel respondeu `402: Hobby plan usage limit
+exceeded`, com reset em 2026-12-01, e nenhum sandbox novo pôde ser criado: o alimentador teria marcado o
+  backlog inteiro como falho. Em vez de esperar o mês virar ou de depender de um plano pago, a fábrica ganhou
+  um provedor de sandbox em containers locais (`FACTORY_SANDBOX=docker`), com a mesma garantia de que a
+  credencial nunca entra no sandbox: rede privada sem saída, mais um proxy com lista de domínios que anexa os
+  cabeçalhos por fora. Verificado com Docker de verdade (8 testes: domínio permitido responde por HTTPS com a
+  CA, outro é recusado, o cabeçalho chega ao servidor e não existe no container, timeout, limpeza) e com o
+  Codex de ponta a ponta no playground (PR `#60` mergeado em `workspace`, `develop` avançada). O pedido do
+  Paulo, "evoluir a aifactory quando achar um problema", ficou assim: executor de uma tarefa por vez
+  (workers extras), hooks do repositório no commit, push com backoff, repositório sem perguntas, branch de
+  release por repositório, e agora o sandbox local. Pendente do Paulo: a outra saída é o plano Pro da Vercel,
+  que só ele contrata.
 - Alimentador do backlog e branch de release (2026-11-05, objetivo do Paulo: a fábrica implementar todos os
   itens do backlog, com o Codex). `scripts/backlog.mjs` (lógica pura, 27 testes) e `scripts/backlog-feed.mjs`
   (o laço) transformam os 191 itens abertos do BACKLOG.md do theokit em issues autocontidas, por repositório

@@ -77,6 +77,34 @@ Depois de um retrabalho, a task volta a `build` e repete `push`, `verify` e `rev
 O job `run-task` não tenta de novo sozinho (`maxAttempts: 1`): repetir gastaria o orçamento do
 agente na mesma issue. Uma task que falha fica em `failed` para uma pessoa olhar.
 
+## Onde os sandboxes rodam
+
+Por padrão, num Vercel Sandbox. `FACTORY_SANDBOX=docker` os roda como containers nesta máquina, para quando
+o plano da Vercel não tem mais capacidade (o plano Hobby devolve `402 usage limit exceeded` até o mês virar,
+e isso aconteceu em 2026-11-05 depois de 25 execuções) ou para manter o trabalho fora da nuvem.
+
+O modelo de segurança é o mesmo, com outras peças. Cada sandbox ganha uma rede privada **sem saída** e um
+container de proxy (mitmproxy) que é a única coisa nessa rede que alcança a internet. O proxy aplica a lista
+de domínios da execução e anexa os cabeçalhos de cada regra, então a credencial nunca existe dentro do
+sandbox: ela fica num arquivo do host, montado só no proxy. O sandbox confia na CA do proxy por um bundle
+que todas as ferramentas leem (git, curl, Node, pnpm, Codex). O container roda como usuário comum, sem
+nenhuma capability, com limite de memória (`FACTORY_SANDBOX_MEMORY`, 5g), CPU (`FACTORY_SANDBOX_CPUS`, 3) e
+processos. Um sandbox parado remove o proxy, a rede e as regras, e um novo sandbox varre o que um processo
+morto deixou para trás.
+
+O que muda em relação à Vercel, sem esconder:
+
+- o isolamento é de container, que divide o kernel do host, e não de microVM. É a mesma máquina onde estão
+  os segredos da fábrica, mas o container não monta nada do host;
+- não salva o disco para retomar depois, então uma execução que faz pergunta falha. Use com repositórios
+  em que o agente nunca pergunta (`askQuestions` desligado);
+- `bwrap` não funciona lá dentro, porque liberar isso exigiria `SYS_ADMIN`, que anula o isolamento. Testes que
+  dependem de `bwrap` ficam fora do gate desses repositórios.
+
+A imagem (`ops/sandbox`) é construída na primeira vez, e o teste `docker-sandbox.e2e.test.ts` roda
+containers de verdade: a lista de domínios, a injeção do cabeçalho (conferida por um servidor local que
+ecoa o que recebeu), o HTTPS pelo proxy e a limpeza.
+
 ## Isolamento e segredos
 
 A fábrica só roda um agente dentro de um sandbox com uma lista explícita de domínios de saída.

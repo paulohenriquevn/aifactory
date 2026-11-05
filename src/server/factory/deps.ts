@@ -6,7 +6,7 @@ import { createGithubApp } from '../github/app'
 import type { ReleaseMode } from './deliver'
 import { DEFAULT_HARNESS, harnessRegistry, pickHarness } from './harness-registry'
 import type { RunTaskDeps } from './run-task'
-import { vercelSandboxProvider } from './vercel-sandbox'
+import { sandboxProviderFromEnv } from './sandbox-provider'
 
 const required = (env: NodeJS.ProcessEnv, name: string): string => {
   const value = env[name]
@@ -58,7 +58,7 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
   return {
     db: getDb(),
     github: githubAppFromEnv(env),
-    sandbox: vercelSandboxProvider(),
+    sandbox: sandboxProviderFromEnv(env),
     harness: pick,
     releaseMode: releaseModeFromEnv(env),
     reviewer: pickReviewer,

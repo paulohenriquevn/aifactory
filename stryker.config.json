@@ -22,7 +22,9 @@
     "src/server/agents/hooks/only-tools.ts",
     "src/server/factory/repo-reader.ts:1-50",
     "src/app/lib/repo-form.ts",
-    "src/server/factory/branches.ts"
+    "src/server/factory/branches.ts",
+    "src/server/factory/docker-sandbox.ts",
+    "src/server/factory/sandbox-provider.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

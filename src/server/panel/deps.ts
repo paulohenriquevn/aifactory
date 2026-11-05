@@ -3,7 +3,7 @@ import { jobBackend } from '../factory/job-backend'
 import { githubAppFromEnv } from '../factory/deps'
 import { harnessRegistry } from '../factory/harness-registry'
 import { inTransactionForPlan, inTransactionForRun } from '../factory/resume-queue'
-import { vercelSandboxProvider } from '../factory/vercel-sandbox'
+import { sandboxProviderFromEnv } from '../factory/sandbox-provider'
 import { createGithubApp } from '../github/app'
 import { createIssuesApi } from '../github/issues-api'
 import { createGithubApi } from '../github/pulls'
@@ -30,7 +30,9 @@ export function actionDeps(env: NodeJS.ProcessEnv = process.env): ActionDeps {
     enqueueResume: async (input, key) => {
       await jobBackend().enqueue({ name: 'resume-task', input, idempotencyKey: key })
     },
-    deleteSnapshot: (snapshotId) => vercelSandboxProvider().deleteSnapshot!(snapshotId),
+    deleteSnapshot: async (snapshotId) => {
+      await sandboxProviderFromEnv(env).deleteSnapshot?.(snapshotId)
+    },
   }
 }
 

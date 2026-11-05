@@ -293,6 +293,7 @@ describe('isInfraFailure', () => {
       'fetch failed',
       'Worker terminated: JS heap out of memory',
       'the factory was restarted while this run was working',
+      'Status code 402 is not ok: Hobby plan usage limit exceeded',
     ]) {
       expect(isInfraFailure(reason), reason).toBe(true)
     }
