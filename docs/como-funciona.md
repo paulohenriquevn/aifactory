@@ -376,10 +376,44 @@ Três gates rodam no job `quality` do CI, ao lado do `check`. Localmente: `pnpm 
 
 ## O painel
 
-Uma interface local para ver e conduzir a fábrica. Abre em `http://localhost:3000` e mostra, ao vivo:
+Uma interface local para ver e conduzir a fábrica. Abre em `http://localhost:3000`.
 
-- O quadro: uma coluna por situação (na fila, trabalhando, esperando você, pull request, precisa de
-  uma pessoa), com o custo e o número de tentativas de cada task.
+**A casca.** Um menu lateral e duas abas no topo, Chat e Work. O menu tem o botão de novo chat, os
+lugares da fábrica (Quadro, Planos, Repositórios, Caixa de entrada, Saúde, Configuração, com a contagem
+do que espera ou está errado), as conversas fixadas e as recentes, e o menu da conta. Ele recolhe, e a
+escolha fica no navegador. `/` é um chat novo, `/chat/<id>` reabre uma conversa e `/work` é o quadro. Os
+rótulos da casca estão em português; as páginas de Work ainda estão em inglês.
+
+**O chat.** Uma conversa com um assistente que conhece a fábrica. Ele lê o estado por ferramentas
+(`factory_status`, `list_tasks`, `task_detail`, `backlog_progress`) e responde com o que leu, não de
+memória. Três ferramentas mudam algo e pedem a sua aprovação antes, num cartão: `retry_task`,
+`request_changes` e `start_job` (abre uma issue e começa). Um hook (`onlyTools`) impede qualquer outra
+ferramenta, porque o agente roda no servidor, onde estão as credenciais da fábrica.
+
+Dois agentes respondem, e o seletor no campo de mensagem escolhe entre eles:
+
+| Modelo     | Agente                 | Credencial                                                                                               |
+| ---------- | ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| OpenRouter | `agents/chat.ts`       | `OPENROUTER_API_KEY`; o modelo vem de `FACTORY_CHAT_MODEL` (padrão `openrouter/google/gemini-2.5-flash`) |
+| ChatGPT    | `agents/chat-codex.ts` | a assinatura do ChatGPT, pelo login de dispositivo do TheoKit; modelo em `FACTORY_CHAT_CODEX_MODEL`      |
+
+O login do ChatGPT é feito no próprio chat: ao escolher o modelo sem estar conectado, aparece um cartão
+com o endereço e o código, e a página percebe sozinha quando você termina. A credencial fica em
+`~/.theokit/auth.json` e é renovada pelo TheoKit. Ela é separada do login do Codex que a fábrica usa para
+construir (`~/.codex-factory-N`), porque um refresh token rotaciona e dois usuários do mesmo login se
+invalidariam. A cota da assinatura, porém, é a mesma.
+
+As conversas ficam no Postgres (`chat` e `chat_message`). Uma conversa nova só é criada quando a primeira
+resposta termina, e a página vai para o endereço dela. Como o agente não guarda sessão entre mensagens, o
+histórico viaja dentro da mensagem (as últimas 20, cortadas) e a tela mostra só o que você escreveu.
+
+**O que o painel mostra, ao vivo:**
+
+- O quadro: uma coluna por situação (na fila, trabalhando, esperando você, vai tentar sozinha, entregue,
+  precisa de uma pessoa), com o custo e o número de tentativas de cada task. Uma falha por cota do agente
+  ou por problema de ambiente (rede, GitHub, sandbox, reinício) cai em "Will retry itself", porque a
+  fábrica a repete sozinha quando passa. Só a falha do próprio trabalho fica em "Needs a person". Um PR
+  que a fábrica já integrou aparece como "integrated".
 - A caixa de entrada: só o que espera uma pessoa, do mais antigo ao mais novo. É uma pergunta do
   agente, um PR que ninguém aprovou, um trabalho entregue depois de três tentativas ou uma execução
   que falhou (com "sem cota" dito como tal).
@@ -677,6 +711,9 @@ responde `/api/health` mesmo sem as credenciais.
 | `FACTORY_CLAUDE_AUTH`                                 | `api-key` ou `subscription`, quando as duas existem  |
 | `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Vercel Sandbox, sem a validade de 12 horas do OIDC   |
 | `VERCEL_OIDC_TOKEN`                                   | alternativa de desenvolvimento, de `vercel env pull` |
+| `OPENROUTER_API_KEY`, `FACTORY_CHAT_MODEL`            | o assistente do chat no OpenRouter                   |
+| `FACTORY_CHAT_CODEX_MODEL`                            | o modelo do assistente na assinatura do ChatGPT      |
+| `FACTORY_JOBS=off`                                    | sobe uma prévia do painel sem pegar jobs da fila     |
 
 `.env.local` e `.secrets/` ficam fora do git, com modo 600.
 

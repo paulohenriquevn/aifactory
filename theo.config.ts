@@ -35,6 +35,8 @@ export default config()
  */
 function jobsFromEnv(): TheoConfigJobs | undefined {
   if (!storageFromEnv()) return undefined
+  // A preview of the panel must not take jobs from the queue the factory is working through.
+  if (process.env.FACTORY_JOBS === 'off') return undefined
   return {
     backend: jobBackend(),
     worker: { enabled: true, pollIntervalMs: 2_000, batchSize: 1, lockSeconds: LOCK_SECONDS },

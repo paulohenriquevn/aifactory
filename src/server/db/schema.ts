@@ -3,6 +3,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   real,
   serial,
   text,
@@ -336,3 +337,32 @@ export const planItem = pgTable('plan_item', {
   /** True once the `factory` label is on the issue, which is what starts the work. */
   started: boolean('started').notNull().default(false),
 })
+
+/**
+ * A conversation of the owner with the factory's assistant. The messages are kept in the shape the page
+ * renders them (`UIMessage`: an id, a role and parts), so a conversation is reopened exactly as it was,
+ * tool calls included.
+ */
+export const chat = pgTable('chat', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull().default(''),
+  pinned: boolean('pinned').notNull().default(false),
+  /** The model the owner chose for it: `openrouter` or `codex`, which picks the agent. */
+  model: text('model').notNull().default('openrouter'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const chatMessage = pgTable(
+  'chat_message',
+  {
+    chatId: text('chat_id')
+      .notNull()
+      .references(() => chat.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    id: text('id').notNull(),
+    role: text('role', { enum: ['user', 'assistant', 'system'] }).notNull(),
+    parts: jsonb('parts').$type<Record<string, unknown>[]>().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.chatId, table.position] })],
+)

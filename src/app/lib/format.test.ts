@@ -60,7 +60,7 @@ describe('stageLabel', () => {
       'handoff',
       'failed',
     ]
-    expect(all.map(stageLabel)).toEqual([
+    expect(all.map((s) => stageLabel(s))).toEqual([
       'queued',
       'starting sandbox',
       'building',
@@ -146,5 +146,16 @@ describe('describeEvent', () => {
 
   it('has nothing to say for stages that carry nothing', () => {
     expect(line('pr', {})).toBe('')
+  })
+})
+
+describe('stageLabel with what is known of the task', () => {
+  it('calls a merged task integrated, and a failure that passes by itself a wait', () => {
+    expect(stageLabel('done', { integrated: true })).toBe('integrated')
+    expect(stageLabel('done', { integrated: false })).toBe('pull request open')
+    expect(stageLabel('failed', { retryable: 'quota' })).toBe('waiting for the limit')
+    expect(stageLabel('failed', { retryable: 'environment' })).toBe('will retry')
+    expect(stageLabel('failed', { retryable: null })).toBe('failed')
+    expect(stageLabel('build', { integrated: true, retryable: 'quota' })).toBe('building')
   })
 })

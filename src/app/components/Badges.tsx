@@ -1,6 +1,6 @@
 import { Badge } from '@usetheo/ui'
 
-import type { Stage } from '../../shared/panel'
+import type { Retryable, Stage } from '../../shared/panel'
 import { stageLabel } from '../lib/format'
 
 type Variant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'destructive'
@@ -20,10 +20,20 @@ const TONE: Record<Stage, Variant> = {
   failed: 'destructive',
 }
 
-export function StageBadge({ stage }: { stage: Stage }) {
+export function StageBadge({
+  stage,
+  integrated,
+  retryable,
+}: {
+  stage: Stage
+  integrated?: boolean
+  retryable?: Retryable
+}) {
+  // A failure that will pass by itself is a wait, not an alarm.
+  const variant = stage === 'failed' && retryable ? 'warning' : TONE[stage]
   return (
-    <Badge variant={TONE[stage]} className="whitespace-nowrap">
-      {stageLabel(stage)}
+    <Badge variant={variant} className="whitespace-nowrap">
+      {stageLabel(stage, { integrated, retryable })}
     </Badge>
   )
 }

@@ -73,7 +73,11 @@ repositório um webhook de eventos `Issues`, com conteúdo `application/json` e 
 
 ### Painel
 
-`http://localhost:3000`, com o token de `FACTORY_PANEL_TOKEN`. O servidor deve escutar só nesta
+`http://localhost:3000`, com o token de `FACTORY_PANEL_TOKEN`. A tela inicial é um chat com o assistente
+da fábrica (OpenRouter com `OPENROUTER_API_KEY`, ou a sua assinatura do ChatGPT, conectada no próprio
+chat); o quadro e as outras páginas ficam na aba Work. Para ver uma mudança de interface sem tocar nos
+serviços, `FACTORY_JOBS=off FACTORY_WORKER_ONLY=1 PORT=3010 pnpm dev` sobe uma prévia que não pega jobs.
+O servidor deve escutar só nesta
 máquina (`HOST=127.0.0.1 pnpm start`): o painel não passa pelo túnel, que só deixa o webhook e o health
 check saírem. Veja [como a fábrica funciona](docs/como-funciona.md#o-painel).
 

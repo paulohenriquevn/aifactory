@@ -1,89 +1,94 @@
 import './globals.css'
 
-import { ThemeProvider, ThemeSwitcher, builtinThemes } from '@theokit/ui'
-import { Button } from '@usetheo/ui'
-import { useEffect } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
+import { ThemeProvider, builtinThemes } from '@theokit/ui'
+import { useEffect, useState } from 'react'
+import { Outlet, useLocation, useNavigate } from 'react-router'
 
 import type { HealthReport, InboxItem } from '../shared/panel'
 
+import { Sidebar } from './components/shell/Sidebar'
+import { inWork, TopBar } from './components/shell/TopBar'
 import { post } from './lib/api'
+import { ChatsProvider } from './lib/chats'
 import { useResource } from './lib/live'
 
-const link = ({ isActive }: { isActive: boolean }) =>
-  `rounded-lg px-3 py-1.5 text-sm ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`
+const HIDDEN_KEY = 'aifactory.menu.hidden'
 
-/** The frame of every page: the nav, and the way to the login for someone who is not signed in. */
+/** Whether the owner hid the menu last time, kept in the browser. */
+function useMenuHidden(): [boolean, (hidden: boolean) => void] {
+  const [hidden, set] = useState(() => {
+    try {
+      return window.localStorage.getItem(HIDDEN_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  return [
+    hidden,
+    (next) => {
+      set(next)
+      try {
+        window.localStorage.setItem(HIDDEN_KEY, next ? '1' : '0')
+      } catch {
+        // A browser that keeps nothing still has a menu that works for this visit.
+      }
+    },
+  ]
+}
+
+/** The frame of every page: the menu on the left, the bar on top, and the way to the login. */
 export default function RootLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const onLogin = location.pathname === '/login'
-  const me = useResource<{ owner: boolean }>('/api/panel/me', { everyMs: 60_000 })
+  const me = useResource<{ owner: boolean; name?: string }>('/api/panel/me', { everyMs: 60_000 })
   const inbox = useResource<{ items: InboxItem[] }>('/api/panel/inbox')
   const health = useResource<HealthReport>('/api/panel/health', { everyMs: 60_000 })
+  const [menuHidden, setMenuHidden] = useMenuHidden()
 
   useEffect(() => {
     if (me.data && !me.data.owner && !onLogin) void navigate('/login', { replace: true })
   }, [me.data, onLogin, navigate])
 
-  const waiting = inbox.data?.items.length ?? 0
-  const wrong = health.data?.findings.length ?? 0
+  const signedIn = me.data?.owner === true
+  const signOut = () =>
+    void post('/api/panel/logout').then(() => {
+      me.reload()
+      void navigate('/login')
+    })
 
   return (
     <ThemeProvider themes={builtinThemes} defaultTheme="violet-forge" defaultMode="dark">
-      <div className="min-h-screen bg-background text-foreground">
-        <header className="border-b border-border bg-card">
-          <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3">
-            <span className="font-semibold">aifactory</span>
-            {me.data?.owner ? (
-              <>
-                <nav className="flex gap-1" aria-label="Main">
-                  <NavLink to="/" end className={link}>
-                    Board
-                  </NavLink>
-                  <NavLink to="/plans" className={link}>
-                    Plans
-                  </NavLink>
-                  <NavLink to="/repositories" className={link}>
-                    Repositories
-                  </NavLink>
-                  <NavLink to="/inbox" className={link}>
-                    Inbox{waiting > 0 ? ` (${waiting})` : ''}
-                  </NavLink>
-                  <NavLink to="/health" className={link}>
-                    Health{wrong > 0 ? ` (${wrong})` : ''}
-                  </NavLink>
-                  <NavLink to="/setup" className={link}>
-                    Setup
-                  </NavLink>
-                </nav>
-                <div className="ml-auto flex items-center gap-2">
-                  <ThemeSwitcher showModeToggle />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      void post('/api/panel/logout').then(() => {
-                        me.reload()
-                        void navigate('/login')
-                      })
-                    }
-                  >
-                    Sign out
-                  </Button>
-                </div>
-              </>
+      <ChatsProvider enabled={signedIn}>
+        <div className="flex h-screen bg-[#0b0b0c] text-foreground">
+          {signedIn && !menuHidden ? (
+            <Sidebar
+              onToggle={() => setMenuHidden(true)}
+              waiting={inbox.data?.items.length ?? 0}
+              wrong={health.data?.findings.length ?? 0}
+              name={me.data?.name ?? 'dono'}
+              plan="dono da fábrica"
+              onSignOut={signOut}
+            />
+          ) : null}
+          <div className="flex min-w-0 flex-1 flex-col">
+            {signedIn ? (
+              <TopBar menuHidden={menuHidden} onShowMenu={() => setMenuHidden(false)} />
             ) : null}
+            <main className="min-h-0 flex-1 overflow-y-auto">
+              {signedIn && inWork(location.pathname) ? (
+                <div className="mx-auto max-w-7xl px-6 pb-10 pt-2">
+                  <Outlet />
+                </div>
+              ) : signedIn || onLogin ? (
+                <Outlet />
+              ) : (
+                <p className="p-6 text-sm text-muted-foreground">Carregando…</p>
+              )}
+            </main>
           </div>
-        </header>
-        <main className="mx-auto max-w-7xl px-4 py-6">
-          {me.data?.owner || onLogin ? (
-            <Outlet />
-          ) : (
-            <p className="text-sm text-muted-foreground">Loading…</p>
-          )}
-        </main>
-      </div>
+        </div>
+      </ChatsProvider>
     </ThemeProvider>
   )
 }

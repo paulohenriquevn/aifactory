@@ -103,6 +103,7 @@ describe('listTasks', () => {
       pullRequestUrl: 'https://github.com/paulo/app/pull/1',
       approved: false,
       integrated: false,
+      retryable: null,
     })
     expect(cards.find((c) => c.id !== id)?.column).toBe('attention')
     expect(new Set(cards.map((c) => c.column))).toEqual(new Set(['review', 'attention']))
@@ -137,6 +138,29 @@ describe('listTasks', () => {
 
     await getDb().update(task).set({ headSha: 'sha-2' }).where(eq(task.id, id))
     expect((await listTasks(getDb()))[0].approved).toBe(false)
+  })
+
+  it('puts a failure that passes by itself in its own column, by what the last failure said', async () => {
+    const quota = await seed('failed', {}, [{ stage: 'failed', detail: { quota: true } }])
+    const network = await seed('failed', {}, [
+      { stage: 'failed', detail: { error: 'git push: remote rejected' } },
+    ])
+    const work = await seed('failed', {}, [
+      { stage: 'failed', detail: { error: 'the agent made no change' } },
+    ])
+    const healed = await seed('failed', {}, [
+      { stage: 'failed', detail: { quota: true } },
+      { stage: 'failed', detail: { error: 'the agent made no change' } },
+    ])
+    const running = await seed('build', {}, [{ stage: 'failed', detail: { quota: true } }])
+
+    const cards = new Map((await listTasks(getDb())).map((c) => [c.id, c]))
+
+    expect(cards.get(quota)).toMatchObject({ column: 'retrying', retryable: 'quota' })
+    expect(cards.get(network)).toMatchObject({ column: 'retrying', retryable: 'environment' })
+    expect(cards.get(work)).toMatchObject({ column: 'attention', retryable: null })
+    expect(cards.get(healed)).toMatchObject({ column: 'attention', retryable: null })
+    expect(cards.get(running)).toMatchObject({ column: 'working', retryable: null })
   })
 })
 

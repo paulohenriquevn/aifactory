@@ -27,7 +27,19 @@ const LABELS: Record<Stage, string> = {
   failed: 'failed',
 }
 
-export const stageLabel = (stage: Stage) => LABELS[stage]
+/**
+ * What a stage is called. A finished task whose pull request the factory already merged is "integrated", not
+ * "pull request open", and a failure the factory will repeat says so instead of "failed".
+ */
+export function stageLabel(
+  stage: Stage,
+  extra: { integrated?: boolean; retryable?: 'quota' | 'environment' | null } = {},
+): string {
+  if (stage === 'done' && extra.integrated) return 'integrated'
+  if (stage === 'failed' && extra.retryable === 'quota') return 'waiting for the limit'
+  if (stage === 'failed' && extra.retryable === 'environment') return 'will retry'
+  return LABELS[stage]
+}
 
 /** One line about what happened at a stage, from what the factory recorded. */
 export function describeEvent(event: TimelineEvent): string {

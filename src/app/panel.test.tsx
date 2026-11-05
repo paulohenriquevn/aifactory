@@ -36,6 +36,7 @@ const base: TaskCard = {
   updatedAt: '2026-11-04T10:05:00Z',
   approved: false,
   integrated: false,
+  retryable: null,
   preRelease: {
     tag: 'pre/7-abcdef1',
     url: 'https://github.com/paulo/app/releases/tag/pre%2F7-abcdef1',

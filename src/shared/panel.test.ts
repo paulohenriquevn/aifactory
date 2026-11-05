@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { columnOf, COLUMNS, type Column, type Stage } from './panel'
+import { columnOf, COLUMNS, retryableFailure, type Column, type Stage } from './panel'
 
 describe('columnOf', () => {
   const expected: Record<Stage, Column> = {
@@ -29,6 +29,7 @@ describe('columnOf', () => {
       'queued',
       'working',
       'waiting',
+      'retrying',
       'review',
       'released',
       'attention',
@@ -42,9 +43,32 @@ describe('columnOf', () => {
       'Queued',
       'Working',
       'Waiting for you',
-      'Pull request',
+      'Will retry itself',
+      'Delivered',
       'Released',
       'Needs a person',
     ])
+  })
+})
+
+describe('a failure that passes by itself', () => {
+  it('goes to its own column, only when the task failed', () => {
+    expect(columnOf('failed', 'quota')).toBe('retrying')
+    expect(columnOf('failed', 'environment')).toBe('retrying')
+    expect(columnOf('failed', null)).toBe('attention')
+    expect(columnOf('failed')).toBe('attention')
+    expect(columnOf('build', 'quota')).toBe('working')
+  })
+
+  it('is told by the usage limit flag or by an error of the environment', () => {
+    expect(retryableFailure({ quota: true })).toBe('quota')
+    expect(retryableFailure({ error: 'git push: remote rejected' })).toBe('environment')
+    expect(retryableFailure({ error: 'GitHub answered 502' })).toBe('environment')
+    expect(retryableFailure({ error: 'Status code 402' })).toBe('environment')
+    expect(retryableFailure({ error: 'the agent made no change' })).toBeNull()
+    expect(retryableFailure({ error: 42 })).toBeNull()
+    expect(retryableFailure({})).toBeNull()
+    expect(retryableFailure(null)).toBeNull()
+    expect(retryableFailure(undefined)).toBeNull()
   })
 })

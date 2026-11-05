@@ -39,7 +39,11 @@ export default function InboxPage() {
                   </div>
                   <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{summary}</p>
                   <div className="mt-2 flex items-center gap-3">
-                    <StageBadge stage={task.stage} />
+                    <StageBadge
+                      stage={task.stage}
+                      integrated={task.integrated}
+                      retryable={task.retryable}
+                    />
                     <span className="text-xs text-muted-foreground">{money(task.costUsd)}</span>
                   </div>
                 </Link>

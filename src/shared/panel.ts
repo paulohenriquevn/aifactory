@@ -15,18 +15,38 @@ export type Stage =
   | 'failed'
 
 /** Where a stage sits on the board. */
-export type Column = 'queued' | 'working' | 'waiting' | 'review' | 'released' | 'attention'
+export type Column =
+  'queued' | 'working' | 'waiting' | 'retrying' | 'review' | 'released' | 'attention'
 
 export const COLUMNS: { id: Column; title: string }[] = [
   { id: 'queued', title: 'Queued' },
   { id: 'working', title: 'Working' },
   { id: 'waiting', title: 'Waiting for you' },
-  { id: 'review', title: 'Pull request' },
+  { id: 'retrying', title: 'Will retry itself' },
+  { id: 'review', title: 'Delivered' },
   { id: 'released', title: 'Released' },
   { id: 'attention', title: 'Needs a person' },
 ]
 
-export function columnOf(stage: Stage): Column {
+/**
+ * Why a failed task is not waiting for a person: the agent's usage limit, or the environment (GitHub, the
+ * network, the sandbox, a restart). Both pass, and the factory runs the task again once they have. A failure
+ * of the work itself is neither, and stays with a person.
+ */
+export type Retryable = 'quota' | 'environment' | null
+
+const ENVIRONMENT =
+  /Internal Server Error|remote rejected|GitHub answered 5\d\d|\b50[234]\b|\b429\b|ECONN|ETIMEDOUT|ENOTFOUND|socket|fetch failed|out of memory|OOM|heap|was restarted|usage limit exceeded|Status code 402|timed out after \d+ ms|clone failed/i
+
+/** From the detail the factory recorded when a task failed. */
+export function retryableFailure(detail: Record<string, unknown> | null | undefined): Retryable {
+  if (!detail) return null
+  if (detail.quota === true) return 'quota'
+  return typeof detail.error === 'string' && ENVIRONMENT.test(detail.error) ? 'environment' : null
+}
+
+export function columnOf(stage: Stage, retryable: Retryable = null): Column {
+  if (stage === 'failed' && retryable) return 'retrying'
   switch (stage) {
     case 'intake':
       return 'queued'
@@ -136,6 +156,8 @@ export type TaskCard = {
   approved: boolean
   /** The pull request was merged into the integration branch, so it is on the pre-release branch too. */
   integrated: boolean
+  /** A failed task the factory will run again by itself once a limit or an outage has passed. */
+  retryable: Retryable
   /** The factory's delivery of the commit the pull request is at, if it made one. */
   preRelease: { tag: string; url: string } | null
   release: { tag: string; url: string } | null
@@ -283,3 +305,24 @@ export type SetupItem = {
 }
 
 export type SetupReport = { ready: boolean; items: SetupItem[] }
+
+/** A conversation as the side menu lists it. */
+export type ChatSummary = {
+  id: string
+  title: string
+  pinned: boolean
+  model: ChatModel
+  updatedAt: string
+}
+
+/** Which agent answers: the OpenRouter one, or the one that uses the owner's ChatGPT (Codex) subscription. */
+export type ChatModel = 'openrouter' | 'codex'
+
+/** A message as the page renders it: an id, a role, and parts (text, tool calls, ...). */
+export type ChatMessageView = {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  parts: Record<string, unknown>[]
+}
+
+export type ChatDetail = { chat: ChatSummary; messages: ChatMessageView[] }

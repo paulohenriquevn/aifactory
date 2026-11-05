@@ -15,6 +15,7 @@ import {
 } from '../db/schema'
 import {
   columnOf,
+  retryableFailure,
   type DecisionView,
   type DeliveryView,
   type CostGroup,
@@ -63,6 +64,14 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
     .where(inArray(delivery.taskId, ids))
     .orderBy(asc(delivery.id))
   const watched = await db.select().from(watch).where(inArray(watch.taskId, ids))
+  const failures = await db
+    .selectDistinctOn([stageEvent.taskId], { taskId: stageEvent.taskId, detail: stageEvent.detail })
+    .from(stageEvent)
+    .where(and(inArray(stageEvent.taskId, ids), eq(stageEvent.stage, 'failed')))
+    .orderBy(stageEvent.taskId, desc(stageEvent.id))
+  const retryable = new Map(
+    failures.map((f) => [f.taskId, retryableFailure(f.detail as Record<string, unknown> | null)]),
+  )
   const byTask = new Map(activity.map((a) => [a.taskId, a]))
   return rows.map((r) => {
     const seen = byTask.get(r.id)
@@ -73,7 +82,10 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       issueNumber: r.issueNumber,
       title: r.issueTitle,
       stage: r.stage as Stage,
-      column: columnOf(r.stage as Stage),
+      column: columnOf(
+        r.stage as Stage,
+        r.stage === 'failed' ? (retryable.get(r.id) ?? null) : null,
+      ),
       pullRequestUrl: r.pullRequestUrl,
       headSha: r.headSha,
       costUsd: r.costUsd,
@@ -82,6 +94,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       updatedAt: iso(new Date(seen?.last ?? r.createdAt)),
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
       integrated: r.mergedSha !== null,
+      retryable: r.stage === 'failed' ? (retryable.get(r.id) ?? null) : null,
       preRelease: lastDelivery(delivered, r, 'prerelease'),
       release: lastDelivery(delivered, r, 'release'),
       mainRed: watched.some((w) => w.taskId === r.id && w.status === 'red' && !w.acknowledgedAt),

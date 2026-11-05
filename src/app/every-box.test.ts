@@ -13,7 +13,8 @@ const files = (dir: string): string[] =>
 describe('the assistant is under every text box', () => {
   it('has an Assist in each file of the panel that has a text area, so no one is left to write alone', () => {
     const alone = files('src/app')
-      .filter((f) => !f.endsWith('Assist.tsx'))
+      // The chat composer is the assistant itself: a box to talk to it needs no other one under it.
+      .filter((f) => !f.endsWith('Assist.tsx') && !f.endsWith('PillComposer.tsx'))
       .filter((f) => /<Textarea|<textarea/.test(readFileSync(f, 'utf8')))
       .filter((f) => !readFileSync(f, 'utf8').includes('<Assist'))
     expect(alone).toEqual([])

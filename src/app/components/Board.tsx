@@ -7,7 +7,7 @@ import { ago, money } from '../lib/format'
 import { StageBadge } from './Badges'
 
 /** The board's address with a task open in the side panel. */
-export const openTask = (id: number) => ({ pathname: '/', search: `?task=${id}` })
+export const openTask = (id: number) => ({ pathname: '/work', search: `?task=${id}` })
 
 export function Card({ task }: { task: TaskCard }) {
   return (
@@ -18,7 +18,7 @@ export function Card({ task }: { task: TaskCard }) {
         </div>
         <div className="mt-1 text-sm font-medium text-foreground">{task.title}</div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <StageBadge stage={task.stage} />
+          <StageBadge stage={task.stage} integrated={task.integrated} retryable={task.retryable} />
           <span className="text-xs text-muted-foreground">
             {money(task.costUsd)} · {ago(task.updatedAt)}
           </span>
@@ -38,7 +38,7 @@ export function Card({ task }: { task: TaskCard }) {
 
 export function Board({ tasks }: { tasks: TaskCard[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-6">
+    <div className="grid gap-4 lg:grid-cols-7">
       {COLUMNS.map((column) => {
         const inColumn = tasks.filter((t) => t.column === column.id)
         return (
@@ -90,7 +90,11 @@ export function TaskList({ tasks }: { tasks: TaskCard[] }) {
               {task.repository} #{task.issueNumber}
             </Table.Cell>
             <Table.Cell>
-              <StageBadge stage={task.stage} />
+              <StageBadge
+                stage={task.stage}
+                integrated={task.integrated}
+                retryable={task.retryable}
+              />
             </Table.Cell>
             <Table.Cell align="right" numeric>
               {money(task.costUsd)}
