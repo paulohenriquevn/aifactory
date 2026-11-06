@@ -73,8 +73,12 @@ const PERMISSIONS = {
 /** How long the list of reachable repositories is kept. */
 const LIST_TTL_MS = 15_000
 
-/** A token with less than this left is replaced rather than handed out. */
-const REFRESH_MARGIN_MS = 60_000
+/**
+ * A token with less than this left is replaced rather than handed out. A run takes one token at its start and
+ * keeps it to the end (the firewall's git header is set once, when its sandbox is made), and a run lasts up to
+ * 32 minutes (`JOB_SHUTDOWN_WAIT_MS`), so a token handed out has to outlive that. GitHub's last an hour.
+ */
+export const TOKEN_LIFE_LEFT_MS = 35 * 60_000
 
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
@@ -227,7 +231,7 @@ export function createGithubApp(options: GithubAppOptions): GithubApp & AppHooks
         throw new Error(`repository must be written owner/name, got ${JSON.stringify(repo)}`)
       }
       const cached = cache.get(repo)
-      if (cached && cached.expiresAt.getTime() - now() > REFRESH_MARGIN_MS) return cached
+      if (cached && cached.expiresAt.getTime() - now() > TOKEN_LIFE_LEFT_MS) return cached
 
       const name = repo.split('/')[1]
       const installation = await call(`/repos/${repo}/installation`)

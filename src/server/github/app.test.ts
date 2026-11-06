@@ -2,7 +2,9 @@ import { createPublicKey, createVerify, generateKeyPairSync } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
 
-import { createGithubApp, type FetchLike } from './app'
+import { JOB_SHUTDOWN_WAIT_MS } from '../factory/drain'
+
+import { createGithubApp, TOKEN_LIFE_LEFT_MS, type FetchLike } from './app'
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', {
   modulusLength: 2048,
@@ -124,6 +126,18 @@ describe('GitHub App installation tokens', () => {
 
     expect(second.token).not.toBe(first.token)
     expect(github.minted()).toBe(2)
+  })
+
+  it('never hands out a token that would expire before a run that takes it now could finish', async () => {
+    // A run takes one token at its start and uses it to the end, the firewall's git header included. A cached
+    // token with ten minutes left expired in the middle of a run, and GitHub answered 401 "Bad credentials".
+    const github = fakeGithub({ expiresInMs: 10 * 60_000 })
+    const auth = app(github.fetch)
+    const first = await auth.installationToken('o/r')
+    const second = await auth.installationToken('o/r')
+
+    expect(second.token).not.toBe(first.token)
+    expect(TOKEN_LIFE_LEFT_MS).toBeGreaterThan(JOB_SHUTDOWN_WAIT_MS)
   })
 
   it('says so when the app is not installed on the repository', async () => {
