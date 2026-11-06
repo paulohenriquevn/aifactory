@@ -664,6 +664,24 @@ mensagem do CLI. Tratar isso como espera, e não como falha, é parte do M3b.
 
 O token dura um ano e só faz requisições de modelo.
 
+**Trocar de conta (a assinatura bateu o limite, ou você quer outra).** Em vez de editar o arquivo à mão,
+use `scripts/claude-login.sh`. Em outro terminal largo, entre na conta que quer usar e rode
+`claude setup-token` (abra o link num navegador logado nessa conta e cole o código de volta). Depois rode o
+script e cole o token quando ele pedir. Ele:
+
+1. recusa o que não parece um token (o código que a página mostra não é o token);
+2. **testa o token de verdade** com uma chamada mínima e não grava se a conta recusar ou já estiver no
+   limite, dizendo o motivo;
+3. grava em `.env.local` (modo 600, sem mostrar o token e sem passar pelo histórico do shell), trocando só a
+   linha do token, e põe `FACTORY_CLAUDE_AUTH=subscription` se não houver escolha;
+4. reinicia o servidor e os workers (o token é lido na subida), mas **só se nenhuma tarefa estiver
+   trabalhando**, a menos que você use `FORCE=1`;
+5. refaz as tarefas que estavam esperando a conta antiga (`scripts/retry-waiting.mjs`, as da coluna "Will
+   retry itself") e religa o alimentador, que guarda a pausa de cota na memória e por isso é reiniciado.
+
+Não dá para fazer o login por uma tela do painel: ele exige abrir um link na conta certa e colar um código,
+e o token é um segredo, que não deve passar por uma página.
+
 ### Termos de uso
 
 O uso do binário oficial `claude -p` com a assinatura do próprio dono, nos próprios repositórios,
