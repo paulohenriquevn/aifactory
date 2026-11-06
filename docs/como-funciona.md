@@ -664,8 +664,20 @@ mensagem do CLI. Tratar isso como espera, e não como falha, é parte do M3b.
 
 O token dura um ano e só faz requisições de modelo.
 
-**Trocar de conta (a assinatura bateu o limite, ou você quer outra).** Em vez de editar o arquivo à mão,
-use `scripts/claude-login.sh`. Em outro terminal largo, entre na conta que quer usar e rode
+**Trocar de conta (a assinatura bateu o limite, ou você quer outra).** O caminho mais curto é o painel. Na
+página Setup, abaixo da linha do Claude, "Entrar com outra conta" roda `claude setup-token` no servidor, num
+diretório temporário só dele (o `~/.claude` do dono fica intocado), e mostra o link de login. Abra o link num
+navegador logado na conta que quer usar, copie o código que a página mostra e cole no painel. A fábrica testa
+o token com uma chamada mínima e só grava se a conta responder, em `.secrets/claude-oauth-token` (modo 600;
+`FACTORY_CLAUDE_TOKEN_FILE` muda o caminho). O token nunca volta para a página. Cada execução lê esse
+arquivo, e ele vale por cima do `.env.local`, então a conta nova entra na próxima tarefa sem reiniciar
+nada. Em seguida, "Refazer as tarefas que esperavam a conta" recomeça as da coluna "Will retry itself". O
+link expira em 10 minutos.
+
+O painel não reinicia o alimentador do backlog. Ele guarda a pausa de cota na memória, então, se estava
+pausado, continua pausado até ser reiniciado (`systemctl --user restart aifactory-feeder`).
+
+Pelo terminal, use `scripts/claude-login.sh`. Em outro terminal largo, entre na conta que quer usar e rode
 `claude setup-token` (abra o link num navegador logado nessa conta e cole o código de volta). Depois rode o
 script e cole o token quando ele pedir. Ele:
 
@@ -679,8 +691,8 @@ script e cole o token quando ele pedir. Ele:
 5. refaz as tarefas que estavam esperando a conta antiga (`scripts/retry-waiting.mjs`, as da coluna "Will
    retry itself") e religa o alimentador, que guarda a pausa de cota na memória e por isso é reiniciado.
 
-Não dá para fazer o login por uma tela do painel: ele exige abrir um link na conta certa e colar um código,
-e o token é um segredo, que não deve passar por uma página.
+Se o painel já tinha salvo um token, o script apaga esse arquivo depois de gravar o novo, porque o do painel
+vale por cima do `.env.local` e a fábrica continuaria na conta antiga.
 
 ### Termos de uso
 

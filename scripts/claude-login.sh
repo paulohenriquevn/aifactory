@@ -10,9 +10,11 @@
 #   2. Run this script and paste the token when it asks.
 #
 # FORCE=1 restarts even while tasks are working. ENV_FILE and NO_RESTART=1 exist for tests.
+# FACTORY_CLAUDE_TOKEN_FILE is where the panel keeps the token it saved (src/server/factory/claude-token.ts).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ENV_FILE="${ENV_FILE:-.env.local}"
+TOKEN_FILE="${FACTORY_CLAUDE_TOKEN_FILE:-.secrets/claude-oauth-token}"
 
 read -rsp "Cole o token do Claude Code (não aparece na tela): " token
 echo
@@ -48,6 +50,11 @@ grep -q '^FACTORY_CLAUDE_AUTH=' "$tmp" || echo 'FACTORY_CLAUDE_AUTH=subscription
 mv "$tmp" "$ENV_FILE"
 unset token reply
 echo "Gravado em $ENV_FILE."
+# A token saved from the panel wins over the environment file, so the old one would keep being used.
+if [[ -e "$TOKEN_FILE" ]]; then
+  rm -f "$TOKEN_FILE"
+  echo "Removido o token que o painel tinha salvo, para valer o novo."
+fi
 
 if [[ "${NO_RESTART:-}" == "1" ]]; then exit 0; fi
 

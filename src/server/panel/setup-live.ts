@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import type { SetupReport } from '../../shared/panel'
 import { getDb } from '../db'
 import { repository } from '../db/schema'
+import { withClaudeToken } from '../factory/claude-token'
 import { githubAppFromEnv } from '../factory/deps'
 
 import { setupReport } from './setup'
@@ -20,5 +21,10 @@ export async function readSetup(env: NodeJS.ProcessEnv = process.env): Promise<S
     .select({ id: repository.id })
     .from(repository)
     .where(eq(repository.enabled, true))
-  return setupReport({ env, github, enabledRepositories: enabled.length, probes: realProbes })
+  return setupReport({
+    env: withClaudeToken(env),
+    github,
+    enabledRepositories: enabled.length,
+    probes: realProbes,
+  })
 }

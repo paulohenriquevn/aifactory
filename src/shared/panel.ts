@@ -414,3 +414,11 @@ export type EngineModels = {
   /** The effort levels the agent takes when no model is chosen. */
   efforts: string[]
 }
+
+/** Where the change of Claude Code account is, as the panel shows it. The token itself is never part of it. */
+export type ClaudeLoginState =
+  | { status: 'idle' }
+  | { status: 'waiting'; url: string; expiresAt: string }
+  | { status: 'checking' }
+  | { status: 'done' }
+  | { status: 'error'; message: string }

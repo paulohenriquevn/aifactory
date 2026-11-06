@@ -33,6 +33,7 @@ import {
   type ActionDeps,
 } from './actions'
 import { health, inbox, listTasks, taskDetail } from './queries'
+import { retryWaiting } from './retry-waiting'
 import { stageStream } from './stream'
 
 beforeAll(async () => {
@@ -351,6 +352,65 @@ describe('actions', () => {
       await expect(retry(deps(), id)).rejects.toThrow(ActionRefused)
     }
     expect(deleted).toEqual([])
+    expect(queued).toEqual([])
+  })
+
+  it('starts again every task that failed for a reason that passes, and no other', async () => {
+    const quota = await seed('failed', { issueNumber: 51 }, [
+      { stage: 'failed', detail: { quota: true } },
+    ])
+    const outage = await seed('failed', { issueNumber: 52 }, [
+      { stage: 'failed', detail: { error: 'GitHub answered 502' } },
+    ])
+    const work = await seed('failed', { issueNumber: 53 }, [
+      { stage: 'failed', detail: { error: 'the tests failed' } },
+    ])
+
+    expect(await retryWaiting(deps())).toEqual({ started: 2, skipped: 0 })
+
+    const stages = new Map((await getDb().select().from(task)).map((t) => [t.id, t.stage] as const))
+    expect([stages.get(quota), stages.get(outage), stages.get(work)]).toEqual([
+      'intake',
+      'intake',
+      'failed',
+    ])
+    expect(deleted.sort()).toEqual(['factory/51', 'factory/52'])
+  })
+
+  it('counts a task that moved on since the board was read, and starts the rest', async () => {
+    const moved = await seed('failed', { issueNumber: 61 }, [
+      { stage: 'failed', detail: { quota: true } },
+    ])
+    const waiting = await seed('failed', { issueNumber: 62 }, [
+      { stage: 'failed', detail: { quota: true } },
+    ])
+    const racing: ActionDeps = {
+      ...deps(),
+      github: {
+        installationToken: async () => {
+          // Another click started the first task while this one was on its way.
+          await getDb().update(task).set({ stage: 'build' }).where(eq(task.id, moved))
+          return { token: 't', expiresAt: new Date() }
+        },
+      },
+    }
+
+    expect(await retryWaiting(racing)).toEqual({ started: 1, skipped: 1 })
+    expect((await getDb().select().from(task).where(eq(task.id, waiting)))[0].stage).toBe('intake')
+  })
+
+  it('fails loudly when GitHub refuses, instead of counting the task as skipped', async () => {
+    await seed('failed', { issueNumber: 71 }, [{ stage: 'failed', detail: { quota: true } }])
+    const broken: ActionDeps = {
+      ...deps(),
+      api: {
+        deleteBranch: async () => {
+          throw new Error('GitHub answered 401')
+        },
+      } as unknown as GithubApi,
+    }
+
+    await expect(retryWaiting(broken)).rejects.toThrow(/GitHub answered 401/)
     expect(queued).toEqual([])
   })
 })

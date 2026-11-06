@@ -5,6 +5,7 @@ import type { Database } from '../db'
 import { repository, setting } from '../db/schema'
 
 import { EFFORT_ENV, engineModels, isSafeName, MODEL_ENV, tagged, untag } from './engine-models'
+import { withClaudeToken } from './claude-token'
 import { DEFAULT_HARNESS, harnessRegistry } from './harness-registry'
 
 /** The environment variable each role has always been read from, which is also what a setting overrides. */
@@ -60,7 +61,7 @@ export async function effectiveEnv(
     if (stored.model[role]) overlay[MODEL_ENV[role]] = stored.model[role]
     if (stored.effort[role]) overlay[EFFORT_ENV[role]] = stored.effort[role]
   }
-  return { ...env, ...overlay }
+  return { ...withClaudeToken(env), ...overlay }
 }
 
 /** The role's agent as the factory resolves it: the choice, else the environment, else the default. */
@@ -75,7 +76,7 @@ export function effectiveOf(env: NodeJS.ProcessEnv): Record<AgentRole, string> {
 
 /** Every agent the factory can run, and for each whether it could start now: a missing credential is said. */
 export function engineOptions(env: NodeJS.ProcessEnv): EngineOption[] {
-  return Object.entries(harnessRegistry(env)).map(([id, build]) => {
+  return Object.entries(harnessRegistry(withClaudeToken(env))).map(([id, build]) => {
     try {
       build()
       return { id, ready: true }

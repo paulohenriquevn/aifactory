@@ -1,7 +1,9 @@
 import { Alert, Badge, Button } from '@usetheo/ui'
+import { Fragment } from 'react'
 import { Link } from 'react-router'
 
 import type { SetupItem, SetupReport } from '../../shared/panel'
+import { ClaudeAccount } from '../components/ClaudeAccount'
 import { useResource } from '../lib/live'
 
 const TONE = { ok: 'success', warn: 'warning', missing: 'destructive' } as const
@@ -80,7 +82,14 @@ export default function SetupPage() {
           )}
           <ul className="space-y-2">
             {data.items.map((item) => (
-              <Row key={item.id} item={item} />
+              <Fragment key={item.id}>
+                <Row item={item} />
+                {item.id === 'claude' ? (
+                  <li>
+                    <ClaudeAccount onChanged={report.reload} />
+                  </li>
+                ) : null}
+              </Fragment>
             ))}
           </ul>
         </>

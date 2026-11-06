@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -11,7 +11,7 @@ const script = resolve(process.cwd(), 'scripts/claude-login.sh')
 const GOOD = `sk-ant-oat01-${'A1b2C3d4_-'.repeat(8)}`
 
 /** Runs the script in a scratch directory, with a stand-in for `claude` that answers as told. */
-function run({ token, claudeSays, envText }) {
+function run({ token, claudeSays, envText, stored }) {
   const dir = mkdtempSync(join(tmpdir(), 'claude-login-'))
   const bin = join(dir, 'bin')
   spawnSync('mkdir', ['-p', bin])
@@ -21,12 +21,26 @@ function run({ token, claudeSays, envText }) {
   const envFile = join(dir, 'env')
   writeFileSync(envFile, envText)
   chmodSync(envFile, 0o644)
+  // Always a scratch path: the default is the token the panel saved for this very checkout.
+  const tokenFile = join(dir, 'claude-oauth-token')
+  if (stored) writeFileSync(tokenFile, `${stored}\n`)
   const result = spawnSync('bash', [script], {
     input: `${token}\n`,
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ENV_FILE: envFile, NO_RESTART: '1' },
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      ENV_FILE: envFile,
+      FACTORY_CLAUDE_TOKEN_FILE: tokenFile,
+      NO_RESTART: '1',
+    },
   })
-  return { ...result, file: readFileSync(envFile, 'utf8'), mode: statSync(envFile).mode & 0o777 }
+  return {
+    ...result,
+    file: readFileSync(envFile, 'utf8'),
+    mode: statSync(envFile).mode & 0o777,
+    storedLeft: existsSync(tokenFile),
+  }
 }
 
 const OK = JSON.stringify({ is_error: false, result: 'ok' })
@@ -89,6 +103,21 @@ describe('changing the Claude Code account', () => {
     const r = run({ token: GOOD, claudeSays: OK, envText: 'FACTORY_HARNESS=codex\n' })
     expect(r.file).toContain(`CLAUDE_CODE_OAUTH_TOKEN=${GOOD}`)
     expect(r.file).toContain('FACTORY_HARNESS=codex')
+  })
+
+  it('removes the token the panel saved, which would otherwise win over the new one', () => {
+    const panelToken = `sk-ant-oat01-${'Z'.repeat(80)}`
+    const r = run({ token: GOOD, claudeSays: OK, envText: BEFORE, stored: panelToken })
+    expect(r.status).toBe(0)
+    expect(r.storedLeft).toBe(false)
+  })
+
+  it('keeps the token the panel saved when the new one is refused', () => {
+    const panelToken = `sk-ant-oat01-${'Z'.repeat(80)}`
+    const refused = JSON.stringify({ is_error: true, result: 'nope' })
+    const r = run({ token: GOOD, claudeSays: refused, envText: BEFORE, stored: panelToken })
+    expect(r.status).toBe(1)
+    expect(r.storedLeft).toBe(true)
   })
 
   it('never prints the token, whatever happens', () => {
