@@ -377,3 +377,48 @@ export const setting = pgTable('setting', {
   value: text('value').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+/**
+ * A fact the factory keeps for the knowledge base: one an agent left with `LEARNED:`, or the verdict of a run
+ * that found nothing to change. Runs only insert; the main process writes the pending ones to the memory
+ * branch of the knowledge repository and marks them with the commit, so there is one writer. The same text
+ * in the same project is kept once.
+ */
+export const knowledgeNote = pgTable(
+  'knowledge_note',
+  {
+    id: serial('id').primaryKey(),
+    /** The project the note is about, owner/name. */
+    repository: text('repository').notNull(),
+    kind: text('kind', { enum: ['learned', 'no-change'] }).notNull(),
+    body: text('body').notNull(),
+    bodyHash: text('body_hash').notNull(),
+    taskId: integer('task_id')
+      .notNull()
+      .references(() => task.id),
+    issueNumber: integer('issue_number').notNull(),
+    baseSha: text('base_sha'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    committedSha: text('committed_sha'),
+    committedAt: timestamp('committed_at', { withTimezone: true }),
+  },
+  (table) => [unique('knowledge_note_once').on(table.repository, table.bodyHash)],
+)
+
+/**
+ * Each time the factory put a slice of the knowledge base in an agent's sandbox: at the start, and again
+ * whenever the base moved while the agent worked. It is what makes a run's knowledge auditable, since the
+ * base can change under a run that lasts half an hour.
+ */
+export const knowledgeDelivery = pgTable('knowledge_delivery', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id').references(() => task.id),
+  planId: integer('plan_id').references(() => plan.id, { onDelete: 'cascade' }),
+  /** The project the slice was cut for. */
+  project: text('project').notNull(),
+  knowledgeRepository: text('knowledge_repository').notNull(),
+  knowledgeSha: text('knowledge_sha').notNull(),
+  memorySha: text('memory_sha'),
+  files: integer('files').notNull(),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})

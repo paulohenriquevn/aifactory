@@ -1,6 +1,6 @@
 # ADR 0002: base de conhecimento em repositórios git
 
-Status: aceita (2026-10-30)
+Status: substituída pela [ADR 0006](0006-base-de-conhecimento-do-usuario.md) em 2026-11-06 (aceita em 2026-10-30)
 
 ## Contexto
 

@@ -40,7 +40,9 @@ src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   panel/            what the panel shows and does: queries, actions, owner session, event stream
-  crons/            defineCron files (`poll-answers`, `watch-main`, `supervise`, `catch-up`, `retry-due`)
+  crons/            defineCron files (`poll-answers`, `watch-main`, `supervise`, `catch-up`, `retry-due`,
+                    `knowledge-sync`)
+  knowledge/        the owner's knowledge repository: mirror, sync, the slice each agent gets, notes
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
   factory/          one task end to end: sandbox, agent, push, stage history
@@ -82,6 +84,11 @@ reads that file, not a convention.
 - **An agent that runs in the server process may call only the tools it declares.** The SDK gives every agent
   a shell and file access of its own, and the assistants run where the factory's credentials are, so each one
   carries `.hooks(onlyTools([...]))`. A new agent without it is a shell on the host.
+- **Every agent reads the knowledge base, the same way.** An assistant is built only by `buildAssistant`,
+  which gives it `knowledge_search` and `knowledge_read`; a file that starts a sandbox opens a
+  `KnowledgeFeed` on it, which copies the project's slice to `/tmp/knowledge` and replaces it when the base
+  moves. Only the `knowledge-sync` cron fetches or pushes, and only to `factory-memory`, never to the
+  owner's branch. `src/server/knowledge/every-agent.test.ts` fails for an agent without it.
 - **Every text box in the panel has an `<Assist>`.** `src/app/every-box.test.ts` fails when a file with a
   textarea has none. The premise is that the owner never has to be a programmer.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;

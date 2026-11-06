@@ -4,6 +4,9 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { GUIDE_IDS } from '../../shared/guides'
+import { SANDBOX_KNOWLEDGE_DIR } from '../knowledge/format'
+import { ASSISTANT_KNOWLEDGE_NOTE } from '../knowledge/prompt'
+
 import { ACTING_TOOLS, CHAT_TOOLS } from './chat-agent'
 
 import { agentCatalog } from './agent-catalog'
@@ -12,6 +15,7 @@ import { planPrompt } from './plan'
 import { reviewPrompt } from './review'
 
 const read = () => 'CONTEXT OF THE FACTORY'
+const KNOWLEDGE = ['knowledge_search', 'knowledge_read']
 const catalog = (env: NodeJS.ProcessEnv = {}) => agentCatalog(env, read)
 const agent = (id: string, env: NodeJS.ProcessEnv = {}) =>
   catalog(env).agents.find((a) => a.id === id)!
@@ -64,6 +68,7 @@ describe('the catalog of agents', () => {
         title: '‹título da issue›',
         body: '‹texto da issue›',
         branch: '‹branch›',
+        knowledgeDir: SANDBOX_KNOWLEDGE_DIR,
       }).replaceAll('#0)', '#‹número›)'),
     )
     expect(first).toContain('(#‹número›)')
@@ -77,10 +82,15 @@ describe('the catalog of agents', () => {
         body: '‹texto da issue›',
         branch: '‹branch›',
         baseSha: '‹commit base›',
+        knowledgeDir: SANDBOX_KNOWLEDGE_DIR,
       }).replaceAll('#0)', '#‹número›)'),
     )
     expect(agent('planner').prompts[0].text).toBe(
-      planPrompt({ repo: '‹repositório›', goal: '‹o objetivo que você escreveu›' }),
+      planPrompt({
+        repo: '‹repositório›',
+        goal: '‹o objetivo que você escreveu›',
+        knowledgeDir: SANDBOX_KNOWLEDGE_DIR,
+      }),
     )
   })
 
@@ -108,27 +118,32 @@ describe('the catalog of agents', () => {
 
   it('says which tools only read and which ask the owner, the same ones the agents are held to', () => {
     const chat = agent('chat')
-    expect(chat.tools.map((t) => t.name)).toEqual(CHAT_TOOLS)
+    expect(chat.tools.map((t) => t.name)).toEqual([...CHAT_TOOLS, ...KNOWLEDGE])
     expect(chat.tools.filter((t) => t.effect === 'asks').map((t) => t.name)).toEqual(ACTING_TOOLS)
     expect(chat.tools.every((t) => t.description.length > 10)).toBe(true)
-    expect(agent('guide-setup').tools.map((t) => t.effect)).toEqual(['reads'])
+    expect(agent('guide-setup').tools.map((t) => t.effect)).toEqual(['reads', 'reads', 'reads'])
     expect(agent('guide-agents').tools.map((t) => [t.name, t.effect])).toEqual([
       ['list_agents', 'reads'],
       ['agent_prompt', 'reads'],
       ['update_agent_settings', 'asks'],
+      ['knowledge_search', 'reads'],
+      ['knowledge_read', 'reads'],
     ])
     expect(agent('assist-setup').tools.map((t) => t.name)).toEqual([
       'propose',
       'repo_files',
       'repo_file',
+      ...KNOWLEDGE,
     ])
-    expect(agent('assist').tools.map((t) => t.name)).toEqual(['propose'])
+    expect(agent('assist').tools.map((t) => t.name)).toEqual(['propose', ...KNOWLEDGE])
   })
 
-  it('says the agents that build act only inside the sandbox', () => {
+  it('says the agents that build act only inside the sandbox, and read the knowledge base there', () => {
     for (const id of ['builder', 'reviewer', 'planner']) {
-      expect(agent(id).tools).toHaveLength(1)
-      expect(agent(id).tools[0].effect).toBe('sandbox')
+      expect(agent(id).tools.map((t) => [t.name, t.effect])).toEqual([
+        ['sandbox', 'sandbox'],
+        ['knowledge', 'reads'],
+      ])
     }
   })
 
@@ -186,18 +201,21 @@ describe('the catalog of agents', () => {
     }
   })
 
-  it('adds the context of the factory to every panel agent, and to no agent that builds', () => {
+  it('adds the context of the factory and of the knowledge base to every panel agent, and to no agent that builds', () => {
     const view = catalog()
-    expect(view.shared).toHaveLength(1)
+    expect(view.shared.map((p) => p.id)).toEqual(['theo', 'knowledge'])
     expect(view.shared[0]).toMatchObject({ id: 'theo', text: 'CONTEXT OF THE FACTORY' })
-    for (const a of view.agents) expect(a.shared, a.id).toEqual(a.group === 'panel' ? ['theo'] : [])
+    expect(view.shared[1].text).toBe(ASSISTANT_KNOWLEDGE_NOTE)
+    for (const a of view.agents) {
+      expect(a.shared, a.id).toEqual(a.group === 'panel' ? ['theo', 'knowledge'] : [])
+    }
   })
 
-  it('has no shared context, and still lists the agents, when the file is not there', () => {
+  it('has only the knowledge context, and still lists the agents, when the file is not there', () => {
     const view = agentCatalog({}, () => {
       throw new Error('ENOENT')
     })
-    expect(view.shared).toEqual([])
+    expect(view.shared.map((p) => p.id)).toEqual(['knowledge'])
     expect(view.agents.length).toBeGreaterThan(10)
   })
 

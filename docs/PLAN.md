@@ -428,6 +428,9 @@ no plano Hobby termina em 45 minutos. Fica depois do painel (M5), a menos que o 
 
 ## Base de conhecimento aprovada
 
+Substituída em 2026-11-06 pela [ADR 0006](adr/0006-base-de-conhecimento-do-usuario.md): a base é um
+repositório do usuário, escolhido no Setup, lido por todos os agentes. O desenho abaixo fica como histórico.
+
 ```text
 aifactory/                         código open source
   templates/knowledge/             template da base de conhecimento

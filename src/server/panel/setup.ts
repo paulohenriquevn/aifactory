@@ -1,4 +1,5 @@
 import type { AppHooks, AppRepos } from '../github/app'
+import type { KnowledgeStatus } from '../../shared/knowledge'
 import type { SetupItem, SetupReport } from '../../shared/panel'
 
 import { claudeCredentialFromEnv } from '../factory/harness-claude'
@@ -20,6 +21,8 @@ export type SetupInput = {
   /** The App, when its credentials are there to build it. */
   github: (AppHooks & AppRepos) | undefined
   enabledRepositories: number
+  /** The knowledge base, when the database could say. */
+  knowledge?: KnowledgeStatus
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -28,6 +31,44 @@ const PROVIDER_KEYS: Record<string, string> = {
   anthropic: 'ANTHROPIC_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   openai: 'OPENAI_API_KEY',
+}
+
+/**
+ * The knowledge base every agent reads. It is optional, so it never stops the factory from being ready: a
+ * line that needs a look says what to do, and the form under the line does it.
+ */
+export function knowledgeItem(status: KnowledgeStatus): SetupItem {
+  const base = { id: 'knowledge', label: 'Knowledge base' }
+  if (!status.repository) {
+    return {
+      ...base,
+      status: 'warn',
+      detail:
+        'Optional. No knowledge repository is chosen, so the agents work from the code and the issue alone.',
+    }
+  }
+  if (status.error) {
+    return {
+      ...base,
+      status: 'warn',
+      detail: `${status.repository}: the last sync failed: ${status.error}`,
+    }
+  }
+  if (!status.knowledgeSha) {
+    return { ...base, status: 'warn', detail: `${status.repository}: waiting for the first sync.` }
+  }
+  if (status.formatProblem) {
+    return {
+      ...base,
+      status: 'warn',
+      detail: `${status.repository}: the agents do not read it yet, because ${status.formatProblem}.`,
+    }
+  }
+  return {
+    ...base,
+    status: 'ok',
+    detail: `${status.repository} at ${status.knowledgeSha.slice(0, 7)} (${status.readBranch}), synced ${status.syncedAt}. ${status.writtenNotes} note(s) written, ${status.pendingNotes} waiting.`,
+  }
 }
 
 /** The helper under every text box calls a model with the factory's own key, which a subscription cannot be. */
@@ -176,6 +217,7 @@ export async function setupReport({
   github,
   enabledRepositories,
   probes = {},
+  knowledge,
 }: SetupInput): Promise<SetupReport> {
   const items: SetupItem[] = []
   const slug = env.GITHUB_APP_SLUG
@@ -289,5 +331,6 @@ export async function setupReport({
           link: { label: 'Enable one', href: '/repositories' },
         },
   )
+  if (knowledge) items.push(knowledgeItem(knowledge))
   return { ready: items.every((i) => i.status !== 'missing'), items }
 }

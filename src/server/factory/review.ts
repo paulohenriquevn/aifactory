@@ -1,3 +1,5 @@
+import { knowledgeRules } from '../knowledge/prompt'
+
 export type Severity = 'blocker' | 'major' | 'minor'
 
 export type Finding = { severity: Severity; file?: string; issue: string }
@@ -18,6 +20,8 @@ export function reviewPrompt(input: {
   body: string
   branch: string
   baseSha: string
+  /** Where the knowledge base is in the sandbox, when the factory delivered one. */
+  knowledgeDir?: string
 }): string {
   return `You are an independent code reviewer for the repository ${input.repo}. Another agent implemented the issue below on the branch ${input.branch}. You did not write this code and you must not change it.
 
@@ -31,7 +35,11 @@ Review the work:
 - Check that the tests test the behavior: not weakened, skipped, deleted or made to pass by changing the test command.
 - Look for bugs, missed edge cases, unrelated changes, secrets, and anything under .github/.
 - You may run the project's tests. Do not edit, create or delete files, and do not run any git command that writes.
-
+${
+  input.knowledgeDir
+    ? `- A change that breaks one of the owner's rules under ${input.knowledgeDir}/knowledge/ is a finding, at least major.\n\n${knowledgeRules(input.knowledgeDir)}\n`
+    : ''
+}
 Finish with one JSON object on its own, and nothing after it:
 
 {"verdict":"approve"|"changes","summary":"one or two sentences","findings":[{"severity":"blocker"|"major"|"minor","file":"path or omit","issue":"what is wrong and what to do"}]}

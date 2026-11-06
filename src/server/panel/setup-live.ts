@@ -5,6 +5,7 @@ import { getDb } from '../db'
 import { repository } from '../db/schema'
 import { withClaudeToken } from '../factory/claude-token'
 import { githubAppFromEnv } from '../factory/deps'
+import { knowledgeStatus } from '../knowledge/sync'
 
 import { setupReport } from './setup'
 import { realProbes } from './setup-probes'
@@ -25,6 +26,7 @@ export async function readSetup(env: NodeJS.ProcessEnv = process.env): Promise<S
     env: withClaudeToken(env),
     github,
     enabledRepositories: enabled.length,
+    knowledge: await knowledgeStatus(getDb()),
     probes: realProbes,
   })
 }

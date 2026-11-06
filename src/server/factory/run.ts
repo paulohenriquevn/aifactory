@@ -11,6 +11,8 @@ import {
 } from '../db/schema'
 import type { Issue } from '../github/issues'
 import type { GithubApi } from '../github/pulls'
+import { KnowledgeFeed } from '../knowledge/feed'
+import { parseLearned, withoutLearned } from '../knowledge/format'
 
 import { ensureBranches, integrationBranch, PRE_RELEASE_BRANCH } from './branches'
 import { createPreRelease, release } from './deliver'
@@ -121,6 +123,8 @@ export class Run {
   cost: number
   summary = ''
   sessionId: string | undefined
+  /** The knowledge base in the sandbox, kept current while the run goes; the same for every agent. */
+  feed?: KnowledgeFeed
 
   private constructor(
     private readonly c: RunContext,
@@ -199,7 +203,14 @@ export class Run {
 
     const { repoDir, baseSha } = await Run.checkout(c, sandbox.backend)
     for (const agent of agents) await agent.prepare?.(sandbox.backend)
-    return new Run(c, builder, reviewer, sandbox, repoDir, baseSha)
+    const feed = await KnowledgeFeed.open(deps.knowledge, sandbox.backend, c.row.repository, {
+      taskId: c.taskId,
+    })
+    // Stopping the sandbox stops the feed first, so no copy goes into a sandbox that is gone.
+    c.state.sandbox = feed.attachTo(sandbox)
+    const run = new Run(c, builder, reviewer, sandbox, repoDir, baseSha)
+    run.feed = feed
+    return run
   }
 
   /**
@@ -323,6 +334,43 @@ export class Run {
     throw new Asked({ status: 'waiting', question: text })
   }
 
+  /** The facts the builder left with `LEARNED:`, kept for the knowledge base of this project. */
+  private async keepLearned(summary: string): Promise<void> {
+    const facts = parseLearned(summary)
+    if (facts.length === 0 || !this.feed?.delivered) return
+    const { deps, taskId, row } = this.c
+    await deps.knowledge?.keep(
+      facts.map((body) => ({
+        repository: row.repository,
+        kind: 'learned',
+        body,
+        taskId,
+        issueNumber: row.issueNumber,
+        baseSha: this.baseSha,
+      })),
+    )
+  }
+
+  /**
+   * A run that found nothing to change in an issue is worth remembering: the next run on the same issue
+   * starts from what this one found, instead of finding it again.
+   */
+  private async keepNoChange(): Promise<void> {
+    const { deps, taskId, row, issue, continuation } = this.c
+    if (continuation || !this.feed?.delivered) return
+    const said = this.summary ? ` The agent said: ${oneLine(this.summary).slice(0, 1500)}` : ''
+    await deps.knowledge?.keep([
+      {
+        repository: row.repository,
+        kind: 'no-change',
+        body: `Issue #${row.issueNumber} (${oneLine(issue.title)}): a run starting from ${this.baseSha} found nothing to change.${said}`,
+        taskId,
+        issueNumber: row.issueNumber,
+        baseSha: this.baseSha,
+      },
+    ])
+  }
+
   /** Commits whatever the agent left in the checkout and pushes it. Returns the new head. */
   private async commitAndPush(message: string, detail: Record<string, unknown>): Promise<string> {
     const { deps, taskId, branch, state } = this.c
@@ -331,6 +379,8 @@ export class Run {
     await enterStage(deps.db, taskId, 'push', { branch, ...detail })
     const changes = await must(backend, `git -C ${this.repoDir} status --porcelain`)
     if (changes.stdout.trim() === '') {
+      // A rework that changed nothing is the reviewer's business, not a fact about the issue.
+      if (!detail.rework) await this.keepNoChange()
       throw new StageFailure(
         `the agent made no change to the repository${
           this.summary ? `. The agent said: ${oneLine(this.summary).slice(0, 700)}` : ''
@@ -378,7 +428,11 @@ export class Run {
         }),
       )
     }
-    await enterStage(deps.db, taskId, 'build', { harness: builder.name, attempt: 1 })
+    await enterStage(deps.db, taskId, 'build', {
+      harness: builder.name,
+      attempt: 1,
+      ...(this.feed?.delivered ? { knowledge: this.feed.delivered } : {}),
+    })
     return this.settle(builder, 'builder', 1, () =>
       builder.run(backend, {
         cwd: repoDir,
@@ -391,6 +445,7 @@ export class Run {
           branch,
           feedback: continuation?.feedback,
           askQuestions: this.c.repo.askQuestions,
+          knowledgeDir: this.feed?.dir,
         }),
       }),
     )
@@ -442,7 +497,9 @@ export class Run {
     this.c.state.current = 'build'
     const first = await this.firstPass()
     if (!first.ok) throw new StageFailure(`the agent did not finish: ${first.summary}`)
-    const asked = parseQuestion(first.summary)
+    await this.keepLearned(first.summary)
+    // A fact the agent left is not part of its question, wherever it put it.
+    const asked = parseQuestion(withoutLearned(first.summary))
     this.sessionId = first.sessionId ?? this.sessionId
     if (asked) await this.ask(asked, this.c.resuming?.attempt ?? 1)
     this.summary = first.summary
@@ -569,6 +626,7 @@ export class Run {
           body: issue.body,
           branch,
           baseSha: this.baseSha,
+          knowledgeDir: this.feed?.dir,
         }),
       }),
     )

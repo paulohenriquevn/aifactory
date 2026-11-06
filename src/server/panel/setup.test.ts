@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import type { AppHooks, AppRepos, HookDelivery } from '../github/app'
 
-import { chatItem, sandboxItem, setupReport } from './setup'
+import type { KnowledgeStatus } from '../../shared/knowledge'
+
+import { chatItem, knowledgeItem, sandboxItem, setupReport } from './setup'
 import { openrouterCredit } from './setup-probes'
 
 const full = {
@@ -365,5 +367,63 @@ describe('asking OpenRouter for the credit left', () => {
     }) as unknown as typeof fetch)
     expect(url).not.toContain('secret')
     expect((seen?.headers as Record<string, string>).authorization).toBe('Bearer secret')
+  })
+})
+
+describe('the knowledge base line', () => {
+  const status = (over: Partial<KnowledgeStatus> = {}): KnowledgeStatus => ({
+    repository: 'me/kb',
+    branch: null,
+    readBranch: 'main',
+    memoryBranch: 'factory-memory',
+    knowledgeSha: 'a'.repeat(40),
+    memorySha: null,
+    formatProblem: null,
+    syncedAt: '2026-11-06T12:00:00.000Z',
+    error: null,
+    errorAt: null,
+    pendingNotes: 1,
+    writtenNotes: 3,
+    ...over,
+  })
+
+  it('is optional: without a repository it asks for a look and never makes the factory not ready', async () => {
+    const report = await setupReport({
+      env: full,
+      github: app(),
+      enabledRepositories: 2,
+      knowledge: status({ repository: null }),
+    })
+    expect(item(report, 'knowledge')).toMatchObject({ status: 'warn' })
+    expect(item(report, 'knowledge')?.detail).toMatch(/^Optional\./)
+  })
+
+  it('says where the base is when the agents read it', () => {
+    expect(knowledgeItem(status())).toEqual({
+      id: 'knowledge',
+      label: 'Knowledge base',
+      status: 'ok',
+      detail:
+        'me/kb at aaaaaaa (main), synced 2026-11-06T12:00:00.000Z. 3 note(s) written, 1 waiting.',
+    })
+  })
+
+  it('says the last sync failed, with what went wrong', () => {
+    expect(knowledgeItem(status({ error: 'GitHub answered 401' }))).toMatchObject({
+      status: 'warn',
+      detail: 'me/kb: the last sync failed: GitHub answered 401',
+    })
+  })
+
+  it('says it waits for the first sync', () => {
+    expect(knowledgeItem(status({ knowledgeSha: null })).detail).toBe(
+      'me/kb: waiting for the first sync.',
+    )
+  })
+
+  it('says why the agents do not read it yet', () => {
+    expect(knowledgeItem(status({ formatProblem: 'MEMORY.md is missing' })).detail).toBe(
+      'me/kb: the agents do not read it yet, because MEMORY.md is missing.',
+    )
   })
 })

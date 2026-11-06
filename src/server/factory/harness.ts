@@ -1,3 +1,4 @@
+import { knowledgeRules, LEARNED_RULE } from '../knowledge/prompt'
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 
 import type { EgressRule } from './sandbox'
@@ -76,6 +77,8 @@ export function buildPrompt(input: {
   feedback?: string
   /** False when nobody is there to answer: the agent decides, and says what it assumed. */
   askQuestions?: boolean
+  /** Where the knowledge base is in the sandbox, when the factory delivered one. */
+  knowledgeDir?: string
 }): string {
   return `You are working on the repository ${input.repo}, on the branch ${input.branch}.
 
@@ -96,10 +99,10 @@ ${
     ? '- Nobody is there to answer a question, so do not ask one. When a decision is missing, choose the most reasonable option, say in your final message what you assumed, and go on.'
     : '- If you cannot go on without a decision only a person can make, do not guess. Leave the repository as it is and end your final message with a line that starts with `QUESTION:`, followed by one specific question (offer the options you see).'
 }
-- Finish with a short summary of what you changed.
-${
-  input.feedback
-    ? `\nA person reviewed your earlier pull request and asked for these changes:\n\n${input.feedback}\n\nThe branch already holds your earlier work. Build on it.\n`
-    : ''
-}`
+${input.knowledgeDir ? `${LEARNED_RULE}\n` : ''}- Finish with a short summary of what you changed.
+${input.knowledgeDir ? `\n${knowledgeRules(input.knowledgeDir)}\n` : ''}${
+    input.feedback
+      ? `\nA person reviewed your earlier pull request and asked for these changes:\n\n${input.feedback}\n\nThe branch already holds your earlier work. Build on it.\n`
+      : ''
+  }`
 }

@@ -28,6 +28,9 @@ import type {
 } from '../github/pulls'
 
 import { FakeBranches } from '../../test/fake-branches'
+import { knowledgeRules } from '../knowledge/prompt'
+import type { KnowledgeSource } from '../knowledge/source'
+import type { NewNote } from '../knowledge/store'
 
 import { FakeSandbox, type Reply } from './fake-sandbox'
 import type { CodingHarness } from './harness'
@@ -2026,5 +2029,129 @@ describe('what the owner set for the repository', () => {
     expect(result).toMatchObject({ status: 'done' })
     const decisions = await getDb().select().from(decision).where(eq(decision.taskId, id))
     expect(decisions.map((d) => d.kind)).toContain('would_release')
+  })
+})
+
+/** A knowledge base that is ready, kept in memory, which remembers what the run kept and received. */
+function knowledgeBase(): KnowledgeSource & { kept: NewNote[]; deliveries: unknown[] } {
+  const kept: NewNote[] = []
+  const deliveries: unknown[] = []
+  return {
+    kept,
+    deliveries,
+    pin: async () => ({
+      repository: 'me/kb',
+      knowledgeSha: 'k'.repeat(40),
+      memorySha: 'm'.repeat(40),
+    }),
+    slice: async () => ({
+      files: [{ path: 'knowledge/global/tests.md', content: Buffer.from('Write the test first.') }],
+      left: [],
+    }),
+    delivered: async (input) => {
+      deliveries.push(input)
+    },
+    keep: async (notes) => {
+      kept.push(...notes)
+    },
+  }
+}
+
+describe('runTask with a knowledge base', () => {
+  it('puts the base in the sandbox before the agents start, and tells the builder and the reviewer the same', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const prompts: string[] = []
+    const capture: CodingHarness = {
+      name: 'capture',
+      egress: agentEgress,
+      run: async (_backend, { prompt }) => {
+        prompts.push(prompt)
+        return { ok: true, summary: 'done' }
+      },
+    }
+    const reviewer = approving()
+    const knowledge = knowledgeBase()
+
+    await runTask(deps(sandbox, { harness: capture, reviewer, knowledge }), id)
+
+    expect(sandbox.backend.files.get('/tmp/knowledge.next/knowledge/global/tests.md')).toBe(
+      'Write the test first.',
+    )
+    const rules = knowledgeRules('/tmp/knowledge')
+    expect(prompts[0]).toContain(rules)
+    expect(prompts[0]).toContain('LEARNED:')
+    expect(reviewer.prompts[0]).toContain(rules)
+    expect(knowledge.deliveries).toEqual([
+      expect.objectContaining({ recipient: { taskId: id }, project: 'paulo/app', files: 1 }),
+    ])
+    const [build] = await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'build'))
+    expect((build.detail as { knowledge?: unknown }).knowledge).toEqual(await knowledge.pin())
+  })
+
+  it('keeps what the builder learned for the next run on the same project', async () => {
+    const id = await seedTask()
+    const learned: CodingHarness = {
+      name: 'learned',
+      egress: agentEgress,
+      run: async () => ({
+        ok: true,
+        summary: 'Added truncate.\nLEARNED: the tests of this repo run with pnpm vitest run',
+      }),
+    }
+    const knowledge = knowledgeBase()
+
+    await runTask(deps(new FakeSandbox(changed()), { harness: learned, knowledge }), id)
+
+    expect(knowledge.kept).toEqual([
+      {
+        repository: 'paulo/app',
+        kind: 'learned',
+        body: 'the tests of this repo run with pnpm vitest run',
+        taskId: id,
+        issueNumber: 7,
+        baseSha: 'abc123def',
+      },
+    ])
+  })
+
+  it('remembers an issue a run found nothing to change in, with what the agent said', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) => (c.includes('status --porcelain') ? { stdout: '' } : undefined)),
+    )
+    const already: CodingHarness = {
+      name: 'already',
+      egress: agentEgress,
+      run: async () => ({ ok: true, summary: 'truncate already exists in src/truncate.js' }),
+    }
+    const knowledge = knowledgeBase()
+
+    await runTask(deps(sandbox, { harness: already, knowledge }), id)
+
+    expect(knowledge.kept).toHaveLength(1)
+    expect(knowledge.kept[0]).toMatchObject({ kind: 'no-change', issueNumber: 7 })
+    expect(knowledge.kept[0].body).toBe(
+      'Issue #7 (Add truncate): a run starting from abc123def found nothing to change. The agent said: truncate already exists in src/truncate.js',
+    )
+  })
+
+  it('tells the agent nothing about a base while none is ready', async () => {
+    const id = await seedTask()
+    const prompts: string[] = []
+    const capture: CodingHarness = {
+      name: 'capture',
+      egress: agentEgress,
+      run: async (_backend, { prompt }) => {
+        prompts.push(prompt)
+        return { ok: true, summary: 'done\nLEARNED: something worth keeping here' }
+      },
+    }
+    const knowledge = { ...knowledgeBase(), pin: async () => undefined }
+
+    await runTask(deps(new FakeSandbox(changed()), { harness: capture, knowledge }), id)
+
+    expect(prompts[0]).not.toContain('/tmp/knowledge')
+    expect(knowledge.kept).toEqual([])
   })
 })

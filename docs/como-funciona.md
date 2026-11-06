@@ -842,25 +842,62 @@ em `harness-registry.ts`:
 
 O orquestrador (`runTask`) não conhece nenhum agente pelo nome.
 
+## Base de conhecimento
+
+A base de conhecimento é um repositório git seu, escolhido na página Setup (o repositório e, se quiser, a
+branch das regras). A decisão está na [ADR 0006](adr/0006-base-de-conhecimento-do-usuario.md), e o formato
+(`aifactory-knowledge/1`) está em `templates/knowledge/README.md`. Sem repositório escolhido, os agentes
+trabalham só com o código e a issue, como antes.
+
+```text
+branch sua (padrão ou a escolhida)       branch factory-memory (só a fábrica escreve)
+  MEMORY.md         índice e formato       README.md
+  knowledge/global/ regras de todos        memory/projects/<owner>/<repo>/INDEX.md
+  knowledge/projects/<owner>/<repo>/       memory/projects/<owner>/<repo>/<nota>.md
+```
+
+- `knowledge/` são regras: os agentes as seguem como seguem o `AGENTS.md`, e elas só mudam por PR que você
+  aprova. `memory/` são notas que a fábrica observou: dicas para conferir, nunca instruções.
+- O cron `knowledge-sync` roda a cada minuto no processo principal. Ele busca as duas branches para um
+  espelho bare em `.state/knowledge/<owner>/<repo>.git` (ou em `FACTORY_KNOWLEDGE_DIR`) e grava as notas
+  pendentes como um commit em `factory-memory`, sempre por fast-forward. É o único lugar que busca ou
+  envia algo.
+- Todo agente lê a base do mesmo jeito. No sandbox (construtor, revisor e planejador), a fábrica copia
+  para `/tmp/knowledge` o índice, as regras globais e as do projeto e as notas do projeto, mais um
+  `GUIDE.md` que diz os commits e o peso de cada parte. Ela faz isso antes do agente começar e de novo a
+  cada minuto em que a base muda. O sandbox nunca busca nada e não tem credencial da base, e um projeto
+  não vê a pasta de outro. Cada cópia fica em `knowledge_delivery`, e o estágio `build` guarda os commits
+  da primeira. No painel, todo assistente tem `knowledge_search` e `knowledge_read`, que leem o espelho.
+- As notas vêm de duas fontes: as linhas `LEARNED:` que o construtor deixa no resumo final (até cinco) e
+  o veredito de um run que não encontrou nada a mudar numa issue. A mesma nota num projeto é guardada uma
+  vez, e o índice deixa de listar uma nota 180 dias depois de escrita. Para que uma nota vire regra,
+  copie o texto dela para `knowledge/` por PR.
+- Uma fatia leva só texto (`.md`, `.txt`, `.json`, `.yaml`), até 128 KiB por arquivo e 1 MiB no total, e o
+  `GUIDE.md` diz o que ficou de fora.
+- Se o repositório escolhido não estiver no formato, o Setup mostra o motivo e oferece "Propor a
+  estrutura", que abre um PR da branch `factory-knowledge-setup` sem mexer no que já existe. Se uma busca
+  falhar, o Setup mostra o erro e os agentes continuam lendo o último commit bom.
+
 ## Configuração
 
 Tudo vem do ambiente, lido quando um job começa, não na subida do servidor. O servidor sobe e
 responde `/api/health` mesmo sem as credenciais.
 
-| Variável                                              | Para quê                                             |
-| ----------------------------------------------------- | ---------------------------------------------------- |
-| `DATABASE_URL`                                        | Postgres do estado e da fila de jobs                 |
-| `GITHUB_WEBHOOK_SECRET`                               | verifica a assinatura do webhook                     |
-| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`                    | identidade do GitHub App                             |
-| `GITHUB_APP_PRIVATE_KEY_PATH`                         | chave privada do App (arquivo em `.secrets/`)        |
-| `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`      | credencial do Claude Code                            |
-| `FACTORY_CLAUDE_AUTH`                                 | `api-key` ou `subscription`, quando as duas existem  |
-| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Vercel Sandbox, sem a validade de 12 horas do OIDC   |
-| `VERCEL_OIDC_TOKEN`                                   | alternativa de desenvolvimento, de `vercel env pull` |
-| `OPENROUTER_API_KEY`, `FACTORY_CHAT_MODEL`            | o assistente do chat no OpenRouter                   |
-| `FACTORY_CHAT_CODEX_MODEL`                            | o modelo do assistente na assinatura do ChatGPT      |
-| `FACTORY_GUIDE_MODEL`                                 | o modelo dos guias de página (padrão gpt-4.1-mini)   |
-| `FACTORY_JOBS=off`                                    | sobe uma prévia do painel sem pegar jobs da fila     |
+| Variável                                              | Para quê                                                |
+| ----------------------------------------------------- | ------------------------------------------------------- |
+| `DATABASE_URL`                                        | Postgres do estado e da fila de jobs                    |
+| `GITHUB_WEBHOOK_SECRET`                               | verifica a assinatura do webhook                        |
+| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`                    | identidade do GitHub App                                |
+| `GITHUB_APP_PRIVATE_KEY_PATH`                         | chave privada do App (arquivo em `.secrets/`)           |
+| `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`      | credencial do Claude Code                               |
+| `FACTORY_CLAUDE_AUTH`                                 | `api-key` ou `subscription`, quando as duas existem     |
+| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Vercel Sandbox, sem a validade de 12 horas do OIDC      |
+| `VERCEL_OIDC_TOKEN`                                   | alternativa de desenvolvimento, de `vercel env pull`    |
+| `OPENROUTER_API_KEY`, `FACTORY_CHAT_MODEL`            | o assistente do chat no OpenRouter                      |
+| `FACTORY_CHAT_CODEX_MODEL`                            | o modelo do assistente na assinatura do ChatGPT         |
+| `FACTORY_GUIDE_MODEL`                                 | o modelo dos guias de página (padrão gpt-4.1-mini)      |
+| `FACTORY_JOBS=off`                                    | sobe uma prévia do painel sem pegar jobs da fila        |
+| `FACTORY_KNOWLEDGE_DIR`                               | onde fica o espelho da base (padrão `.state/knowledge`) |
 
 `.env.local` e `.secrets/` ficam fora do git, com modo 600.
 
@@ -952,3 +989,5 @@ memory limit`, e é tratada como falha do ambiente (a fábrica repete sozinha), 
 - O supervisor só reporta; não corrige nada sozinho.
 - Uma aprovação do revisor não é prova de que o código está certo. A evidência continua sendo os checks.
 - A sessão do Vercel Sandbox no plano Hobby termina em 45 minutos.
+- A base de conhecimento ainda não tem curador: nenhuma nota é deduplicada por sentido nem proposta como
+  regra sozinha. Só a mesma nota, palavra por palavra, é guardada uma vez.

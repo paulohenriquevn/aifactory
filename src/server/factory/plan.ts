@@ -5,6 +5,9 @@ import type { Database } from '../db'
 import { plan, planItem } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
+import { KnowledgeFeed } from '../knowledge/feed'
+import { knowledgeRules } from '../knowledge/prompt'
+import type { KnowledgeSource } from '../knowledge/source'
 
 import type { CodingHarness } from './harness'
 import { jsonObjects } from './review'
@@ -25,7 +28,7 @@ export type PlanDraft = {
 }
 
 /** What the planning agent is told. It reads the repository and writes nothing. */
-export function planPrompt(input: { repo: string; goal: string }): string {
+export function planPrompt(input: { repo: string; goal: string; knowledgeDir?: string }): string {
   return `You are planning work for the repository ${input.repo}. The owner wants this:
 
 ${input.goal}
@@ -37,7 +40,7 @@ Break the goal into at most ${MAX_ITEMS} GitHub issues, each one a coding agent 
 - Each one must be small enough for one pull request.
 - Each body says what to build and where, then lists acceptance criteria as behavior someone can check ("the function returns X for Y", "the test for Z passes"), never as effort or file counts.
 - Name the files and the existing code the agent should look at when you know them.
-
+${input.knowledgeDir ? `- Keep each issue within the owner's rules; name the rule when it decides how something is built.\n\n${knowledgeRules(input.knowledgeDir)}\n` : ''}
 Finish with one JSON object on its own, and nothing after it:
 
 {"summary":"one or two sentences on how you split the work","issues":[{"title":"short imperative title","body":"markdown body"}]}
@@ -84,6 +87,8 @@ export type PlanDeps = {
   sandbox: IsolatedSandboxProvider
   harness: (labels: string[]) => CodingHarness
   timeoutMs?: number
+  /** Where the knowledge base comes from, the same source the runs read. */
+  knowledge?: KnowledgeSource
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -136,10 +141,19 @@ export async function runPlan(deps: PlanDeps, planId: number): Promise<void> {
       instanceId: 'plan',
     })
     await agent.prepare?.(sandbox.backend)
+    const feed = await KnowledgeFeed.open(deps.knowledge, sandbox.backend, row.repository, {
+      planId,
+    })
+    // Stopping the sandbox stops the feed first, so no copy goes into a sandbox that is gone.
+    stop = () =>
+      feed
+        .attachTo(sandbox)
+        .stop()
+        .catch(() => {})
     const result = await agent.run(sandbox.backend, {
       cwd: repoDir,
       timeoutMs: deps.timeoutMs ?? 15 * 60_000,
-      prompt: planPrompt({ repo: row.repository, goal: row.goal }),
+      prompt: planPrompt({ repo: row.repository, goal: row.goal, knowledgeDir: feed.dir }),
     })
     const cost = result.costUsd ?? 0
     if (result.quota) {

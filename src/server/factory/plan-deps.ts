@@ -15,6 +15,7 @@ export function planDeps(env: NodeJS.ProcessEnv = process.env): PlanDeps {
     github: deps.github,
     api: createGithubApi(),
     sandbox: deps.sandbox,
+    knowledge: deps.knowledge,
     harness: (labels) =>
       pickHarness(harnessRegistry(env), planner, labels, 'harness', (engine) =>
         optionsFor(env, 'planner', engine),

@@ -1,10 +1,7 @@
-import { AgentBuilder } from '@theokit/agents'
-import { z } from 'zod'
-
+import { buildAssistant } from '../factory/assistant'
 import { assistModel } from '../factory/models'
 import { ownerOnly } from '../panel/policy'
 
-import { onlyTools } from './hooks/only-tools'
 import { SETUP_INSTRUCTIONS } from './prompts/assist'
 import { proposeTool } from './tools/propose'
 import { repoFileTool, repoTreeTool } from './tools/repo'
@@ -18,12 +15,9 @@ export const policy = ownerOnly
  * What it may read is limited to the files that say how a project is built and tested
  * (`factory/repo-reader.ts`).
  */
-export default AgentBuilder.create()
-  .input(z.object({ message: z.string().max(12_000) }))
-  .model(assistModel())
-  .system(SETUP_INSTRUCTIONS)
-  .tool(proposeTool)
-  .tool(repoTreeTool)
-  .tool(repoFileTool)
-  .hooks(onlyTools(['propose', 'repo_files', 'repo_file']))
-  .build()
+export default buildAssistant(assistModel(), {
+  system: SETUP_INSTRUCTIONS,
+  tools: { propose: proposeTool, repo_files: repoTreeTool, repo_file: repoFileTool },
+  asks: {},
+  maxInput: 12_000,
+})

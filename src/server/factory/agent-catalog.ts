@@ -6,8 +6,10 @@ import type { AgentEntry, AgentPrompt, AgentRole, AgentsView, AgentTool } from '
 import { ASSIST_INSTRUCTIONS, SETUP_INSTRUCTIONS } from '../agents/prompts/assist'
 import { proposeTool } from '../agents/tools/propose'
 import { repoFileTool, repoTreeTool } from '../agents/tools/repo'
+import { SANDBOX_KNOWLEDGE_DIR } from '../knowledge/format'
+import { ASSISTANT_KNOWLEDGE_NOTE } from '../knowledge/prompt'
 
-import type { AssistantSpec } from './assistant'
+import { assistantTools, type AssistantSpec } from './assistant'
 import { CHAT_SPEC } from './chat-agent'
 import { optionsFor } from './engine-models'
 import { DEFAULT_HARNESS } from './harness-registry'
@@ -45,7 +47,7 @@ const fixed = (id: string, title: string, when: string, text: string): AgentProm
 
 /** What an agent may call, as the model is told it. A tool the owner must approve says so. */
 function toolsOf(spec: Pick<AssistantSpec, 'tools' | 'asks'>): AgentTool[] {
-  return Object.entries(spec.tools).map(([name, tool]) => ({
+  return Object.entries(assistantTools({ system: '', ...spec })).map(([name, tool]) => ({
     name,
     description: (tool as { description?: string }).description ?? '',
     effect: name in spec.asks ? 'asks' : 'reads',
@@ -59,6 +61,13 @@ const SANDBOX_TOOL: AgentTool = {
   effect: 'sandbox',
 }
 
+/** The knowledge base, as every agent in a sandbox reads it. */
+const KNOWLEDGE_TOOL: AgentTool = {
+  name: 'knowledge',
+  description: `Lê a base de conhecimento em ${SANDBOX_KNOWLEDGE_DIR}: as suas regras (knowledge/) e as notas da fábrica (memory/), só as globais e as deste projeto. A fábrica copia a base antes do agente começar e de novo a cada minuto em que ela muda; o sandbox nunca busca nada nem guarda credencial da base.`,
+  effect: 'reads',
+}
+
 /** The agent of a role with the model and the effort it is told to use, or "default" where nothing is set. */
 function engineValue(env: NodeJS.ProcessEnv, role: AgentRole, engine: string): string {
   const { model, effort } = optionsFor(env, role, engine)
@@ -70,7 +79,15 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
   const builder = env.FACTORY_HARNESS || DEFAULT_HARNESS
   const choose =
     'Aqui mesmo, na página Agentes, vale para as próximas execuções sem reiniciar. A configuração de um repositório ou a label harness:<nome> numa issue mudam para uma só.'
-  const issue = { repo: REPO, issueNumber: 0, title: TITLE, body: BODY, branch: BRANCH }
+  // The prompts as an agent gets them once a knowledge base is set; without one the part about it is left out.
+  const issue = {
+    repo: REPO,
+    issueNumber: 0,
+    title: TITLE,
+    body: BODY,
+    branch: BRANCH,
+    knowledgeDir: SANDBOX_KNOWLEDGE_DIR,
+  }
   return [
     {
       id: 'builder',
@@ -80,7 +97,7 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
       runsIn: 'sandbox',
       engine: { value: engineValue(env, 'builder', builder), change: choose },
       when: 'Quando uma issue com a label factory vira tarefa. Volta a ele quando os checks ou o revisor pedem mudanças, quando você responde a uma pergunta dele e quando você pede mudanças num PR.',
-      tools: [SANDBOX_TOOL],
+      tools: [SANDBOX_TOOL, KNOWLEDGE_TOOL],
       shared: [],
       source: [
         'src/server/factory/harness.ts',
@@ -143,6 +160,7 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
           description:
             'Pode ler o código e rodar os testes do projeto. O prompt proíbe editar, criar ou apagar arquivos e rodar git que escreve.',
         },
+        KNOWLEDGE_TOOL,
       ],
       shared: [],
       source: ['src/server/factory/review.ts'],
@@ -166,7 +184,7 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
         change: 'Aqui mesmo, na página Agentes. Sem escolha, usa o agente do Construtor.',
       },
       when: 'Quando você cria um plano na página Planos. Termina com um JSON que a fábrica transforma na lista de issues.',
-      tools: [SANDBOX_TOOL],
+      tools: [SANDBOX_TOOL, KNOWLEDGE_TOOL],
       shared: [],
       source: ['src/server/factory/plan.ts'],
       prompts: [
@@ -174,7 +192,11 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
           'plan',
           'Instruções do plano',
           'Uma vez por plano, com o objetivo que você escreveu.',
-          planPrompt({ repo: REPO, goal: '‹o objetivo que você escreveu›' }),
+          planPrompt({
+            repo: REPO,
+            goal: '‹o objetivo que você escreveu›',
+            knowledgeDir: SANDBOX_KNOWLEDGE_DIR,
+          }),
         ),
       ],
     },
@@ -199,7 +221,7 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
     },
     when: `Na tela inicial. ${PANEL_WHERE}`,
     tools: toolsOf(CHAT_SPEC),
-    shared: ['theo'],
+    shared: ['theo', 'knowledge'],
     source: [
       'src/server/agents/prompts/chat.ts',
       'src/server/factory/chat-agent.ts',
@@ -222,7 +244,7 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
       },
       when: `No painel ao lado da página, pelo botão Guia. ${PANEL_WHERE}`,
       tools: toolsOf(spec),
-      shared: ['theo'],
+      shared: ['theo', 'knowledge'],
       source: [
         'src/server/agents/prompts/guides.ts',
         'src/server/factory/guides.ts',
@@ -250,8 +272,8 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
         'FACTORY_ASSIST_MODEL, no arquivo de ambiente, com a chave do provedor do modelo. Só vale depois de reiniciar o painel, porque o framework fixa o modelo dos agentes do painel quando o servidor sobe.',
     },
     when: `Embaixo de cada caixa de texto do painel. Propõe um texto e nada muda até você apertar "Use this". ${PANEL_WHERE}`,
-    tools: [{ name: 'propose', description: proposeTool.description, effect: 'reads' }],
-    shared: ['theo'],
+    tools: toolsOf({ tools: { propose: proposeTool }, asks: {} }),
+    shared: ['theo', 'knowledge'],
     source: ['src/server/agents/assist.ts', 'src/server/agents/prompts/assist.ts'],
     prompts: [
       fixed(
@@ -274,12 +296,11 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
         'FACTORY_ASSIST_MODEL, no arquivo de ambiente, com a chave do provedor do modelo. Só vale depois de reiniciar o painel, porque o framework fixa o modelo dos agentes do painel quando o servidor sobe.',
     },
     when: `No botão "Set this up for me", na página Repositórios. É o único que pode ler um repositório, e só os arquivos de build e de teste. ${PANEL_WHERE}`,
-    tools: [proposeTool, repoTreeTool, repoFileTool].map((tool) => ({
-      name: tool.name,
-      description: tool.description ?? '',
-      effect: 'reads',
-    })),
-    shared: ['theo'],
+    tools: toolsOf({
+      tools: { propose: proposeTool, repo_files: repoTreeTool, repo_file: repoFileTool },
+      asks: {},
+    }),
+    shared: ['theo', 'knowledge'],
     source: ['src/server/agents/assist-setup.ts', 'src/server/agents/prompts/assist.ts'],
     prompts: [fixed('system', 'Instruções do sistema', 'Em toda chamada.', SETUP_INSTRUCTIONS)],
   }
@@ -288,6 +309,12 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
 
 /** The text the framework adds to what every panel agent is given, read from the one file it lives in. */
 function sharedContext(read: (path: string) => string): AgentPrompt[] {
+  const knowledge = fixed(
+    'knowledge',
+    'Base de conhecimento',
+    'No fim das instruções de todo agente do painel. As ferramentas knowledge_search e knowledge_read leem o espelho que a fábrica atualiza a cada minuto.',
+    ASSISTANT_KNOWLEDGE_NOTE,
+  )
   try {
     return [
       fixed(
@@ -296,9 +323,10 @@ function sharedContext(read: (path: string) => string): AgentPrompt[] {
         'Junto de toda mensagem de todos os agentes do painel. Diz o que é a fábrica e o que faz um bom pedido.',
         read('.theokit/THEO.md'),
       ),
+      knowledge,
     ]
   } catch {
-    return []
+    return [knowledge]
   }
 }
 

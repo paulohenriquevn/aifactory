@@ -60,3 +60,6 @@ reports/
 
 # What the backlog feeder records about its run
 .backlog-feed/
+
+# the mirror of the knowledge repository the factory keeps on this host
+.state/

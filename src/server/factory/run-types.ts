@@ -1,3 +1,4 @@
+import type { KnowledgeSource } from '../knowledge/source'
 import type { Database } from '../db'
 import type { question as questionTable } from '../db/schema'
 import type { FetchLike, GithubApp } from '../github/app'
@@ -37,6 +38,11 @@ export type RunTaskDeps = {
   timeouts?: { sandboxMs: number; agentMs: number; checkMs?: number; reviewMs?: number }
   /** Wait between push attempts. */
   pushRetryDelayMs?: number
+  /**
+   * Where the knowledge base comes from. Every agent the run starts reads it at `/tmp/knowledge`, kept
+   * current while it works; without a source (the tests) the agents work without one.
+   */
+  knowledge?: KnowledgeSource
 }
 
 export type RunResult =
