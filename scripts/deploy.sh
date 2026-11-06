@@ -19,6 +19,9 @@ fi
 
 pnpm build
 systemctl --user restart aifactory.service
+# The workers run tasks and the feeder hands them out from the same build, so each one left alone keeps the
+# code from before it. try-restart restarts only the ones running: the feeder is started on purpose, never here.
+systemctl --user try-restart 'aifactory-worker@*.service' aifactory-feeder.service
 for _ in $(seq 1 40); do
   curl -fs -o /dev/null http://127.0.0.1:3000/api/health && { echo "aifactory is up"; exit 0; }
   sleep 1
