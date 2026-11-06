@@ -177,6 +177,7 @@ export const ACTING = new Set([
   'create_plan_issues',
   'resolve_finding',
   'acknowledge_watch',
+  'update_agent_settings',
 ])
 
 /** The tool a message part is a call of, whichever way the framework named it. */

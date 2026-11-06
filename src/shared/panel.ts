@@ -371,4 +371,27 @@ export type AgentsView = {
   agents: AgentEntry[]
   /** Text added to what every panel agent is given, kept in one file for all of them. */
   shared: AgentPrompt[]
+  /** Which coding agent builds, plans and reviews, and what can be changed about it. */
+  settings: AgentSettings
+}
+
+/** The three roles of a coding agent that the owner can give to one agent or another. */
+export type AgentRole = 'builder' | 'planner' | 'reviewer'
+
+export type EngineOption = {
+  id: string
+  /** False when the agent cannot start now, with what is missing. */
+  ready: boolean
+  problem?: string
+}
+
+export type AgentSettings = {
+  /** Every coding agent the factory can run, and whether it could start now. */
+  options: EngineOption[]
+  /** What the owner chose; null where nothing was, so the environment or the default decides. */
+  chosen: Record<AgentRole, string | null>
+  /** What each role really uses now. */
+  effective: Record<AgentRole, string>
+  /** Repositories that name an agent of their own, which wins over what is chosen here. */
+  repositoriesWithOwn: { repository: string; builder: string | null; reviewer: string | null }[]
 }

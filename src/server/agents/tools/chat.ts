@@ -2,6 +2,7 @@ import { tool } from 'theokit/server/define'
 import { z } from 'zod'
 
 import { getDb } from '../../db'
+import { effectiveEnv } from '../../factory/settings'
 import { backlogProgress, describeTask, factoryStatus, findTasks } from '../../factory/chat-tools'
 import { actionDeps, workDeps } from '../../panel/deps'
 import { requestChanges, retry } from '../../panel/actions'
@@ -14,7 +15,7 @@ export const factoryStatusTool = tool('factory_status')
     'The state of the factory now: tasks by stage, the repositories it works in and how each is set up, how it is configured, and the progress of the backlog feeder.',
   )
   .input(z.object({}))
-  .execute(async () => factoryStatus(getDb(), process.env))
+  .execute(async () => factoryStatus(getDb(), await effectiveEnv(getDb())))
   .build()
 
 export const listTasksTool = tool('list_tasks')

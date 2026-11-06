@@ -62,7 +62,7 @@ const SANDBOX_TOOL: AgentTool = {
 function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
   const builder = env.FACTORY_HARNESS || DEFAULT_HARNESS
   const choose =
-    'FACTORY_HARNESS muda o padrão da fábrica; a configuração de um repositório ou a label harness:<nome> numa issue mudam para uma só. Opções: claude-code e codex.'
+    'Aqui mesmo, na página Agentes, vale para as próximas execuções sem reiniciar. A configuração de um repositório ou a label harness:<nome> numa issue mudam para uma só.'
   const issue = { repo: REPO, issueNumber: 0, title: TITLE, body: BODY, branch: BRANCH }
   return [
     {
@@ -127,7 +127,7 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
       engine: {
         value: env.FACTORY_REVIEWER || `${builder} (o mesmo do construtor, numa sessão nova)`,
         change:
-          'FACTORY_REVIEWER, ou a label reviewer:<nome> numa issue. Um agente diferente do construtor dá uma segunda opinião de verdade.',
+          'Aqui mesmo, na página Agentes, ou a label reviewer:<nome> numa issue. Um agente diferente do construtor dá uma segunda opinião de verdade.',
       },
       when: 'Depois que os checks passam num commit, e de novo a cada retrabalho. Até 3 revisões por tarefa.',
       tools: [
@@ -154,7 +154,10 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
       name: 'Planejador',
       role: 'Lê o repositório e divide um objetivo seu em issues pequenas e independentes, para você revisar. Não altera nada.',
       runsIn: 'sandbox',
-      engine: { value: builder, change: choose },
+      engine: {
+        value: env.FACTORY_PLANNER || `${builder} (o mesmo do construtor)`,
+        change: 'Aqui mesmo, na página Agentes. Sem escolha, usa o agente do Construtor.',
+      },
       when: 'Quando você cria um plano na página Planos. Termina com um JSON que a fábrica transforma na lista de issues.',
       tools: [SANDBOX_TOOL],
       shared: [],
@@ -297,6 +300,6 @@ function sharedContext(read: (path: string) => string): AgentPrompt[] {
 export function agentCatalog(
   env: NodeJS.ProcessEnv = process.env,
   read: (path: string) => string = (path) => readFileSync(resolve(process.cwd(), path), 'utf8'),
-): AgentsView {
+): Omit<AgentsView, 'settings'> {
   return { agents: [...factoryAgents(env), ...panelAgents(env)], shared: sharedContext(read) }
 }

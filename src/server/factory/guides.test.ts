@@ -46,6 +46,7 @@ describe('the guides', () => {
         'resolve_finding',
         'retry_task',
         'start_job',
+        'update_agent_settings',
         'update_repository',
       ].sort(),
     )
@@ -73,12 +74,18 @@ describe('the guides', () => {
     ])
   })
 
-  it('gives the agents guide only the two tools that read the catalog, and nothing that changes anything', () => {
-    expect(Object.keys(GUIDE_SPECS.agents.tools)).toEqual(['list_agents', 'agent_prompt'])
-    expect(GUIDE_SPECS.agents.asks).toEqual({})
+  it('lets the agents guide read the catalog and, with approval, choose which coding agent does each role', () => {
+    expect(Object.keys(GUIDE_SPECS.agents.tools)).toEqual([
+      'list_agents',
+      'agent_prompt',
+      'update_agent_settings',
+    ])
+    expect(Object.keys(GUIDE_SPECS.agents.asks)).toEqual(['update_agent_settings'])
     expect(GUIDE_INSTRUCTIONS('agents')).toContain('agent_prompt')
     expect(GUIDE_INSTRUCTIONS('agents')).toContain('never describe a prompt you have not read')
-    expect(GUIDE_INSTRUCTIONS('agents')).toContain('You cannot change an agent or a prompt')
+    expect(GUIDE_INSTRUCTIONS('agents')).toContain('You cannot change a prompt')
+    expect(GUIDE_INSTRUCTIONS('agents')).toContain('update_agent_settings')
+    expect(GUIDE_INSTRUCTIONS('agents')).toContain('Never choose an agent that cannot start')
   })
 
   it('lets the board guide answer "what needs me" from the inbox, not from one column', () => {

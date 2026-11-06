@@ -366,3 +366,14 @@ export const chatMessage = pgTable(
   },
   (table) => [primaryKey({ columns: [table.chatId, table.position] })],
 )
+
+/**
+ * What the owner chose in the panel and the factory reads when a run starts, one row for each: which agent
+ * builds, plans and reviews. A setting that is not here falls back to the environment, then to the default,
+ * so the panel changes the factory without a restart and the environment still works as it did.
+ */
+export const setting = pgTable('setting', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})

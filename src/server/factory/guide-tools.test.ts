@@ -12,6 +12,7 @@ import type {
 
 import {
   agentsForGuide,
+  enginesForGuide,
   healthForGuide,
   inboxForGuide,
   planForGuide,
@@ -237,6 +238,15 @@ describe('what the guides read', () => {
 
 describe('what the agents guide reads', () => {
   const view: AgentsView = {
+    settings: {
+      options: [
+        { id: 'claude-code', ready: true },
+        { id: 'codex', ready: true },
+      ],
+      chosen: { builder: null, planner: null, reviewer: null },
+      effective: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
+      repositoriesWithOwn: [],
+    },
     shared: [
       { id: 'theo', title: 'Contexto da fábrica', when: 'sempre', text: 'ctx', template: false },
     ],
@@ -334,6 +344,27 @@ describe('what the agents guide reads', () => {
     })
     expect(promptForGuide(view, 'builder', 'nope')).toEqual({
       error: 'Construtor has no prompt "nope"; it has build, rework',
+    })
+  })
+})
+
+describe('what the agents guide reads about the coding agents', () => {
+  it('says what each role uses, what was chosen, which agents could start, and who has their own', () => {
+    expect(
+      enginesForGuide({
+        options: [
+          { id: 'claude-code', ready: false, problem: 'CLAUDE_CODE_OAUTH_TOKEN is not set' },
+          { id: 'codex', ready: true },
+        ],
+        chosen: { builder: 'codex', planner: null, reviewer: null },
+        effective: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
+        repositoriesWithOwn: [{ repository: 'o/r', builder: 'codex', reviewer: null }],
+      }),
+    ).toEqual({
+      inUse: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
+      chosenInThePanel: { builder: 'codex', planner: null, reviewer: null },
+      available: ['claude-code (cannot start: CLAUDE_CODE_OAUTH_TOKEN is not set)', 'codex'],
+      repositoriesWithTheirOwnAgent: [{ repository: 'o/r', builder: 'codex', reviewer: null }],
     })
   })
 })

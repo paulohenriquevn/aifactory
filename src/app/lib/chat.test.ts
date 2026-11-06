@@ -128,6 +128,30 @@ describe('promptWith a preface', () => {
   })
 })
 
+describe('describeApproval for the choice of agent', () => {
+  it('says which role gets which agent, and that it applies to the next runs', () => {
+    const out = describeApproval('update_agent_settings', {
+      builder: 'claude-code',
+      reviewer: 'codex',
+    })
+    expect(out.title).toBe('Trocar o agente de código')
+    expect(out.request).toContain('- Construtor: claude-code')
+    expect(out.request).toContain('- Revisor: codex')
+    expect(out.request).not.toContain('Planejador')
+    expect(out.request).toContain('próximas execuções, sem reiniciar')
+  })
+
+  it("says that a null goes back to the builder's agent, and that an empty change changes nothing", () => {
+    expect(describeApproval('update_agent_settings', { planner: null }).request).toContain(
+      '- Planejador: volta ao padrão (o mesmo agente do Construtor)',
+    )
+    expect(describeApproval('update_agent_settings', {}).request).toContain('- nada muda')
+    expect(describeApproval('update_agent_settings', { builder: undefined }).request).toContain(
+      '- nada muda',
+    )
+  })
+})
+
 describe('describeApproval for the guides', () => {
   it('says in words what each change would do', () => {
     expect(describeApproval('approve_task', { id: 4 }).request).toContain(

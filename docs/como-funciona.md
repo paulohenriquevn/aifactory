@@ -436,7 +436,7 @@ dados crus: vira uma linha ("Consultou: as tarefas", "Fez: começou uma tarefa d
 | Repositórios  | repositórios e arquivos de build do projeto              | configurações e ativação de um repositório                      |
 | Caixa entrada | o que espera uma pessoa, uma tarefa                      | aprovar o commit, devolver com nota, repetir                    |
 | Saúde         | custo e achados do supervisor, uma tarefa                | resolver um achado, marcar a `main` vermelha como vista         |
-| Agentes       | o catálogo de agentes e o texto de cada instrução        | nada: explica, e diz em que arquivo cada instrução está         |
+| Agentes       | o catálogo de agentes e o texto de cada instrução        | qual agente de código constrói, planeja e revisa                |
 | Configuração  | o que falta para a fábrica funcionar                     | nada: guia passo a passo (chaves e contas são feitas pelo dono) |
 
 Nenhum guia faz release nem merge na `main`: o release é um botão do dono na tarefa. Nenhum aceita chave
@@ -458,12 +458,24 @@ a continuação depois de uma resposta). O contexto da fábrica, que o framework
 dos agentes do painel, aparece dobrado dentro de cada um deles. Dá para buscar por nome, ferramenta ou
 qualquer palavra de uma instrução, com o trecho achado destacado, e copiar cada instrução.
 
+**Trocar o agente de código pela interface.** No Construtor, no Planejador e no Revisor há um seletor com
+os agentes que a fábrica sabe rodar (`claude-code` e `codex`). A escolha fica no banco (tabela `setting`),
+é lida no começo de cada execução e vale para as próximas **sem reiniciar nada**; as execuções em andamento
+terminam com o agente antigo. O Planejador e o Revisor podem seguir o Construtor ("O mesmo do Construtor"),
+que é o padrão; escolher um revisor diferente dá uma segunda opinião de verdade. Sem escolha, vale o que o
+ambiente diz (`FACTORY_HARNESS`, `FACTORY_PLANNER`, `FACTORY_REVIEWER`) e, sem isso, `claude-code`. Um agente
+sem credencial aparece como "indisponível", com o que falta, e não pode ser escolhido, porque uma escolha
+que quebra toda execução é pior do que nenhuma. Um repositório com agente próprio (campo "Builder" ou
+"Reviewer" em Repositórios) ignora esta escolha, e o seletor lista quais são. O Guia dos Agentes faz a mesma
+troca, com o seu OK. A conta do Claude Code (assinatura ou chave de API) continua sendo definida no
+ambiente (`FACTORY_CLAUDE_AUTH`), porque envolve um segredo.
+
 Nada ali é uma cópia: o catálogo (`factory/agent-catalog.ts`, servido em `GET /api/panel/agents`) monta a
 tela do código que roda. Os prompts do Construtor, do Revisor e do Planejador são os que as próprias
 funções devolvem, com marcadores ‹assim› no lugar dos dados de cada tarefa (o texto da issue, a branch).
 Os dos agentes do painel são as instruções que eles usam. Os modelos são os configurados. Um teste confere
-que os arquivos citados existem, para a página não apontar para o nada. A página só mostra: mudar uma
-instrução é mudar o código, no arquivo que ela indica.
+que os arquivos citados existem, para a página não apontar para o nada. As instruções só se leem: mudar
+uma é mudar o código, no arquivo que ela indica.
 
 **O que o painel mostra, ao vivo:**
 

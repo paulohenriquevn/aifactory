@@ -148,6 +148,20 @@ const APPROVALS: Record<string, (a: Args, repo?: RepositoryView) => Approval> = 
       FINDING_ACTIONS[text(a.action)] ??
       `Fazer "${text(a.action)}" sobre o achado ${String(a.id)}.`,
   }),
+  update_agent_settings: (a) => {
+    const names = { builder: 'Construtor', planner: 'Planejador', reviewer: 'Revisor' } as const
+    const lines = (Object.keys(names) as (keyof typeof names)[])
+      .filter((role) => role in a && a[role] !== undefined)
+      .map((role) =>
+        a[role] === null
+          ? `- ${names[role]}: volta ao padrão (o mesmo agente do Construtor)`
+          : `- ${names[role]}: ${String(a[role])}`,
+      )
+    return {
+      title: 'Trocar o agente de código',
+      request: `${lines.length > 0 ? lines.join('\n') : '- nada muda'}\nVale para as próximas execuções, sem reiniciar. As que estão rodando terminam com o agente antigo.`,
+    }
+  },
   acknowledge_watch: (a) => ({
     title: 'Marcar como visto',
     request: `Marcar a main vermelha ${String(a.id)} como vista por uma pessoa.`,

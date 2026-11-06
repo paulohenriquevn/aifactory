@@ -111,11 +111,17 @@ describe('what a message did', () => {
             state: 'output-denied',
           },
           { type: 'tool-create_plan', toolCallId: 'e', state: 'output-available' },
+          {
+            type: 'dynamic-tool',
+            toolName: 'update_agent_settings',
+            toolCallId: 'f',
+            state: 'output-available',
+          },
           { type: 'tool-create_plan', state: 'output-available' },
         ],
       },
     ])
-    expect(ids).toEqual(['a', 'e'])
+    expect(ids).toEqual(['a', 'e', 'f'])
   })
 })
 

@@ -12,6 +12,7 @@ import {
   acknowledgeWatchTool,
   agentPromptTool,
   agentsTool,
+  updateAgentSettingsTool,
   approveTool,
   createPlanIssuesTool,
   createPlanTool,
@@ -40,6 +41,7 @@ const ASKS = {
   create_plan_issues: 'Create these issues on GitHub?',
   resolve_finding: 'Do this about the finding?',
   acknowledge_watch: 'Mark the red main branch as seen?',
+  update_agent_settings: 'Change which coding agent builds, plans and reviews?',
 }
 
 const ALL: Tools = {
@@ -58,6 +60,7 @@ const ALL: Tools = {
   list_repositories: repositoriesTool,
   list_agents: agentsTool,
   agent_prompt: agentPromptTool,
+  update_agent_settings: updateAgentSettingsTool,
   repo_files: repoTreeTool,
   repo_file: repoFileTool,
   update_repository: updateRepositoryTool,
@@ -83,7 +86,7 @@ const TOOLS: Record<GuideId, string[]> = {
   repositories: ['list_repositories', 'repo_files', 'repo_file', 'update_repository'],
   inbox: ['inbox_items', 'task_detail', 'approve_task', 'request_changes', 'retry_task'],
   health: ['health_report', 'task_detail', 'resolve_finding', 'acknowledge_watch'],
-  agents: ['list_agents', 'agent_prompt'],
+  agents: ['list_agents', 'agent_prompt', 'update_agent_settings'],
   setup: ['setup_report'],
 }
 

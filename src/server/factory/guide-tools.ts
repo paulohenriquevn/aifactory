@@ -1,4 +1,5 @@
 import type {
+  AgentSettings,
   AgentsView,
   HealthReport,
   InboxItem,
@@ -164,5 +165,17 @@ export function promptForGuide(view: AgentsView, id: string, promptId?: string) 
     alsoGivenWith: shared,
     text: prompt.text.slice(0, PROMPT_MAX),
     cut: prompt.text.length > PROMPT_MAX,
+  }
+}
+
+/** Which coding agent builds, plans and reviews now, what was chosen, and which agents could start. */
+export function enginesForGuide(settings: AgentSettings) {
+  return {
+    inUse: settings.effective,
+    chosenInThePanel: settings.chosen,
+    available: settings.options.map((o) =>
+      o.ready ? o.id : `${o.id} (cannot start: ${o.problem})`,
+    ),
+    repositoriesWithTheirOwnAgent: settings.repositoriesWithOwn,
   }
 }

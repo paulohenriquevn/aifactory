@@ -33,6 +33,15 @@ const entry = (over: Partial<AgentEntry>): AgentEntry => ({
 })
 
 const view: AgentsView = {
+  settings: {
+    options: [
+      { id: 'claude-code', ready: true },
+      { id: 'codex', ready: true },
+    ],
+    chosen: { builder: null, planner: null, reviewer: null },
+    effective: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
+    repositoriesWithOwn: [],
+  },
   shared: [
     {
       id: 'theo',
@@ -154,11 +163,11 @@ describe('the agents page', () => {
     const article = await screen.findByRole('article', { name: 'Construtor' })
     expect(within(article).getByText('Roda no sandbox')).toBeDefined()
     expect(within(article).getByText('Escreve o código')).toBeDefined()
-    expect(within(article).getByText('codex')).toBeDefined()
+    expect(within(article).getByText('codex', { selector: 'span.font-mono' })).toBeDefined()
     expect(within(article).getByText(/Como mudar: FACTORY_HARNESS/)).toBeDefined()
     expect(within(article).getByText('age só dentro do sandbox')).toBeDefined()
     expect(within(article).getByText('src/x.ts')).toBeDefined()
-    expect(within(article).getByText(/Esta tela só mostra/)).toBeDefined()
+    expect(within(article).getByText(/As instruções só se leem aqui/)).toBeDefined()
   })
 
   it('opens the agent named in the address, and changes the address when another is chosen', async () => {

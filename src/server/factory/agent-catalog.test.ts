@@ -112,7 +112,11 @@ describe('the catalog of agents', () => {
     expect(chat.tools.filter((t) => t.effect === 'asks').map((t) => t.name)).toEqual(ACTING_TOOLS)
     expect(chat.tools.every((t) => t.description.length > 10)).toBe(true)
     expect(agent('guide-setup').tools.map((t) => t.effect)).toEqual(['reads'])
-    expect(agent('guide-agents').tools.map((t) => t.name)).toEqual(['list_agents', 'agent_prompt'])
+    expect(agent('guide-agents').tools.map((t) => [t.name, t.effect])).toEqual([
+      ['list_agents', 'reads'],
+      ['agent_prompt', 'reads'],
+      ['update_agent_settings', 'asks'],
+    ])
     expect(agent('assist-setup').tools.map((t) => t.name)).toEqual([
       'propose',
       'repo_files',
@@ -131,7 +135,12 @@ describe('the catalog of agents', () => {
   it('reports the model and the coding agent as they are configured now', () => {
     expect(agent('builder').engine.value).toBe('claude-code')
     expect(agent('builder', { FACTORY_HARNESS: 'codex' }).engine.value).toBe('codex')
-    expect(agent('planner', { FACTORY_HARNESS: 'codex' }).engine.value).toBe('codex')
+    expect(agent('planner', { FACTORY_HARNESS: 'codex' }).engine.value).toBe(
+      'codex (o mesmo do construtor)',
+    )
+    expect(
+      agent('planner', { FACTORY_HARNESS: 'codex', FACTORY_PLANNER: 'claude-code' }).engine.value,
+    ).toBe('claude-code')
     expect(agent('reviewer').engine.value).toContain('o mesmo do construtor')
     expect(agent('reviewer', { FACTORY_REVIEWER: 'codex' }).engine.value).toBe('codex')
     expect(agent('chat').engine.value).toContain('openrouter/google/gemini-2.5-flash')

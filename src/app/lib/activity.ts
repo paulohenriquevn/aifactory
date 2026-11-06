@@ -26,6 +26,7 @@ const CHANGES: Record<string, string> = {
   create_plan_issues: 'criou as issues de um plano',
   resolve_finding: 'resolveu um achado',
   acknowledge_watch: 'marcou a main vermelha como vista',
+  update_agent_settings: 'trocou o agente que constrói, planeja ou revisa',
 }
 
 export type Activity = { looked: string[]; did: string[]; refused: string[] }

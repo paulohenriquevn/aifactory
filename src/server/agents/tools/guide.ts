@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { getDb } from '../../db'
 import {
   agentsForGuide,
+  enginesForGuide,
   healthForGuide,
   inboxForGuide,
   planForGuide,
@@ -13,6 +14,7 @@ import {
   setupForGuide,
 } from '../../factory/guide-tools'
 import { acknowledgeWatch, approve, resolveFinding } from '../../panel/actions'
+import { changeAgentSettings } from '../../panel/agent-settings'
 import { actionDeps, workDeps } from '../../panel/deps'
 import { health, inbox } from '../../panel/queries'
 import { repositoryPatchSchema } from '../../panel/repository-schema'
@@ -153,14 +155,17 @@ export const acknowledgeWatchTool = tool('acknowledge_watch')
   .build()
 
 /** Not imported at the top: the catalog reads the guides, and the guides read these tools. */
-const catalog = async () => (await import('../../factory/agent-catalog')).agentCatalog()
+const catalog = async () => (await import('../../factory/agent-view')).agentsView(getDb())
 
 export const agentsTool = tool('list_agents')
   .describe(
     'Every agent of the factory: what it does, when it runs, the model or coding agent behind it and how that is changed, what it may call, and the titles of its prompts.',
   )
   .input(z.object({}))
-  .execute(async () => agentsForGuide(await catalog()))
+  .execute(async () => {
+    const view = await catalog()
+    return { agents: agentsForGuide(view), codingAgents: enginesForGuide(view.settings) }
+  })
   .build()
 
 export const agentPromptTool = tool('agent_prompt')
@@ -169,4 +174,17 @@ export const agentPromptTool = tool('agent_prompt')
   )
   .input(z.object({ id: z.string().max(60), prompt: z.string().max(60).optional() }))
   .execute(async ({ id, prompt }) => promptForGuide(await catalog(), id, prompt))
+  .build()
+
+const engine = z.string().max(40).nullable().optional()
+
+export const updateAgentSettingsTool = tool('update_agent_settings')
+  .describe(
+    'Choose which coding agent builds, which plans and which reviews. Send only the roles that change. null goes back to the default: the planner and the reviewer then use the same agent as the builder. It applies to the next runs, not the ones in progress.',
+  )
+  .input(z.object({ builder: engine, planner: engine, reviewer: engine }))
+  .execute(async (input) => {
+    await changeAgentSettings(getDb(), input)
+    return 'Saved. It applies to the next runs; the ones in progress finish with the agent they started with.'
+  })
   .build()

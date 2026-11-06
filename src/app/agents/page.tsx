@@ -12,7 +12,7 @@ import { useResource } from '../lib/live'
 
 /** Who works in the factory, what each is told, and what each may do. Read from the code that runs them. */
 export default function AgentsPage() {
-  const { data, error } = useResource<AgentsView>('/api/panel/agents', {
+  const { data, error, reload } = useResource<AgentsView>('/api/panel/agents', {
     stream: false,
     everyMs: 60_000,
   })
@@ -33,8 +33,8 @@ export default function AgentsPage() {
         <div>
           <h1 className="text-xl font-semibold">Agents</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Quem trabalha na fábrica, o que cada um recebe de instrução e o que pode fazer. Só
-            leitura.
+            Quem trabalha na fábrica, o que cada um recebe de instrução e o que pode fazer. As
+            instruções são só para ler; o agente de código de cada papel dá para trocar aqui.
           </p>
         </div>
         <label className="relative block w-full max-w-sm">
@@ -70,7 +70,14 @@ export default function AgentsPage() {
               />
             </div>
             {selected ? (
-              <AgentDetail key={selected.id} agent={selected} shared={data.shared} query={query} />
+              <AgentDetail
+                key={selected.id}
+                agent={selected}
+                shared={data.shared}
+                settings={data.settings}
+                query={query}
+                onSettingsSaved={reload}
+              />
             ) : null}
           </div>
         )

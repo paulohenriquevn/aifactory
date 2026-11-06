@@ -1,9 +1,13 @@
 import { Badge } from '@usetheo/ui'
 import { useState } from 'react'
 
-import type { AgentEntry, AgentPrompt } from '../../../shared/panel'
+import type { AgentEntry, AgentPrompt, AgentRole, AgentSettings } from '../../../shared/panel'
 
+import { EngineChooser } from './EngineChooser'
 import { PromptBlock } from './PromptBlock'
+
+const ROLES = ['builder', 'planner', 'reviewer'] as const satisfies readonly AgentRole[]
+const roleOf = (id: string): AgentRole | undefined => ROLES.find((r) => r === id)
 
 const EFFECT = {
   reads: { label: 'só lê', tone: 'default' },
@@ -24,12 +28,17 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 export function AgentDetail({
   agent,
   shared,
+  settings,
   query,
+  onSettingsSaved,
 }: {
   agent: AgentEntry
   shared: AgentPrompt[]
+  settings: AgentSettings
   query: string
+  onSettingsSaved: () => void
 }) {
+  const role = roleOf(agent.id)
   const [chosen, setChosen] = useState(0)
   const index = Math.min(chosen, agent.prompts.length - 1)
   const prompt = agent.prompts[index]
@@ -56,6 +65,15 @@ export function AgentDetail({
           </span>
         </Fact>
       </dl>
+
+      {role ? (
+        <EngineChooser
+          key={`${role}:${settings.chosen[role]}:${settings.effective[role]}`}
+          role={role}
+          settings={settings}
+          onSaved={onSettingsSaved}
+        />
+      ) : null}
 
       <section aria-label="O que pode fazer">
         <h3 className="mb-2 text-sm font-semibold">O que pode fazer</h3>
@@ -123,7 +141,7 @@ export function AgentDetail({
           ))}
         </ul>
         <p className="mt-2 text-xs text-muted-foreground">
-          Esta tela só mostra: para mudar uma instrução, o texto está nesses arquivos.
+          As instruções só se leem aqui: para mudar uma, o texto está nesses arquivos.
         </p>
       </section>
     </article>
