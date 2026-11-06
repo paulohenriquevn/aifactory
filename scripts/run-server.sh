@@ -17,4 +17,6 @@ done
 
 [ -f .theokit/manifest.json ] || pnpm build
 pnpm exec theokit db migrate
-exec pnpm exec theokit start
+# theokit itself becomes the service's main process, so a stop's SIGTERM reaches it with no wrapper between
+# (KillMode=mixed signals only the main process). Its shim execs node.
+exec node_modules/.bin/theokit start

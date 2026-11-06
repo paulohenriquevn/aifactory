@@ -1,6 +1,7 @@
 import { config } from 'theokit'
 
 import { storageFromEnv } from './src/server/db/config'
+import { JOB_SHUTDOWN_WAIT_MS } from './src/server/factory/drain'
 import { LOCK_SECONDS } from './src/server/factory/lease'
 import { jobBackend } from './src/server/factory/job-backend'
 
@@ -39,7 +40,14 @@ function jobsFromEnv(): TheoConfigJobs | undefined {
   if (process.env.FACTORY_JOBS === 'off') return undefined
   return {
     backend: jobBackend(),
-    worker: { enabled: true, pollIntervalMs: 2_000, batchSize: 1, lockSeconds: LOCK_SECONDS },
+    worker: {
+      enabled: true,
+      pollIntervalMs: 2_000,
+      batchSize: 1,
+      lockSeconds: LOCK_SECONDS,
+      // A restart lets the run in progress finish instead of cutting it (see drain.ts).
+      shutdownTimeoutMs: JOB_SHUTDOWN_WAIT_MS,
+    },
   }
 }
 type TheoConfigJobs = NonNullable<Parameters<ReturnType<typeof config>['set']>[0]['jobs']>

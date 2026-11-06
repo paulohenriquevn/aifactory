@@ -9,7 +9,8 @@
 #      that starts with sk-ant-oat01-. (The code the page shows is NOT the token.)
 #   2. Run this script and paste the token when it asks.
 #
-# FORCE=1 restarts even while tasks are working. ENV_FILE and NO_RESTART=1 exist for tests.
+# The restart waits for the tasks in progress to finish (see scripts/deploy.sh). ENV_FILE and NO_RESTART=1
+# exist for tests.
 # FACTORY_CLAUDE_TOKEN_FILE is where the panel keeps the token it saved (src/server/factory/claude-token.ts).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -60,17 +61,18 @@ if [[ "${NO_RESTART:-}" == "1" ]]; then exit 0; fi
 
 working="select count(*) from task where stage in ('sandbox','build','push','verify','review','pr')"
 if busy=$(docker compose exec -T postgres psql -U factory -d factory -At -c "$working" 2>/dev/null) \
-  && [[ "$busy" != "0" && "${FORCE:-}" != "1" ]]; then
-  echo "$busy tarefa(s) estão trabalhando; reiniciar interrompe as que rodam nesses processos." >&2
-  echo "O token já está gravado. Quando elas terminarem, rode: FORCE=1 scripts/claude-login.sh (ou reinicie os serviços)." >&2
-  exit 2
+  && [[ "$busy" != "0" ]]; then
+  echo "$busy tarefa(s) estão trabalhando; o reinício espera elas terminarem (até 32 minutos)." >&2
 fi
 
 systemctl --user stop aifactory-feeder
-systemctl --user restart aifactory.service
-for w in 1 2 3; do
-  if systemctl --user is-active --quiet "aifactory-worker@$w"; then systemctl --user restart "aifactory-worker@$w"; fi
-done
+# Each process finishes the run it is on before it restarts (KillMode=mixed, src/server/factory/drain.ts).
+systemctl --user restart aifactory.service &
+server=$!
+systemctl --user try-restart 'aifactory-worker@*.service' &
+workers=$!
+wait "$server"
+wait "$workers"
 for _ in $(seq 1 40); do
   curl -fs -o /dev/null http://127.0.0.1:3000/api/health && break
   sleep 1

@@ -706,8 +706,8 @@ script e cole o token quando ele pedir. Ele:
    limite, dizendo o motivo;
 3. grava em `.env.local` (modo 600, sem mostrar o token e sem passar pelo histórico do shell), trocando só a
    linha do token, e põe `FACTORY_CLAUDE_AUTH=subscription` se não houver escolha;
-4. reinicia o servidor e os workers (o token é lido na subida), mas **só se nenhuma tarefa estiver
-   trabalhando**, a menos que você use `FORCE=1`;
+4. reinicia o servidor e os workers (o token é lido na subida); com tarefas trabalhando, o reinício
+   espera cada uma terminar, como no deploy;
 5. refaz as tarefas que estavam esperando a conta antiga (`scripts/retry-waiting.mjs`, as da coluna "Will
    retry itself") e religa o alimentador, que guarda a pausa de cota na memória e por isso é reiniciado.
 
@@ -872,9 +872,12 @@ responde `/api/health` mesmo sem as credenciais.
 2. O túnel do Cloudflare expõe só o webhook e o health check (README, "Exposição pública").
 3. Para publicar uma mudança, `scripts/deploy.sh`: compila e reinicia o servidor, os workers e o
    alimentador que estiverem rodando, sem tocar no túnel e sem ligar um alimentador parado.
-   Ele **recusa** publicar enquanto há tarefas trabalhando, porque reiniciar interrompe as execuções
-   daquele processo e cada uma custa minutos da cota do agente. Espere, pare o alimentador para a fila
-   esvaziar, ou use `FORCE=1 scripts/deploy.sh` sabendo o que se perde.
+   Reiniciar não interrompe as execuções em andamento: o systemd sinaliza só o processo do TheoKit
+   (`KillMode=mixed`), que para de pegar jobs, espera a execução em que está (até 32 minutos,
+   `src/server/factory/drain.ts`, via `jobs.worker.shutdownTimeoutMs`) e sai. Os comandos do agente
+   continuam rodando enquanto isso. Por isso um deploy com tarefas trabalhando demora o tempo da mais
+   longa delas, e o painel segue respondendo nesse meio-tempo. Mudou uma unit em `ops/systemd/`? Rode
+   `scripts/install-services.sh` antes, para o systemd ler a versão nova.
 4. Ponha a label `factory` numa issue de um repositório onde o App está instalado.
 5. Acompanhe os estágios:
 

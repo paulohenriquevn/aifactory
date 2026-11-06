@@ -11,7 +11,7 @@ const script = resolve(process.cwd(), 'scripts/claude-login.sh')
 const GOOD = `sk-ant-oat01-${'A1b2C3d4_-'.repeat(8)}`
 
 /** Runs the script in a scratch directory, with a stand-in for `claude` that answers as told. */
-function run({ token, claudeSays, envText, stored }) {
+function run({ token, claudeSays, envText, stored, busy }) {
   const dir = mkdtempSync(join(tmpdir(), 'claude-login-'))
   const bin = join(dir, 'bin')
   spawnSync('mkdir', ['-p', bin])
@@ -24,6 +24,19 @@ function run({ token, claudeSays, envText, stored }) {
   // Always a scratch path: the default is the token the panel saved for this very checkout.
   const tokenFile = join(dir, 'claude-oauth-token')
   if (stored) writeFileSync(tokenFile, `${stored}\n`)
+  // With `busy`, the restart runs too, against stand-ins that write down how they were called: the real ones
+  // would restart this machine's factory and start its tasks again.
+  const calls = join(dir, 'calls.log')
+  if (busy !== undefined) {
+    const fake = (name, body = '') => {
+      writeFileSync(join(bin, name), `#!/bin/sh\necho "${name} $*" >> '${calls}'\n${body}\n`)
+      chmodSync(join(bin, name), 0o755)
+    }
+    fake('docker', `echo ${busy}`)
+    fake('systemctl')
+    fake('curl')
+    fake('node')
+  }
   const result = spawnSync('bash', [script], {
     input: `${token}\n`,
     encoding: 'utf8',
@@ -32,11 +45,12 @@ function run({ token, claudeSays, envText, stored }) {
       PATH: `${bin}:${process.env.PATH}`,
       ENV_FILE: envFile,
       FACTORY_CLAUDE_TOKEN_FILE: tokenFile,
-      NO_RESTART: '1',
+      NO_RESTART: busy === undefined ? '1' : '',
     },
   })
   return {
     ...result,
+    calls: existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n') : [],
     file: readFileSync(envFile, 'utf8'),
     mode: statSync(envFile).mode & 0o777,
     storedLeft: existsSync(tokenFile),
@@ -118,6 +132,15 @@ describe('changing the Claude Code account', () => {
     const r = run({ token: GOOD, claudeSays: refused, envText: BEFORE, stored: panelToken })
     expect(r.status).toBe(1)
     expect(r.storedLeft).toBe(true)
+  })
+
+  it('restarts what reads the token while tasks work, and says the restart waits for them', () => {
+    const r = run({ token: GOOD, claudeSays: OK, envText: BEFORE, busy: '2' })
+
+    expect(r.status).toBe(0)
+    expect(r.stderr).toMatch(/2 tarefa\(s\) estão trabalhando; o reinício espera elas terminarem/)
+    expect(r.calls).toContain('systemctl --user restart aifactory.service')
+    expect(r.calls).toContain('systemctl --user try-restart aifactory-worker@*.service')
   })
 
   it('never prints the token, whatever happens', () => {

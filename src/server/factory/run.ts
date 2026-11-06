@@ -74,7 +74,7 @@ export type RunContext = {
 }
 
 type Timeouts = NonNullable<RunTaskDeps['timeouts']>
-const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 30 * 60_000, agentMs: 25 * 60_000 }
+export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 30 * 60_000, agentMs: 25 * 60_000 }
 
 /** What the factory handed over, or why it could not. A failure to hand over never fails the task. */
 type Handed = { tag: string; url: string } | { error: string }

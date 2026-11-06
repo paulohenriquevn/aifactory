@@ -203,8 +203,8 @@ importers:
         specifier: ^7.0.0
         version: 7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       theokit:
-        specifier: ^0.78.0
-        version: 0.78.0(@theokit/sdk@5.14.0(proper-lockfile@4.1.2)(ws@8.22.0))(@theokit/ui@1.12.2(@tailwindcss/vite@4.3.3(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@usetheo/ui@0.35.4(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(tailwindcss@4.3.3))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(tailwindcss@4.3.3)(typescript@5.9.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(@types/node@22.20.5)(csstype@3.2.3)(jiti@2.7.0)(lightningcss@1.32.0)(proper-lockfile@4.1.2)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7)
+        specifier: ^0.79.0
+        version: 0.79.0(@theokit/sdk@5.14.0(proper-lockfile@4.1.2)(ws@8.22.0))(@theokit/ui@1.12.2(@tailwindcss/vite@4.3.3(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@usetheo/ui@0.35.4(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(tailwindcss@4.3.3))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(tailwindcss@4.3.3)(typescript@5.9.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(@types/node@22.20.5)(csstype@3.2.3)(jiti@2.7.0)(lightningcss@1.32.0)(proper-lockfile@4.1.2)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7)
       zod:
         specifier: ^4.0.0
         version: 4.6.7
@@ -3841,12 +3841,12 @@ packages:
   text-decoder@1.2.7:
     resolution: {integrity: sha512-vlLytXkeP4xvEq2otHeJfSQIRyWxo/oZGEbXrtEEF9Hnmrdly59sUbzZ/QgyWuLYHctCHxFF4tRQZNQ9k60ExQ==}
 
-  theokit@0.78.0:
-    resolution: {integrity: sha512-97/2DQVERSeOm8K/CYCt+vRJnJk3m6ujPRYAUa9EhtFjKnMFbIKIiU818gJ+mYDk+mQIFsh5IChTcgCOBy42Vw==}
+  theokit@0.79.0:
+    resolution: {integrity: sha512-p475LcA8SxI08ks1ConsDSfy+xJVm5Gu/y5RJfz1srNKFNcMylsUcUYNHwdmgDekJ7yNeuEQT+6Gmkxd42NyFA==}
     engines: {node: '>=22.12.0'}
     hasBin: true
     peerDependencies:
-      '@theokit/sdk': ^5.11.0
+      '@theokit/sdk': ^5.13.0
       '@theokit/ui': ^1.1.0
       db0: ^0.3.0
       react: ^19.0.0
@@ -7477,7 +7477,7 @@ snapshots:
     transitivePeerDependencies:
       - react-native-b4a
 
-  theokit@0.78.0(@theokit/sdk@5.14.0(proper-lockfile@4.1.2)(ws@8.22.0))(@theokit/ui@1.12.2(@tailwindcss/vite@4.3.3(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@usetheo/ui@0.35.4(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(tailwindcss@4.3.3))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(tailwindcss@4.3.3)(typescript@5.9.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(@types/node@22.20.5)(csstype@3.2.3)(jiti@2.7.0)(lightningcss@1.32.0)(proper-lockfile@4.1.2)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7):
+  theokit@0.79.0(@theokit/sdk@5.14.0(proper-lockfile@4.1.2)(ws@8.22.0))(@theokit/ui@1.12.2(@tailwindcss/vite@4.3.3(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@usetheo/ui@0.35.4(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(tailwindcss@4.3.3))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(tailwindcss@4.3.3)(typescript@5.9.3)(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)))(@types/node@22.20.5)(csstype@3.2.3)(jiti@2.7.0)(lightningcss@1.32.0)(proper-lockfile@4.1.2)(react-dom@19.3.1(react@19.3.1))(react-router@7.18.5(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react@19.3.1)(supports-color@7.2.0)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7):
     dependencies:
       '@theokit/agents': 16.3.0(@theokit/http@2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(reflect-metadata@0.2.2)(zod@4.6.7))(proper-lockfile@4.1.2)(react@19.3.1)(vitest@3.2.7(@types/node@22.20.5)(jiti@2.7.0)(jsdom@25.0.1(supports-color@7.2.0))(lightningcss@1.32.0)(supports-color@7.2.0)(tsx@4.23.15))(ws@8.22.0)(zod@4.6.7)
       '@theokit/http': 2.3.1(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(reflect-metadata@0.2.2)(zod@4.6.7)

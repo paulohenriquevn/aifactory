@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
   copyFileSync,
@@ -39,17 +39,14 @@ function deploy({ busy = '0' } = {}) {
   fake('systemctl')
   fake('curl')
   fake('journalctl')
-  let code = 0
-  try {
-    execFileSync('bash', [join(root, 'scripts', 'deploy.sh')], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FORCE: '' },
-      stdio: 'pipe',
-    })
-  } catch (error) {
-    code = error.status
-  }
+  const run = spawnSync('bash', [join(root, 'scripts', 'deploy.sh')], {
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    encoding: 'utf8',
+  })
+  const code = run.status
+  const output = `${run.stdout}${run.stderr}`
   const log = readFileSync(calls, 'utf8').trim().split('\n')
-  return { code, systemctl: log.filter((l) => l.startsWith('systemctl ')) }
+  return { code, output, systemctl: log.filter((l) => l.startsWith('systemctl ')) }
 }
 
 describe('the deploy script', () => {
@@ -64,10 +61,11 @@ describe('the deploy script', () => {
     )
   })
 
-  it('restarts nothing while a task is working', () => {
-    const { code, systemctl } = deploy({ busy: '2' })
+  it('restarts while a task is working, and says the restart waits for it', () => {
+    const { code, systemctl, output } = deploy({ busy: '2' })
 
-    expect(code).toBe(2)
-    expect(systemctl).toEqual([])
+    expect(code).toBe(0)
+    expect(systemctl).toContain('systemctl --user restart aifactory.service')
+    expect(output).toMatch(/2 task\(s\) are working; the restart waits for them to finish/)
   })
 })
