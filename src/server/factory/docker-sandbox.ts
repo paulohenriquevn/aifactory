@@ -90,17 +90,21 @@ async function must(docker: Docker, args: string[], opts: { input?: Buffer } = {
  * the container with `timeout`, so what it started stops too, and a guard on the `docker exec` client
  * covers a container that stops answering.
  */
+const DEFAULT_COMMAND_MS = 10 * 60_000
+
 class DockerBackend extends SandboxBackend {
   constructor(
     private readonly docker: Docker,
     private readonly container: string,
   ) {
-    super()
+    // A clone or an install through the proxy takes longer than the 30 seconds the SDK gives a command by
+    // default, which is what a microVM's own network needs. The base class fills in its own 30 seconds when
+    // given nothing, so the default goes to it too, and `execute` reads the constant, not `this.config`.
+    super({ timeoutMs: DEFAULT_COMMAND_MS })
   }
 
   async execute(command: string, opts: { timeoutMs?: number } = {}) {
-    // A clone or an install through the proxy takes longer than the 30 seconds a microVM's own network needs.
-    const timeoutMs = opts.timeoutMs ?? this.config.timeoutMs ?? 10 * 60_000
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_COMMAND_MS
     const seconds = Math.max(1, Math.ceil(timeoutMs / 1000))
     const result = await this.docker([
       'exec',
@@ -418,7 +422,11 @@ export function dockerSandboxProvider(deps: DockerProviderDeps = {}): IsolatedSa
     name: 'docker',
     async create(spec: SandboxSpec): Promise<IsolatedSandbox> {
       const cert = await prepared()
-      await removeStaleSandboxes(spec.timeoutMs + 10 * 60_000, docker).catch(() => 0)
+      // Sweeping what an earlier process left must not stop this run, but a sweep that keeps failing
+      // leaves containers running, so it is said out loud.
+      await removeStaleSandboxes(spec.timeoutMs + 10 * 60_000, docker).catch((error) => {
+        console.warn(JSON.stringify({ event: 'sandbox_sweep_failed', error: String(error) }))
+      })
       const id = randomBytes(5).toString('hex')
       const net = `factory-sbx-${id}`
       const proxy = `factory-px-${id}`

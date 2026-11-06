@@ -3,6 +3,8 @@ import { defineConfig } from 'vitest/config'
 // What Stryker runs for each mutant: only the unit tests of the modules it mutates, no database.
 export default defineConfig({
   test: {
+    // A mutant that reaches the real Docker fails instead of starting a container nobody stops.
+    setupFiles: ['src/test/no-real-docker.ts'],
     include: [
       'src/server/factory/evidence.test.ts',
       'src/server/factory/release.test.ts',

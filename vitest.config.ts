@@ -16,7 +16,7 @@ export default defineConfig({
           name: 'unit',
           include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
           exclude: ['src/**/*.integration.test.ts', 'src/**/*.e2e.test.ts'],
-          setupFiles: ['src/test/quiet-jsdom-css.ts'],
+          setupFiles: ['src/test/quiet-jsdom-css.ts', 'src/test/no-real-docker.ts'],
         },
       },
       {
@@ -24,7 +24,7 @@ export default defineConfig({
           name: 'integration',
           include: ['src/**/*.integration.test.ts'],
           // Never the factory's own database: these suites truncate their tables.
-          setupFiles: ['src/test/use-test-database.ts'],
+          setupFiles: ['src/test/use-test-database.ts', 'src/test/no-real-docker.ts'],
         },
       },
       {

@@ -272,6 +272,15 @@ describe('using a docker sandbox', () => {
     await sandbox.stop()
   })
 
+  it('gives a command with no timeout of its own ten minutes, the time a clone through the proxy can take', async () => {
+    const { sandbox, calls } = await run({ stdout: '', stderr: '', code: 0 })
+    await sandbox.backend.execute('git clone --quiet -- https://github.com/o/r.git work')
+
+    const exec = calls.find((c) => c.args.includes('timeout'))!.args
+    expect(exec[exec.indexOf('timeout') + 3]).toBe('600')
+    await sandbox.stop()
+  })
+
   it('reports a command that hit its timeout, or was killed for it, as timed out', async () => {
     for (const code of [124, 137]) {
       const { sandbox } = await run({ stdout: '', stderr: '', code })
@@ -388,5 +397,13 @@ describe('cleaning up what a crash left', () => {
     expect(all()).toContain('rm -f factory-px-aaa')
     expect(all()).toContain('network rm factory-sbx-aaa')
     expect(all()).not.toContain('network rm factory-sbx-bbb')
+  })
+})
+
+describe('the test suites and the real Docker', () => {
+  it('never reach it: a test, or a mutant of this module, that falls back to it fails instead of leaving a container running', async () => {
+    await expect(dockerSandboxProvider().create({ timeoutMs: 60_000, egress: [] })).rejects.toThrow(
+      /never run the real docker/,
+    )
   })
 })
