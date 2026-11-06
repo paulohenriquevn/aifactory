@@ -3,10 +3,10 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  AuthProvider,
   authFilePath,
   CODEX_PROVIDER,
   credentialHome,
-  ensureFreshCredential,
   persistOAuthTokens,
   readStoredOAuth,
   writeCredential,
@@ -30,9 +30,7 @@ export const CODEX_STORE: CredentialStoreConfig = {
 
 /**
  * The access token is renewed when it has less than this left. It lasts about ten days, and a run carries
- * the same token for up to half an hour, so it must not expire in the middle of one. TheoKit's
- * `AuthProvider` cannot be asked for a margin (usetheokit/theokit#1286), so the renewal below takes the same
- * lock it takes and decides with the margin itself.
+ * the same token for up to half an hour, so it must not expire in the middle of one.
  */
 export const REFRESH_MARGIN_MS = 2 * 24 * 3600 * 1000
 
@@ -108,59 +106,66 @@ function loginOf(stored: StoredOAuthCredential, env: Env): CodexLogin {
   }
 }
 
-/** Only ever called under the lock: the stored login, moving the CLI's file over the first time. */
-function storedOrMigrated(env: Env): StoredOAuthCredential | undefined {
-  const stored = readStoredOAuth(CODEX_STORE, env)
-  if (stored) return stored
-  const legacy = legacyAuthFile(env)
-  if (!existsSync(legacy)) return undefined
-  const migrated = fromCliAuth(readFileSync(legacy, 'utf8'))
-  writeCredential(migrated, CODEX_STORE, env)
-  return migrated
+/**
+ * The stored login, moving the CLI's file over the first time. Under the store's lock, so two processes
+ * never both copy it, and released before a renewal, because the renewal takes the same lock and the lock
+ * is not reentrant.
+ */
+function storedOrMigrated(env: Env): Promise<StoredOAuthCredential | undefined> {
+  return withFileLock(codexAuthFile(env), async () => {
+    const stored = readStoredOAuth(CODEX_STORE, env)
+    if (stored) return stored
+    const legacy = legacyAuthFile(env)
+    if (!existsSync(legacy)) return undefined
+    const migrated = fromCliAuth(readFileSync(legacy, 'utf8'))
+    writeCredential(migrated, CODEX_STORE, env)
+    return migrated
+  })
 }
 
 export type CodexAuthDeps = { env?: Env; fetch?: typeof fetch; now?: () => number }
 
+/** TheoKit's refresh for this store: cross-process lock, re-read inside it, retry on a transient failure. */
+const provider = new AuthProvider(CODEX_PROVIDER.oauth, CODEX_STORE, {
+  refreshBeforeMs: REFRESH_MARGIN_MS,
+})
+
 /**
- * The factory's Codex login with an access token that will outlast a run. Read and renewed under the same
- * cross-process lock TheoKit's own refresh takes, and re-read inside it, so two runs never both spend the
- * rotating refresh token and a renewal never writes an old account over a login that just replaced it.
+ * The factory's Codex login with an access token that will outlast a run. The renewal is TheoKit's, which
+ * re-reads the file under its lock, so two runs never both spend the rotating refresh token and a renewal
+ * never writes an old account over a login that just replaced it.
  */
 export async function freshCodexLogin(deps: CodexAuthDeps = {}): Promise<CodexLogin> {
   const env = deps.env ?? process.env
-  const now = deps.now ?? Date.now
-  return withFileLock(codexAuthFile(env), async () => {
-    const stored = storedOrMigrated(env)
-    if (!stored) {
-      throw new CodexLoginError(
-        `there is no Codex login in ${codexHomeOf(env)}: connect Codex from the Setup page`,
-      )
-    }
-    if (stored.expires - now() >= REFRESH_MARGIN_MS) return loginOf(stored, env)
-    try {
-      await ensureFreshCredential(
-        {
-          kind: 'oauth',
-          provider: stored.provider,
-          apiKey: stored.access,
-          source: codexAuthFile(env),
-          inferred: false,
-          // Moved back by the margin, so the SDK renews now rather than a minute before it expires.
-          expiresAt: stored.expires - REFRESH_MARGIN_MS,
-        },
-        { config: CODEX_PROVIDER.oauth, store: CODEX_STORE, env },
-        { fetch: deps.fetch ?? fetch, now },
-      )
-    } catch (error) {
-      throw new CodexLoginError(
-        `the Codex login in ${codexHomeOf(env)} could not be renewed (${reason(error)}): connect Codex again from the Setup page`,
-        { cause: error },
-      )
-    }
-    const renewed = readStoredOAuth(CODEX_STORE, env)
-    if (!renewed) throw new CodexLoginError('the renewed Codex login was not found in its store')
-    return loginOf(renewed, env)
-  })
+  const stored = await storedOrMigrated(env)
+  if (!stored) {
+    throw new CodexLoginError(
+      `there is no Codex login in ${codexHomeOf(env)}: connect Codex from the Setup page`,
+    )
+  }
+  try {
+    await provider.ensureFresh(
+      {
+        kind: 'oauth',
+        provider: stored.provider,
+        apiKey: stored.access,
+        source: codexAuthFile(env),
+        inferred: false,
+        expiresAt: stored.expires,
+      },
+      { fetch: deps.fetch ?? fetch, now: deps.now ?? Date.now },
+      env,
+    )
+  } catch (error) {
+    throw new CodexLoginError(
+      `the Codex login in ${codexHomeOf(env)} could not be renewed (${reason(error)}): connect Codex again from the Setup page`,
+      { cause: error },
+    )
+  }
+  // The ID token and the account are in the file, not in what the refresh returns.
+  const current = readStoredOAuth(CODEX_STORE, env)
+  if (!current) throw new CodexLoginError('the renewed Codex login was not found in its store')
+  return loginOf(current, env)
 }
 
 /** Keeps a new login, under the lock a renewal takes, so the two can never interleave. */

@@ -29,3 +29,4 @@ minimumReleaseAgeExclude:
   - '@theokit/http@2.3.1'
   - theokit@0.77.4 || 0.78.0
   - '@theokit/sdk@5.14.0'
+  - '@theokit/agents@16.3.0'

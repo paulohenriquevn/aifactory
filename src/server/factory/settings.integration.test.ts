@@ -69,9 +69,15 @@ describe('the choice of agent, kept in the panel', () => {
     await expect(saveChosen(getDb(), { builder: 'gpt-9' }, ready)).rejects.toThrow(
       'not an agent the factory knows',
     )
-    await expect(saveChosen(getDb(), { builder: 'claude-code' }, {})).rejects.toThrow(
-      /claude-code cannot start/,
-    )
+    await expect(
+      saveChosen(
+        getDb(),
+        { builder: 'claude-code' },
+        {
+          FACTORY_CLAUDE_TOKEN_FILE: '/nonexistent/claude-oauth-token',
+        },
+      ),
+    ).rejects.toThrow(/claude-code cannot start/)
     await expect(
       saveChosen(getDb(), { builder: 'claude-code', planner: 'gpt-9' }, ready),
     ).rejects.toBeInstanceOf(SettingRefused)

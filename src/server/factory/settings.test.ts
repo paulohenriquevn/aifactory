@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import { effectiveOf, engineOptions, ROLE_ENV } from './settings'
 
-const withClaude = { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-x' }
+// The token the panel saved lives in the project folder; a test that reads it depends on the machine.
+const nothingSaved = { FACTORY_CLAUDE_TOKEN_FILE: '/nonexistent/claude-oauth-token' }
+const withClaude = { ...nothingSaved, CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-x' }
 const withBoth = { ...withClaude, CODEX_HOME: '/nowhere' }
 
 describe('which agent a role uses', () => {
@@ -44,14 +46,14 @@ describe('which agent a role uses', () => {
 
 describe('the agents that could start now', () => {
   it('lists every agent the factory knows, ready or not', () => {
-    expect(engineOptions({}).map((o) => o.id)).toEqual(['claude-code', 'codex'])
+    expect(engineOptions(nothingSaved).map((o) => o.id)).toEqual(['claude-code', 'codex'])
   })
 
   it('says what is missing for one that cannot start, instead of hiding it', () => {
-    const [claude] = engineOptions({})
+    const [claude] = engineOptions(nothingSaved)
     expect(claude.ready).toBe(false)
     expect(claude.problem).toBeTruthy()
-    expect(JSON.stringify(engineOptions({}))).not.toContain('sk-ant')
+    expect(JSON.stringify(engineOptions(nothingSaved))).not.toContain('sk-ant')
   })
 
   it('calls an agent ready when its credential is there', () => {
