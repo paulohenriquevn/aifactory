@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
@@ -401,9 +402,11 @@ describe('cleaning up what a crash left', () => {
 })
 
 describe('the test suites and the real Docker', () => {
-  it('never reach it: a test, or a mutant of this module, that falls back to it fails instead of leaving a container running', async () => {
-    await expect(dockerSandboxProvider().create({ timeoutMs: 60_000, egress: [] })).rejects.toThrow(
-      /never run the real docker/,
-    )
+  it('never reach it: the docker on the PATH of a test, or of a mutant of this module, refuses to run', () => {
+    // What the provider spawns when no `docker` is given. Asking it directly, rather than through `create`,
+    // keeps the answer from depending on which of its parallel steps fails first.
+    const run = spawnSync('docker', ['ps'], { encoding: 'utf8' })
+    expect(run.status).toBe(97)
+    expect(run.stderr).toMatch(/never run the real docker/)
   })
 })
