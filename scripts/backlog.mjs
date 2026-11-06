@@ -175,6 +175,19 @@ export function settleKnown(items, state, onDevelop) {
   return settled
 }
 
+/**
+ * The next item of the resume queue that is still in the backlog, taken off the queue. The shift sits
+ * outside the lookup: inside `find` it ran once per backlog item and emptied a queue of 151 in one call.
+ */
+export function takeResumed(queue, items) {
+  while (queue.length > 0) {
+    const id = queue.shift()
+    const item = items.find((i) => i.id === id)
+    if (item) return item
+  }
+  return undefined
+}
+
 /** Items that can never start because a blocker was tried and did not integrate. */
 export function stuckBehind(items, state) {
   const open = new Map(items.filter((i) => OPEN.includes(i.status)).map((i) => [i.id, i]))

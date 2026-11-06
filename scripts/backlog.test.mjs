@@ -14,6 +14,7 @@ import {
   resetAt,
   settleKnown,
   stuckBehind,
+  takeResumed,
   throughOutage,
 } from './backlog.mjs'
 
@@ -498,5 +499,21 @@ dod:
     const done = { 'B-8': { outcome: 'integrated', issue: 3 } }
     expect(settleKnown(backlog, done, onDevelop).map((s) => s.id)).toEqual(['B-7'])
     expect(done['B-8'].issue).toBe(3)
+  })
+})
+
+describe('takeResumed', () => {
+  it('takes one item off the queue per call, so every half-done item is resumed', () => {
+    const queue = ['B-5', 'B-1']
+    expect(takeResumed(queue, items)?.id).toBe('B-5')
+    expect(queue).toEqual(['B-1'])
+    expect(takeResumed(queue, items)?.id).toBe('B-1')
+    expect(takeResumed(queue, items)).toBeUndefined()
+  })
+
+  it('skips an id that is no longer in the backlog instead of stopping', () => {
+    const queue = ['B-99', 'B-2']
+    expect(takeResumed(queue, items)?.id).toBe('B-2')
+    expect(queue).toEqual([])
   })
 })

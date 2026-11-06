@@ -24,6 +24,7 @@ import {
   resetAt,
   settleKnown,
   stuckBehind,
+  takeResumed,
 } from './backlog.mjs'
 
 const arg = (name, fallback) => {
@@ -308,9 +309,8 @@ async function main() {
     for (;;) {
       await respectPause()
       let item
-      if (toResume.length > 0) {
-        item = items.find((i) => i.id === toResume.shift())
-      } else if (started < LIMIT) {
+      item = takeResumed(toResume, items)
+      if (!item && started < LIMIT) {
         item = nextRunnable(items, entries(), inFlight)
         if (item) started += 1
       }
