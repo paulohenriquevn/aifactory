@@ -12,6 +12,14 @@ import {
 } from './harness'
 
 /**
+ * The Claude Code the factory installs in every sandbox. Pinned, so a run never meets a CLI the factory was
+ * not tested with, and installed by the harness, so a sandbox image does not have to carry it: the Docker
+ * image is plain Node, and a run there found no `claude` at all (paulohenriquevn/aifactory#1).
+ */
+export const CLAUDE_CODE_VERSION = '2.1.319'
+const CLAUDE = '$HOME/.local/bin/claude'
+
+/**
  * How Claude Code pays for its requests: a Console API key, or the owner's subscription through
  * the one-year token `claude setup-token` prints. Either way the secret stays with the factory.
  */
@@ -79,7 +87,7 @@ export function claudeCodeHarness(
     await backend.uploadFile(PROMPT_FILE, prompt)
     // `cwd` is a path the factory built (see run-task), never text from the issue.
     const result = await backend.execute(
-      `cd ${cwd} && ${variable}=placeholder-not-a-secret CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p --output-format json --dangerously-skip-permissions${model}${effort}${flags} < ${PROMPT_FILE}`,
+      `cd ${cwd} && ${variable}=placeholder-not-a-secret CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 ${CLAUDE} -p --output-format json --dangerously-skip-permissions${model}${effort}${flags} < ${PROMPT_FILE}`,
       { timeoutMs },
     )
     return parseClaudeResult(result.exitCode, result.stdout, result.stderr)
@@ -88,6 +96,19 @@ export function claudeCodeHarness(
   return {
     name: 'claude-code',
     egress: async () => [anthropicEgress(credential)],
+
+    async prepare(backend) {
+      const install = await backend.execute(
+        `npm i -g --prefix $HOME/.local @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} 2>&1 | tail -3`,
+        { timeoutMs: 180_000 },
+      )
+      const check = await backend.execute(`${CLAUDE} --version`)
+      if (check.exitCode !== 0) {
+        throw new Error(
+          `claude did not install: ${(install.stdout || check.stderr).trim().slice(-300)}`,
+        )
+      }
+    },
     run: (backend, input) => invoke(backend, input, ''),
     resume: async (backend, sessionId, input) =>
       invoke(backend, input, ` --resume ${assertSessionId(sessionId)}`),

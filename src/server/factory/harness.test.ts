@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildPrompt } from './harness'
 import {
   anthropicEgress,
+  CLAUDE_CODE_VERSION,
   claudeCodeHarness,
   claudeCredentialFromEnv,
   parseClaudeResult,
@@ -63,6 +64,33 @@ describe('claudeCodeHarness', () => {
     expect(command).toContain('claude -p')
     expect(command).toContain('< /tmp/factory-prompt.md')
     expect(command).toContain('ANTHROPIC_API_KEY=placeholder-not-a-secret')
+  })
+})
+
+describe('claudeCodeHarness preparing a sandbox', () => {
+  it('installs a pinned Claude Code, and runs that install rather than whatever is on the PATH', async () => {
+    const sandbox = new FakeSandbox(() => ({ stdout: JSON.stringify({ result: 'ok' }) }))
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+    const harness = claudeCodeHarness({ kind: 'subscription', secret: 't' })
+
+    await harness.prepare?.(backend)
+    await harness.run(backend, { prompt: 'P', cwd: '/w', timeoutMs: 5 })
+
+    expect(sandbox.backend.commands[0]).toContain(
+      `@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`,
+    )
+    expect(sandbox.backend.commands.at(-1)).toContain('$HOME/.local/bin/claude -p')
+  })
+
+  it('stops with what the install printed when claude does not run', async () => {
+    const sandbox = new FakeSandbox((c) =>
+      c.includes('--version') ? { exitCode: 127, stderr: 'not found' } : { stdout: 'npm ERR! 403' },
+    )
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+
+    await expect(
+      claudeCodeHarness({ kind: 'api-key', secret: 'k' }).prepare?.(backend),
+    ).rejects.toThrow(/claude did not install: npm ERR! 403/)
   })
 })
 
