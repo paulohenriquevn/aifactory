@@ -1,5 +1,6 @@
 import { Avatar, DropdownMenu } from '@usetheo/ui'
 import {
+  Bot,
   Factory,
   FolderGit2,
   HeartPulse,
@@ -142,6 +143,7 @@ export function Rail({
         <Place id="repositories" to="/repositories" icon={FolderGit2} label="Repositórios" />
         <Place id="inbox" to="/inbox" icon={Inbox} label="Caixa de entrada" dot={waiting > 0} />
         <Place id="health" to="/health" icon={HeartPulse} label="Saúde" dot={wrong > 0} />
+        <Place id="agents" to="/agents" icon={Bot} label="Agentes" />
         <Place id="setup" to="/setup" icon={Settings2} label="Configuração" />
       </nav>
 

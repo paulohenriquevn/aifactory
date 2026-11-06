@@ -1,6 +1,7 @@
 import { AgentBuilder } from '@theokit/agents'
 import { z } from 'zod'
 
+import { assistModel } from '../factory/models'
 import { ownerOnly } from '../panel/policy'
 
 import { onlyTools } from './hooks/only-tools'
@@ -19,7 +20,7 @@ export const policy = ownerOnly
  */
 export default AgentBuilder.create()
   .input(z.object({ message: z.string().max(12_000) }))
-  .model(process.env.FACTORY_ASSIST_MODEL ?? 'anthropic/claude-sonnet-4-6')
+  .model(assistModel())
   .system(SETUP_INSTRUCTIONS)
   .tool(proposeTool)
   .tool(repoTreeTool)

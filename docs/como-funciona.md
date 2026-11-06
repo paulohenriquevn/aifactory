@@ -379,7 +379,7 @@ Três gates rodam no job `quality` do CI, ao lado do `check`. Localmente: `pnpm 
 Uma interface local para ver e conduzir a fábrica. Abre em `http://localhost:3000`.
 
 **A casca.** Um menu lateral e duas abas no topo, Chat e Work. O menu tem o botão de novo chat, os
-lugares da fábrica (Quadro, Planos, Repositórios, Caixa de entrada, Saúde, Configuração, com a contagem
+lugares da fábrica (Quadro, Planos, Repositórios, Caixa de entrada, Saúde, Agentes, Configuração, com a contagem
 do que espera ou está errado), as conversas fixadas e as recentes, e o menu da conta. Ele recolhe, e a
 escolha fica no navegador. `/` é um chat novo, `/chat/<id>` reabre uma conversa e `/work` é o quadro. Os
 rótulos da casca estão em português; as páginas de Work ainda estão em inglês.
@@ -407,9 +407,9 @@ As conversas ficam no Postgres (`chat` e `chat_message`). Uma conversa nova só 
 resposta termina, e a página vai para o endereço dela. Como o agente não guarda sessão entre mensagens, o
 histórico viaja dentro da mensagem (as últimas 20, cortadas) e a tela mostra só o que você escreveu.
 
-**Um guia para cada página.** Em Quadro, Planos, Repositórios, Caixa de entrada, Saúde e Configuração, o
+**Um guia para cada página.** Em Quadro, Planos, Repositórios, Caixa de entrada, Saúde, Agentes e Configuração, o
 botão "Guia" no alto da página abre, ao lado dela, um especialista daquela página: o Guia do Quadro, de
-Planos, de Repositórios, da Caixa de entrada, da Saúde e da Configuração. O chat não tem guia, porque é o
+Planos, de Repositórios, da Caixa de entrada, da Saúde, dos Agentes e da Configuração. O chat não tem guia, porque é o
 assistente geral. A página não sai do lugar: o painel divide a largura com ela (e cobre a página só em
 telas estreitas), então o dono vê o que está sendo explicado ou mudado.
 
@@ -436,6 +436,7 @@ dados crus: vira uma linha ("Consultou: as tarefas", "Fez: começou uma tarefa d
 | Repositórios  | repositórios e arquivos de build do projeto              | configurações e ativação de um repositório                      |
 | Caixa entrada | o que espera uma pessoa, uma tarefa                      | aprovar o commit, devolver com nota, repetir                    |
 | Saúde         | custo e achados do supervisor, uma tarefa                | resolver um achado, marcar a `main` vermelha como vista         |
+| Agentes       | o catálogo de agentes e o texto de cada instrução        | nada: explica, e diz em que arquivo cada instrução está         |
 | Configuração  | o que falta para a fábrica funcionar                     | nada: guia passo a passo (chaves e contas são feitas pelo dono) |
 
 Nenhum guia faz release nem merge na `main`: o release é um botão do dono na tarefa. Nenhum aceita chave
@@ -444,6 +445,25 @@ não são gravadas: ficam na memória da página enquanto ela está aberta. Como
 OpenRouter (`FACTORY_GUIDE_MODEL`, padrão `openrouter/openai/gpt-4.1-mini`) ou na assinatura do ChatGPT,
 pelo seletor do campo de mensagem. O modelo importa: um modelo mais barato (`gemini-2.5-flash`) respondia
 pela descrição da página em vez de consultar os dados.
+
+**A página Agentes.** Mostra todos os agentes da fábrica, um de cada vez, e o texto exato das instruções
+que cada um recebe. A lista tem dois grupos: os que constroem o código, num sandbox (o **Construtor**,
+o **Revisor** e o **Planejador**), e os que conversam com você, no servidor (o assistente do chat, um
+guia por página e os dois assistentes de texto). Para cada agente a página diz o que ele faz, quando
+entra em ação, o modelo ou o agente de código por trás dele (como está configurado agora, e com qual
+variável se muda), o que ele pode chamar (cada ferramenta marcada como "só lê", "muda algo, pede seu OK"
+ou "age só dentro do sandbox") e as instruções, em abas quando há mais de uma (o Construtor tem cinco:
+a primeira tentativa, sem ninguém para responder perguntas, com um pedido de mudanças seu, o retrabalho e
+a continuação depois de uma resposta). O contexto da fábrica, que o framework acrescenta a toda mensagem
+dos agentes do painel, aparece dobrado dentro de cada um deles. Dá para buscar por nome, ferramenta ou
+qualquer palavra de uma instrução, com o trecho achado destacado, e copiar cada instrução.
+
+Nada ali é uma cópia: o catálogo (`factory/agent-catalog.ts`, servido em `GET /api/panel/agents`) monta a
+tela do código que roda. Os prompts do Construtor, do Revisor e do Planejador são os que as próprias
+funções devolvem, com marcadores ‹assim› no lugar dos dados de cada tarefa (o texto da issue, a branch).
+Os dos agentes do painel são as instruções que eles usam. Os modelos são os configurados. Um teste confere
+que os arquivos citados existem, para a página não apontar para o nada. A página só mostra: mudar uma
+instrução é mudar o código, no arquivo que ela indica.
 
 **O que o painel mostra, ao vivo:**
 

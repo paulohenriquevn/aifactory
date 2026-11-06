@@ -1,4 +1,4 @@
-import type { GuideId } from '../../shared/guides'
+import { GUIDE_NAMES, type GuideId } from '../../shared/guides'
 import type { RepositoryView } from '../../shared/panel'
 
 export type Starter = {
@@ -23,7 +23,7 @@ export type Guide = {
 export const GUIDES: Record<GuideId, Guide> = {
   board: {
     id: 'board',
-    name: 'Guia do Quadro',
+    name: GUIDE_NAMES.board,
     place: 'Quadro',
     about: 'Aqui você acompanha cada tarefa da fábrica, da fila até a entrega.',
     understand: [
@@ -38,7 +38,7 @@ export const GUIDES: Record<GuideId, Guide> = {
   },
   plans: {
     id: 'plans',
-    name: 'Guia de Planos',
+    name: GUIDE_NAMES.plans,
     place: 'Planos',
     about:
       'Aqui um objetivo seu vira uma lista de issues pequenas, para você revisar antes de a fábrica começar.',
@@ -50,7 +50,7 @@ export const GUIDES: Record<GuideId, Guide> = {
   },
   repositories: {
     id: 'repositories',
-    name: 'Guia de Repositórios',
+    name: GUIDE_NAMES.repositories,
     place: 'Repositórios',
     about:
       'Aqui você escolhe em quais repositórios a fábrica pode trabalhar e como ela trabalha em cada um.',
@@ -65,7 +65,7 @@ export const GUIDES: Record<GuideId, Guide> = {
   },
   inbox: {
     id: 'inbox',
-    name: 'Guia da Caixa de entrada',
+    name: GUIDE_NAMES.inbox,
     place: 'Caixa de entrada',
     about:
       'Aqui fica só o que está esperando por uma pessoa: uma pergunta, um PR para revisar, um trabalho que travou.',
@@ -77,15 +77,30 @@ export const GUIDES: Record<GuideId, Guide> = {
   },
   health: {
     id: 'health',
-    name: 'Guia da Saúde',
+    name: GUIDE_NAMES.health,
     place: 'Saúde',
     about: 'Aqui você vê quanto a fábrica gastou e os problemas que ela mesma encontrou.',
     understand: [{ text: 'Estou gastando muito?' }, { text: 'O que são esses achados?' }],
     act: [{ text: 'Há algo que eu precise resolver?' }],
   },
+  agents: {
+    id: 'agents',
+    name: GUIDE_NAMES.agents,
+    place: 'Agentes',
+    about:
+      'Aqui você vê quem trabalha na fábrica, as instruções que cada agente recebe e o que cada um pode fazer.',
+    understand: [
+      { text: 'Qual a diferença entre o construtor e o revisor?' },
+      { text: 'O que é um prompt, e onde ele está aqui?' },
+    ],
+    act: [
+      { text: 'Qual agente está fazendo o quê agora?' },
+      { text: 'Explique o prompt do construtor.' },
+    ],
+  },
   setup: {
     id: 'setup',
-    name: 'Guia da Configuração',
+    name: GUIDE_NAMES.setup,
     place: 'Configuração',
     about: 'Aqui você vê o que falta para a fábrica funcionar e como resolver cada parte.',
     understand: [
@@ -103,6 +118,7 @@ const PLACES: [RegExp, GuideId][] = [
   [/^\/repositories(\/|$)/, 'repositories'],
   [/^\/inbox(\/|$)/, 'inbox'],
   [/^\/health(\/|$)/, 'health'],
+  [/^\/agents(\/|$)/, 'agents'],
   [/^\/setup(\/|$)/, 'setup'],
 ]
 

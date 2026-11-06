@@ -77,6 +77,7 @@ describe('the layout', () => {
     for (const [name, href] of [
       ['Planos', '/plans'],
       ['Repositórios', '/repositories'],
+      ['Agentes', '/agents'],
       ['Configuração', '/setup'],
     ]) {
       expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(href)

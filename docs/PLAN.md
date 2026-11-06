@@ -85,6 +85,7 @@ local inspecionado em 2026-11-03.
 | M14   | Painel acessível de fora                                       | O painel abre fora desta máquina, atrás de um acesso próprio, sem abrir o resto                                                                                                                                         | Não iniciado |
 | M15   | Painel como chat                                               | Menu lateral e abas Chat/Work no visual do ChatGPT, com um assistente conversacional (OpenRouter ou assinatura do ChatGPT) que lê a fábrica e só age com aprovação; conversas salvas no Postgres                        | Concluído    |
 | M16   | Um guia por página                                             | Quadro, Planos, Repositórios, Caixa de entrada, Saúde e Configuração têm cada um um especialista ao lado da página, que sabe onde o dono está, consulta os dados e só muda algo com aprovação, mostrando antes e depois | Concluído    |
+| M17   | Página Agentes                                                 | Uma página lista os agentes da fábrica (os que constroem e os que conversam), com o texto exato das instruções de cada um, o que podem fazer e o modelo configurado, lidos do código que roda, e tem o seu próprio guia | Concluído    |
 
 As aprovações de ferramentas com efeitos externos seguem a convenção do
 `AGENTS.md`. A interação com o modo `auto` ficou definida pelo conceito de pré-release: o que a

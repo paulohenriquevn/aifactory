@@ -11,7 +11,15 @@ const named = (tools: Record<string, unknown>) =>
 
 describe('the guides', () => {
   it('has one for each page of the menu that is not the chat, and serves each at its own address', () => {
-    expect(GUIDE_IDS).toEqual(['board', 'plans', 'repositories', 'inbox', 'health', 'setup'])
+    expect(GUIDE_IDS).toEqual([
+      'board',
+      'plans',
+      'repositories',
+      'inbox',
+      'health',
+      'agents',
+      'setup',
+    ])
     expect(Object.keys(GUIDE_SPECS)).toEqual([...GUIDE_IDS])
     expect(guidePath('board')).toBe('/api/agents/guide-board')
     expect(guidePath('board', 'codex')).toBe('/api/agents/guide-board-codex')
@@ -63,6 +71,14 @@ describe('the guides', () => {
       'repo_file',
       'update_repository',
     ])
+  })
+
+  it('gives the agents guide only the two tools that read the catalog, and nothing that changes anything', () => {
+    expect(Object.keys(GUIDE_SPECS.agents.tools)).toEqual(['list_agents', 'agent_prompt'])
+    expect(GUIDE_SPECS.agents.asks).toEqual({})
+    expect(GUIDE_INSTRUCTIONS('agents')).toContain('agent_prompt')
+    expect(GUIDE_INSTRUCTIONS('agents')).toContain('never describe a prompt you have not read')
+    expect(GUIDE_INSTRUCTIONS('agents')).toContain('You cannot change an agent or a prompt')
   })
 
   it('lets the board guide answer "what needs me" from the inbox, not from one column', () => {

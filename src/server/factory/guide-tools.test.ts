@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type {
+  AgentsView,
   HealthReport,
   InboxItem,
   PlanView,
@@ -10,9 +11,11 @@ import type {
 } from '../../shared/panel'
 
 import {
+  agentsForGuide,
   healthForGuide,
   inboxForGuide,
   planForGuide,
+  promptForGuide,
   plansForGuide,
   repositoriesForGuide,
   setupForGuide,
@@ -228,6 +231,109 @@ describe('what the guides read', () => {
         },
         { id: 'secret', name: 'Webhook secret', status: 'ok', detail: 'Set.', fix: null },
       ],
+    })
+  })
+})
+
+describe('what the agents guide reads', () => {
+  const view: AgentsView = {
+    shared: [
+      { id: 'theo', title: 'Contexto da fábrica', when: 'sempre', text: 'ctx', template: false },
+    ],
+    agents: [
+      {
+        id: 'builder',
+        group: 'factory',
+        name: 'Construtor',
+        role: 'Escreve código',
+        runsIn: 'sandbox',
+        engine: { value: 'codex', change: 'FACTORY_HARNESS' },
+        when: 'Quando há uma tarefa',
+        tools: [{ name: 'sandbox', description: 'd', effect: 'sandbox' }],
+        shared: [],
+        source: ['a.ts'],
+        prompts: [
+          {
+            id: 'build',
+            title: 'Primeira tentativa',
+            when: 'início',
+            text: 'You are ‹x›',
+            template: true,
+          },
+          { id: 'rework', title: 'Retrabalho', when: 'depois', text: 'Fix it', template: true },
+        ],
+      },
+      {
+        id: 'chat',
+        group: 'panel',
+        name: 'Chat',
+        role: 'Conversa',
+        runsIn: 'server',
+        engine: { value: 'm', change: 'X' },
+        when: 'Na tela inicial',
+        tools: [
+          { name: 'list_tasks', description: 'd', effect: 'reads' },
+          { name: 'retry_task', description: 'd', effect: 'asks' },
+        ],
+        shared: ['theo'],
+        source: ['b.ts'],
+        prompts: [
+          {
+            id: 'system',
+            title: 'Instruções',
+            when: 'sempre',
+            text: 'x'.repeat(13_000),
+            template: false,
+          },
+        ],
+      },
+    ],
+  }
+
+  it('lists the agents without their prompts, only the titles, and marks the tools that ask', () => {
+    const list = agentsForGuide(view)
+    expect(list.map((a) => a.id)).toEqual(['builder', 'chat'])
+    expect(list[0]).toMatchObject({
+      group: 'builds in a sandbox',
+      engine: 'codex',
+      howToChangeIt: 'FACTORY_HARNESS',
+    })
+    expect(list[0].prompts).toEqual([
+      { id: 'build', title: 'Primeira tentativa' },
+      { id: 'rework', title: 'Retrabalho' },
+    ])
+    expect(list[1].group).toBe('talks to the owner, in the server')
+    expect(list[1].tools).toEqual(['list_tasks', 'retry_task (asks the owner first)'])
+    expect(JSON.stringify(list)).not.toContain('You are')
+  })
+
+  it('reads one prompt whole, the first one when none is named, and says what it is also given with', () => {
+    expect(promptForGuide(view, 'builder')).toMatchObject({
+      prompt: 'Primeira tentativa',
+      isTemplate: true,
+      text: 'You are ‹x›',
+      cut: false,
+    })
+    expect(promptForGuide(view, 'builder', 'rework')).toMatchObject({
+      prompt: 'Retrabalho',
+      text: 'Fix it',
+    })
+    expect(promptForGuide(view, 'chat')).toMatchObject({ alsoGivenWith: ['Contexto da fábrica'] })
+    expect(promptForGuide(view, 'builder')).toMatchObject({ alsoGivenWith: [] })
+  })
+
+  it('cuts a very long prompt and says so', () => {
+    const out = promptForGuide(view, 'chat') as { text: string; cut: boolean }
+    expect(out.text).toHaveLength(12_000)
+    expect(out.cut).toBe(true)
+  })
+
+  it('says which ids exist when the agent or the prompt asked for does not', () => {
+    expect(promptForGuide(view, 'ghost')).toEqual({
+      error: 'there is no agent "ghost"; the ids are builder, chat',
+    })
+    expect(promptForGuide(view, 'builder', 'nope')).toEqual({
+      error: 'Construtor has no prompt "nope"; it has build, rework',
     })
   })
 })

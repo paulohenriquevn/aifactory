@@ -24,8 +24,9 @@ describe('the guide of a page', () => {
     expect(at('/repositories')).toBe('repositories')
     expect(at('/inbox')).toBe('inbox')
     expect(at('/health')).toBe('health')
+    expect(at('/agents')).toBe('agents')
     expect(at('/setup')).toBe('setup')
-    for (const path of ['/', '/chat/abc', '/login', '/workshop', '/plansx'])
+    for (const path of ['/', '/chat/abc', '/login', '/workshop', '/plansx', '/agentsx'])
       expect(at(path)).toBeUndefined()
   })
 

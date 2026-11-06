@@ -1,4 +1,5 @@
 import { chatAgent } from '../factory/chat-agent'
+import { chatCodexModel } from '../factory/models'
 import { ownerOnly } from '../panel/policy'
 
 /** Only the signed-in owner talks to the assistant: it can act on the factory and spends model credit. */
@@ -9,4 +10,4 @@ export const policy = ownerOnly
  * the OpenAI device login the framework offers, made from the panel (Setup); `FACTORY_CHAT_CODEX_MODEL`
  * changes the model.
  */
-export default chatAgent(process.env.FACTORY_CHAT_CODEX_MODEL ?? 'openai-chatgpt/gpt-5.4')
+export default chatAgent(chatCodexModel())

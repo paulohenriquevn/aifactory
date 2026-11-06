@@ -1,5 +1,6 @@
 import { Avatar, DropdownMenu, ScrollArea } from '@usetheo/ui'
 import {
+  Bot,
   FolderGit2,
   HeartPulse,
   Inbox,
@@ -235,6 +236,7 @@ export function Sidebar({
           <Place id="repositories" to="/repositories" icon={FolderGit2} label="Repositórios" />
           <Place id="inbox" to="/inbox" icon={Inbox} label="Caixa de entrada" count={waiting} />
           <Place id="health" to="/health" icon={HeartPulse} label="Saúde" count={wrong} />
+          <Place id="agents" to="/agents" icon={Bot} label="Agentes" />
           <Place id="setup" to="/setup" icon={Settings2} label="Configuração" />
         </div>
       </nav>

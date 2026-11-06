@@ -3,9 +3,11 @@ import { z } from 'zod'
 
 import { getDb } from '../../db'
 import {
+  agentsForGuide,
   healthForGuide,
   inboxForGuide,
   planForGuide,
+  promptForGuide,
   plansForGuide,
   repositoriesForGuide,
   setupForGuide,
@@ -148,4 +150,23 @@ export const acknowledgeWatchTool = tool('acknowledge_watch')
     await acknowledgeWatch(actionDeps(), id)
     return `The red main branch ${id} was marked as seen.`
   })
+  .build()
+
+/** Not imported at the top: the catalog reads the guides, and the guides read these tools. */
+const catalog = async () => (await import('../../factory/agent-catalog')).agentCatalog()
+
+export const agentsTool = tool('list_agents')
+  .describe(
+    'Every agent of the factory: what it does, when it runs, the model or coding agent behind it and how that is changed, what it may call, and the titles of its prompts.',
+  )
+  .input(z.object({}))
+  .execute(async () => agentsForGuide(await catalog()))
+  .build()
+
+export const agentPromptTool = tool('agent_prompt')
+  .describe(
+    'One prompt of one agent, whole, as written in the code. Give the agent id from list_agents, and the prompt id when it has more than one.',
+  )
+  .input(z.object({ id: z.string().max(60), prompt: z.string().max(60).optional() }))
+  .execute(async ({ id, prompt }) => promptForGuide(await catalog(), id, prompt))
   .build()

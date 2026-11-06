@@ -3,6 +3,7 @@ import type { SetupItem, SetupReport } from '../../shared/panel'
 
 import { claudeCredentialFromEnv } from '../factory/harness-claude'
 import { codexCredentialFromEnv } from '../factory/harness-codex'
+import { assistModel } from '../factory/models'
 import { vercelCredentials } from '../factory/vercel-sandbox'
 
 /** Questions the report cannot answer from the environment: they ask the machine or another service. */
@@ -31,7 +32,7 @@ const PROVIDER_KEYS: Record<string, string> = {
 
 /** The helper under every text box calls a model with the factory's own key, which a subscription cannot be. */
 export function assistantItem(env: NodeJS.ProcessEnv): SetupItem {
-  const model = env.FACTORY_ASSIST_MODEL || 'anthropic/claude-sonnet-4-6'
+  const model = assistModel(env)
   const provider = model.split('/')[0]
   const key = PROVIDER_KEYS[provider]
   if (!key) {

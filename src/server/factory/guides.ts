@@ -10,6 +10,8 @@ import {
 } from '../agents/tools/chat'
 import {
   acknowledgeWatchTool,
+  agentPromptTool,
+  agentsTool,
   approveTool,
   createPlanIssuesTool,
   createPlanTool,
@@ -54,6 +56,8 @@ const ALL: Tools = {
   list_plans: plansTool,
   plan_detail: planTool,
   list_repositories: repositoriesTool,
+  list_agents: agentsTool,
+  agent_prompt: agentPromptTool,
   repo_files: repoTreeTool,
   repo_file: repoFileTool,
   update_repository: updateRepositoryTool,
@@ -79,6 +83,7 @@ const TOOLS: Record<GuideId, string[]> = {
   repositories: ['list_repositories', 'repo_files', 'repo_file', 'update_repository'],
   inbox: ['inbox_items', 'task_detail', 'approve_task', 'request_changes', 'retry_task'],
   health: ['health_report', 'task_detail', 'resolve_finding', 'acknowledge_watch'],
+  agents: ['list_agents', 'agent_prompt'],
   setup: ['setup_report'],
 }
 

@@ -49,6 +49,7 @@ describe('the folded menu', () => {
       ['Repositórios', '/repositories'],
       ['Caixa de entrada', '/inbox'],
       ['Saúde', '/health'],
+      ['Agentes', '/agents'],
       ['Configuração', '/setup'],
     ]
     for (const [name, href] of places)
@@ -80,7 +81,14 @@ describe('the folded menu', () => {
     mount('/health')
     expect(screen.getByRole('link', { name: 'Saúde' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: 'Saúde' }).className).toContain('font-medium')
-    for (const name of ['Quadro', 'Planos', 'Repositórios', 'Caixa de entrada', 'Configuração']) {
+    for (const name of [
+      'Quadro',
+      'Planos',
+      'Repositórios',
+      'Caixa de entrada',
+      'Agentes',
+      'Configuração',
+    ]) {
       expect(screen.getByRole('link', { name }).getAttribute('aria-current'), name).toBeNull()
     }
     expect(

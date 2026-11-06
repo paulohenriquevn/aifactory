@@ -326,3 +326,49 @@ export type ChatMessageView = {
 }
 
 export type ChatDetail = { chat: ChatSummary; messages: ChatMessageView[] }
+
+/** One block of instructions an agent is given, as it is written in the code. */
+export type AgentPrompt = {
+  id: string
+  title: string
+  /** When the agent is given this one. */
+  when: string
+  text: string
+  /** True when the text has ‹marks› where a task's own data goes. */
+  template: boolean
+}
+
+export type AgentTool = {
+  name: string
+  /** What the model is told the tool is for. */
+  description: string
+  /**
+   * What calling it does: only reads; changes something, and so waits for the owner's approval; or acts,
+   * but only inside the sandbox, which is closed off from everything else.
+   */
+  effect: 'reads' | 'asks' | 'sandbox'
+}
+
+export type AgentEntry = {
+  id: string
+  group: 'factory' | 'panel'
+  name: string
+  /** One sentence on what it does. */
+  role: string
+  runsIn: 'sandbox' | 'server'
+  /** The model or the coding agent behind it, as configured now, and how it is changed. */
+  engine: { value: string; change: string }
+  when: string
+  tools: AgentTool[]
+  prompts: AgentPrompt[]
+  /** Ids of shared context that is added to every message it gets. */
+  shared: string[]
+  /** The files its instructions and tools are written in. */
+  source: string[]
+}
+
+export type AgentsView = {
+  agents: AgentEntry[]
+  /** Text added to what every panel agent is given, kept in one file for all of them. */
+  shared: AgentPrompt[]
+}

@@ -1,4 +1,5 @@
 import type {
+  AgentsView,
   HealthReport,
   InboxItem,
   PlanView,
@@ -119,5 +120,49 @@ export function setupForGuide(report: SetupReport) {
       detail: cut(i.detail, 300),
       fix: i.link ? `${i.link.label}: ${i.link.href}` : null,
     })),
+  }
+}
+
+/** The agents, without their prompts: those are long, and are read one at a time. */
+export function agentsForGuide(view: AgentsView) {
+  return view.agents.map((a) => ({
+    id: a.id,
+    group: a.group === 'factory' ? 'builds in a sandbox' : 'talks to the owner, in the server',
+    name: a.name,
+    role: a.role,
+    engine: a.engine.value,
+    howToChangeIt: a.engine.change,
+    whenItRuns: a.when,
+    tools: a.tools.map((t) => (t.effect === 'asks' ? `${t.name} (asks the owner first)` : t.name)),
+    prompts: a.prompts.map((p) => ({ id: p.id, title: p.title })),
+  }))
+}
+
+const PROMPT_MAX = 12_000
+
+/** One prompt of one agent, whole, as written in the code. */
+export function promptForGuide(view: AgentsView, id: string, promptId?: string) {
+  const agent = view.agents.find((a) => a.id === id)
+  if (!agent)
+    return {
+      error: `there is no agent "${id}"; the ids are ${view.agents.map((a) => a.id).join(', ')}`,
+    }
+  const prompt = promptId ? agent.prompts.find((p) => p.id === promptId) : agent.prompts[0]
+  if (!prompt) {
+    return {
+      error: `${agent.name} has no prompt "${promptId}"; it has ${agent.prompts.map((p) => p.id).join(', ')}`,
+    }
+  }
+  const shared = agent.shared.flatMap((sid) =>
+    view.shared.filter((s) => s.id === sid).map((s) => s.title),
+  )
+  return {
+    agent: agent.name,
+    prompt: prompt.title,
+    whenGiven: prompt.when,
+    isTemplate: prompt.template,
+    alsoGivenWith: shared,
+    text: prompt.text.slice(0, PROMPT_MAX),
+    cut: prompt.text.length > PROMPT_MAX,
   }
 }
