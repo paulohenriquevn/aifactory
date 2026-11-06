@@ -492,6 +492,12 @@ dod:
     expect(nextRunnable(backlog, state)).toBeUndefined()
   })
 
+  it('leaves alone an item sent back to be checked against its conditions, though its plan is on develop', () => {
+    const state = { 'B-8': { issue: 9, verify: true } }
+    expect(settleKnown(backlog, state, onDevelop).map((s) => s.id)).toEqual(['B-7'])
+    expect(state['B-8'].outcome).toBeUndefined()
+  })
+
   it('settles a failed run of an item on develop, and leaves an integrated one as it was', () => {
     const state = { 'B-8': { outcome: 'failed', issue: 3 } }
     settleKnown(backlog, state, onDevelop)

@@ -151,14 +151,15 @@ export function nextRunnable(items, state, inFlight = new Set()) {
 /**
  * Records in `state` what the backlog already settled: an item the owner deferred, and one whose work is on
  * `develop` already (`onDevelop(item)` names the commit, or nothing). Neither is opened, and an item that
- * waits for one on develop may start. The feeder opened issues for 23 items the squad had delivered, and
+ * waits for one on develop may start. An entry marked `verify` was sent back to have its conditions checked
+ * at HEAD, so it is left to run. The feeder opened issues for 23 items the squad had delivered, and
  * retried each failed run (2026-11-06). Returns the items it recorded.
  */
 export function settleKnown(items, state, onDevelop) {
   const settled = []
   for (const item of items.filter((i) => OPEN.includes(i.status))) {
     const entry = state[item.id]
-    if (entry?.outcome === 'integrated' || entry?.outcome === 'deferred') continue
+    if (entry?.outcome === 'integrated' || entry?.outcome === 'deferred' || entry?.verify) continue
     if (item.deferred) {
       state[item.id] = { ...entry, outcome: 'deferred', note: item.deferred }
     } else {
