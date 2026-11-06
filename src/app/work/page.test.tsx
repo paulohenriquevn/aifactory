@@ -147,7 +147,7 @@ describe('board', () => {
     expect(screen.queryByLabelText('Empty columns')).toBeNull()
   })
 
-  it('keeps the column titles in view while the cards scroll, in a frame of its own', async () => {
+  it('keeps every column title in view while the cards scroll, empty columns too, in a frame of its own', async () => {
     serve({ tasks: [card({ id: 1, title: 'Building one' })] })
     render(
       <MemoryRouter>
@@ -161,6 +161,13 @@ describe('board', () => {
       ?.parentElement as HTMLElement
     expect(frame.className).toContain('overflow-auto')
     expect(frame.className).toContain('max-h-')
+    // A title sticks only inside its own column, so every column must be as tall as the tallest. With
+    // `items-start` an empty one is short and its title scrolled away while the others stayed.
+    const grid = screen.getByRole('region', { name: 'Working' }).parentElement as HTMLElement
+    expect(grid.className).not.toContain('items-start')
+    for (const section of screen.getAllByRole('region')) {
+      expect((section.querySelector('h2') as HTMLElement).className).toContain('sticky')
+    }
   })
 
   it('draws every card the same size, whatever its title', async () => {

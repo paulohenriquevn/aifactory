@@ -82,8 +82,9 @@ function Column({ title, tasks }: { title: string; tasks: TaskCard[] }) {
 export function Board({ tasks }: { tasks: TaskCard[] }) {
   return (
     <div className="max-h-[calc(100vh-170px)] overflow-auto pb-2">
+      {/* The columns are as tall as the tallest: a title sticks only inside its own column, so a short one would let it go. */}
       <div
-        className="grid items-start gap-2.5"
+        className="grid gap-2.5"
         style={{ gridTemplateColumns: `repeat(${COLUMNS.length}, ${COLUMN})` }}
       >
         {COLUMNS.map((column) => (
