@@ -75,7 +75,21 @@ Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `
 Depois de um retrabalho, a task volta a `build` e repete `push`, `verify` e `review`: o histórico mostra cada tentativa.
 
 O job `run-task` não tenta de novo sozinho (`maxAttempts: 1`): repetir gastaria o orçamento do
-agente na mesma issue. Uma task que falha fica em `failed` para uma pessoa olhar.
+agente na mesma issue. Uma task que falha pelo próprio trabalho fica em `failed` para uma pessoa olhar.
+
+A falha que passa sozinha volta a rodar pelo cron `retry-due`, a cada 5 minutos e no máximo 3 tasks por
+passada, a que espera há mais tempo primeiro:
+
+- Parada por cota: roda 1 minuto depois do instante em que a cota volta. A fábrica grava esse instante
+  (`resumesAt`, em UTC) no momento da falha, a partir do horário que o agente escreveu e do fuso que ele
+  usou; sem horário legível, espera 1 hora. Repete quantas vezes for preciso, porque esperar é o que
+  resolve.
+- Falha de ambiente (rede, GitHub, sandbox, reinício): espera 5, 10 e 20 minutos, e para depois da
+  terceira vez. Aí vai para "Needs a person".
+
+O reinício automático não grava uma decisão em nome de ninguém: o evento `intake` leva
+`automatic: true`, e um "Retry" de uma pessoa zera a contagem. O cartão diz quando a task roda de novo, e
+as tentativas contam só a execução atual.
 
 ## Onde os sandboxes rodam
 
@@ -674,7 +688,9 @@ arquivo, e ele vale por cima do `.env.local`, então a conta nova entra na próx
 nada. Em seguida, "Refazer as tarefas que esperavam a conta" recomeça as da coluna "Will retry itself". O
 link expira em 10 minutos.
 
-O alimentador do backlog guarda a pausa de cota na memória, mas a encerra sozinho quando um arquivo de
+O alimentador do backlog não refaz task nenhuma: espera o horário que o painel informa (`retryAt`) e deixa
+a fábrica rodar de novo. Numa parada por cota, segura todos os itens até esse horário, porque um item novo
+pararia no mesmo limite. Guarda essa pausa na memória, mas a encerra sozinho quando um arquivo de
 credencial muda (o token do painel, o `.env.local` ou o login do Codex da fábrica), em até 15 segundos.
 
 Pelo terminal, use `scripts/claude-login.sh`. Em outro terminal largo, entre na conta que quer usar e rode
@@ -850,11 +866,11 @@ responde `/api/health` mesmo sem as credenciais.
    Eles sobem sozinhos no boot, sem login, e voltam se caírem. O worker de jobs roda no mesmo processo
    do servidor.
 2. O túnel do Cloudflare expõe só o webhook e o health check (README, "Exposição pública").
-3. Para publicar uma mudança, `scripts/deploy.sh`: compila e reinicia o servidor, sem tocar no túnel.
+3. Para publicar uma mudança, `scripts/deploy.sh`: compila e reinicia o servidor, os workers e o
+   alimentador que estiverem rodando, sem tocar no túnel e sem ligar um alimentador parado.
    Ele **recusa** publicar enquanto há tarefas trabalhando, porque reiniciar interrompe as execuções
    daquele processo e cada uma custa minutos da cota do agente. Espere, pare o alimentador para a fila
-   esvaziar, ou use `FORCE=1 scripts/deploy.sh` sabendo o que se perde. Os workers (`aifactory-worker@N`)
-   rodam o código antigo até serem reiniciados; uma mudança só de interface não precisa reiniciá-los.
+   esvaziar, ou use `FORCE=1 scripts/deploy.sh` sabendo o que se perde.
 4. Ponha a label `factory` numa issue de um repositório onde o App está instalado.
 5. Acompanhe os estágios:
 

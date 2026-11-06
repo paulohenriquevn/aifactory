@@ -23,6 +23,7 @@ const card = (over: Partial<TaskCard>): TaskCard => ({
   approved: false,
   integrated: false,
   retryable: null,
+  retryAt: null,
   preRelease: null,
   release: null,
   mainRed: false,
@@ -77,6 +78,7 @@ describe('board', () => {
           stage: 'failed',
           column: 'retrying',
           retryable: 'quota',
+          retryAt: new Date(Date.now() + 2 * 3600_000 + 60_000).toISOString(),
         }),
         card({
           id: 2,
@@ -98,6 +100,7 @@ describe('board', () => {
     const inColumn = (name: string) => within(screen.getByRole('region', { name }))
     expect(inColumn('Will retry itself').getByText('Out of quota')).toBeDefined()
     expect(inColumn('Will retry itself').getByText('waiting for the limit')).toBeDefined()
+    expect(inColumn('Will retry itself').getByText('runs again in 2h')).toBeDefined()
     expect(inColumn('Will retry itself').getByText('will retry')).toBeDefined()
     expect(inColumn('Delivered').getByText('integrated')).toBeDefined()
     expect(inColumn('Needs a person').getByText('Real failure')).toBeDefined()

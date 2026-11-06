@@ -13,10 +13,12 @@ import {
   task,
   watch,
 } from '../db/schema'
+import { retryAt } from '../factory/auto-retry'
 import {
   columnOf,
   retryableFailure,
   type DecisionView,
+  type Retryable,
   type DeliveryView,
   type CostGroup,
   type EvidenceView,
@@ -37,6 +39,24 @@ type TaskRow = typeof task.$inferSelect
 
 const iso = (date: Date) => date.toISOString()
 
+/** Whether a failed task runs again on its own and when, from its last failure. */
+function nextRun(
+  failure: { detail: unknown; at: Date } | undefined,
+  automaticRetries: number,
+): { retryable: Retryable; at: Date } | null {
+  if (!failure) return null
+  const detail = (failure.detail ?? {}) as Record<string, unknown>
+  const retryable = retryableFailure(detail)
+  const at = retryAt({
+    retryable,
+    failedAt: new Date(failure.at),
+    resumesAt: typeof detail.resumesAt === 'string' ? detail.resumesAt : undefined,
+    resetsAt: typeof detail.resetsAt === 'string' ? detail.resetsAt : undefined,
+    automaticRetries,
+  })
+  return at ? { retryable, at } : null
+}
+
 /**
  * Cards for the given tasks: what the board shows. The attempts, the last activity and whether a
  * person approved the current commit come from three small aggregates instead of one query per task.
@@ -48,7 +68,11 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
     .select({
       taskId: stageEvent.taskId,
       last: sql<Date>`max(${stageEvent.at})`,
-      verifies: sql<number>`count(*) filter (where ${stageEvent.stage} = 'verify')`,
+      // Only the current run's: a retry starts again at attempt 1 with a new intake, so the checks of
+      // the runs before it are not attempts of this one.
+      verifies: sql<number>`count(*) filter (where ${stageEvent.stage} = 'verify' and ${stageEvent.id} > coalesce((select max(i.id) from stage_event i where i.task_id = ${stageEvent.taskId} and i.stage = 'intake'), 0))`,
+      // Automatic runs since a person last started the task: a person's retry starts the count over.
+      automatic: sql<number>`count(*) filter (where ${stageEvent.stage} = 'intake' and ${stageEvent.detail}->>'automatic' = 'true' and ${stageEvent.id} > coalesce((select max(i.id) from stage_event i where i.task_id = ${stageEvent.taskId} and i.stage = 'intake' and (i.detail->>'automatic') is distinct from 'true'), 0))`,
     })
     .from(stageEvent)
     .where(inArray(stageEvent.taskId, ids))
@@ -65,16 +89,20 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
     .orderBy(asc(delivery.id))
   const watched = await db.select().from(watch).where(inArray(watch.taskId, ids))
   const failures = await db
-    .selectDistinctOn([stageEvent.taskId], { taskId: stageEvent.taskId, detail: stageEvent.detail })
+    .selectDistinctOn([stageEvent.taskId], {
+      taskId: stageEvent.taskId,
+      detail: stageEvent.detail,
+      at: stageEvent.at,
+    })
     .from(stageEvent)
     .where(and(inArray(stageEvent.taskId, ids), eq(stageEvent.stage, 'failed')))
     .orderBy(stageEvent.taskId, desc(stageEvent.id))
-  const retryable = new Map(
-    failures.map((f) => [f.taskId, retryableFailure(f.detail as Record<string, unknown> | null)]),
-  )
+  const lastFailure = new Map(failures.map((f) => [f.taskId, f]))
   const byTask = new Map(activity.map((a) => [a.taskId, a]))
   return rows.map((r) => {
     const seen = byTask.get(r.id)
+    const again =
+      r.stage === 'failed' ? nextRun(lastFailure.get(r.id), Number(seen?.automatic ?? 0)) : null
     const kinds = approvals.filter((a) => a.taskId === r.id)
     return {
       id: r.id,
@@ -82,10 +110,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       issueNumber: r.issueNumber,
       title: r.issueTitle,
       stage: r.stage as Stage,
-      column: columnOf(
-        r.stage as Stage,
-        r.stage === 'failed' ? (retryable.get(r.id) ?? null) : null,
-      ),
+      column: columnOf(r.stage as Stage, again?.retryable ?? null),
       pullRequestUrl: r.pullRequestUrl,
       headSha: r.headSha,
       costUsd: r.costUsd,
@@ -94,7 +119,8 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       updatedAt: iso(new Date(seen?.last ?? r.createdAt)),
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
       integrated: r.mergedSha !== null,
-      retryable: r.stage === 'failed' ? (retryable.get(r.id) ?? null) : null,
+      retryable: again?.retryable ?? null,
+      retryAt: again?.at.toISOString() ?? null,
       preRelease: lastDelivery(delivered, r, 'prerelease'),
       release: lastDelivery(delivered, r, 'release'),
       mainRed: watched.some((w) => w.taskId === r.id && w.status === 'red' && !w.acknowledgedAt),

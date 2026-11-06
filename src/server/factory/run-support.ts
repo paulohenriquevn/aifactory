@@ -4,6 +4,7 @@ import type { EgressRule } from './sandbox'
 import type { CheckResult } from './evidence'
 import { renderFindings, type ReviewVerdict } from './review'
 import type { RunResult } from './run-types'
+import { quotaResumesAt } from './quota-reset'
 
 export const INSTANCE = 'work'
 export const GITCONFIG = '/tmp/factory.gitconfig'
@@ -26,6 +27,20 @@ export class QuotaStop extends StageFailure {
     readonly resetsAt?: string,
   ) {
     super(message)
+  }
+}
+
+/**
+ * What a quota stop leaves in the failure: the agent's own words for when it comes back, and the instant
+ * they mean, read against the moment it failed. A reader later cannot rebuild the instant: it would have to
+ * guess the zone and the day.
+ */
+export function quotaDetail(stop: QuotaStop, failedAt: Date) {
+  const resumes = quotaResumesAt(stop.resetsAt, failedAt)
+  return {
+    quota: true as const,
+    resetsAt: stop.resetsAt,
+    ...(resumes ? { resumesAt: resumes.toISOString() } : {}),
   }
 }
 

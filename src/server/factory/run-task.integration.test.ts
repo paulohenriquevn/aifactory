@@ -769,6 +769,8 @@ describe('runTask', () => {
       failedAt: 'build',
       quota: true,
       resetsAt: 'Nov 5th, 2026 11:48 AM',
+      // The instant, so whoever reads it later does not have to guess the zone and the day.
+      resumesAt: '2026-11-05T11:48:00.000Z',
     })
     expect(githubApi.pulls).toEqual([])
     expect(sandbox.stopped).toBe(1)

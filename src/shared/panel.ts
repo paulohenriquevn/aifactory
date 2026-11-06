@@ -158,6 +158,8 @@ export type TaskCard = {
   integrated: boolean
   /** A failed task the factory will run again by itself once a limit or an outage has passed. */
   retryable: Retryable
+  /** When the factory runs it again on its own, set exactly when `retryable` is. */
+  retryAt: string | null
   /** The factory's delivery of the commit the pull request is at, if it made one. */
   preRelease: { tag: string; url: string } | null
   release: { tag: string; url: string } | null

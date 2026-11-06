@@ -2,7 +2,7 @@ import { Card as Surface, Table } from '@usetheo/ui'
 import { Link } from 'react-router'
 
 import { COLUMNS, type TaskCard } from '../../shared/panel'
-import { ago, money } from '../lib/format'
+import { ago, money, runsAgain } from '../lib/format'
 
 import { StageBadge } from './Badges'
 
@@ -32,6 +32,11 @@ export function Card({ task }: { task: TaskCard }) {
         {task.mainRed ? (
           <div className="mt-1 truncate text-xs font-medium text-destructive">
             main is red after the release
+          </div>
+        ) : null}
+        {task.retryAt ? (
+          <div className="mt-1 truncate text-xs text-muted-foreground">
+            {runsAgain(task.retryAt)}
           </div>
         ) : null}
         {task.attempts > 1 ? (

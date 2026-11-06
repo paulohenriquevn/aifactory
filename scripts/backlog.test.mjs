@@ -11,7 +11,6 @@ import {
   OPEN,
   parseBacklog,
   repoFor,
-  resetAt,
   settleKnown,
   stuckBehind,
   takeResumed,
@@ -211,40 +210,6 @@ describe('stuckBehind', () => {
   })
 })
 
-describe('resetAt', () => {
-  it('reads the date a usage limit gives', () => {
-    const d = resetAt('Nov 5th, 2026 11:48 AM')
-    expect(d.getFullYear()).toBe(2026)
-    expect(d.getMonth()).toBe(10)
-    expect(d.getDate()).toBe(5)
-    expect(d.getHours()).toBe(11)
-    expect(d.getMinutes()).toBe(48)
-  })
-
-  it('reads every ordinal', () => {
-    for (const day of ['1st', '2nd', '3rd', '4th', '22nd']) {
-      expect(resetAt(`Nov ${day}, 2026 9:00 AM`)).toBeInstanceOf(Date)
-    }
-  })
-
-  it('reads a bare time as today, or as tomorrow once it has passed', () => {
-    const now = new Date(2026, 10, 5, 15, 25)
-    const evening = resetAt('7:38 PM', now)
-    expect([evening.getDate(), evening.getHours(), evening.getMinutes()]).toEqual([5, 19, 38])
-    const morning = resetAt('9:05 AM', now)
-    expect([morning.getDate(), morning.getHours(), morning.getMinutes()]).toEqual([6, 9, 5])
-    expect(resetAt('12:00 AM', now).getHours()).toBe(0)
-    expect(resetAt('12:30 PM', now).getHours()).toBe(12)
-    expect(resetAt('3:25 PM', now).getDate()).toBe(6) // the minute it resets is already gone
-  })
-
-  it('says nothing when there is no date to read', () => {
-    expect(resetAt(undefined)).toBeUndefined()
-    expect(resetAt('')).toBeUndefined()
-    expect(resetAt('soon')).toBeUndefined()
-  })
-})
-
 describe('classify', () => {
   const detail = (stage, over = {}, info = {}) => ({
     task: { stage, integrated: false, preRelease: null, pullRequestUrl: 'u', ...over },
@@ -278,15 +243,28 @@ describe('classify', () => {
       reason: 'no change',
       failedAt: 'push',
     })
+  })
+
+  it('waits on a failure the factory runs again by itself, at the time the factory says', () => {
+    const retryAt = '2026-11-06T03:40:00.000Z'
+    expect(classify(detail('failed', { retryAt }, { error: 'usage limit', quota: true }))).toEqual({
+      outcome: 'waiting',
+      reason: 'usage limit',
+      retryAt,
+      quota: true,
+    })
+    expect(classify(detail('failed', { retryAt }, { error: 'GitHub answered 502' }))).toEqual({
+      outcome: 'waiting',
+      reason: 'GitHub answered 502',
+      retryAt,
+      quota: false,
+    })
+  })
+
+  it('takes a failure the factory will not run again as the outcome, whatever caused it', () => {
     expect(
-      classify(
-        detail(
-          'failed',
-          {},
-          { error: 'usage limit', quota: true, resetsAt: 'Nov 5th, 2026 11:48 AM' },
-        ),
-      ),
-    ).toEqual({ outcome: 'quota', reason: 'usage limit', resetsAt: 'Nov 5th, 2026 11:48 AM' })
+      classify(detail('failed', { retryAt: null }, { error: 'GitHub answered 502' })),
+    ).toMatchObject({ outcome: 'failed', reason: 'GitHub answered 502' })
   })
 
   it('has no outcome while the task is still working', () => {

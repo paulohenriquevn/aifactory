@@ -33,7 +33,7 @@ import {
   type ActionDeps,
 } from './actions'
 import { health, inbox, listTasks, taskDetail } from './queries'
-import { retryWaiting } from './retry-waiting'
+import { retryWaiting, runDueRetries } from './retry-waiting'
 import { stageStream } from './stream'
 
 beforeAll(async () => {
@@ -110,6 +110,23 @@ describe('listTasks', () => {
     expect(new Set(cards.map((c) => c.column))).toEqual(new Set(['review', 'attention']))
   })
 
+  it('counts the attempts of the current run, not the ones a retry started over', async () => {
+    const id = await seed('verify', {}, [
+      { stage: 'intake' },
+      { stage: 'verify' },
+      { stage: 'verify' },
+      { stage: 'verify' },
+      { stage: 'failed' },
+      { stage: 'intake', detail: { decision: 'retry' } },
+      { stage: 'verify' },
+    ])
+
+    const [card] = await listTasks(getDb())
+
+    expect(card.id).toBe(id)
+    expect(card.attempts).toBe(1)
+  })
+
   it('puts every stage in a column that exists on the board', async () => {
     for (const stage of [
       'intake',
@@ -162,6 +179,58 @@ describe('listTasks', () => {
     expect(cards.get(work)).toMatchObject({ column: 'attention', retryable: null })
     expect(cards.get(healed)).toMatchObject({ column: 'attention', retryable: null })
     expect(cards.get(running)).toMatchObject({ column: 'working', retryable: null })
+  })
+})
+
+describe('listTasks and the retries the factory makes on its own', () => {
+  const environment = { stage: 'failed', detail: { error: 'git push: remote rejected' } }
+  const automatic = { stage: 'intake', detail: { decision: 'retry', automatic: true } }
+
+  it('says when a failure that passes by itself runs again', async () => {
+    const id = await seed('failed', {}, [
+      {
+        stage: 'failed',
+        detail: { quota: true, resetsAt: '3:39 AM', resumesAt: '2026-11-06T03:39:00.000Z' },
+      },
+    ])
+
+    const [card] = await listTasks(getDb())
+
+    expect(card).toMatchObject({ id, column: 'retrying', retryAt: '2026-11-06T03:40:00.000Z' })
+  })
+
+  it('hands an environment failure to a person once every automatic retry failed too', async () => {
+    const id = await seed('failed', {}, [
+      environment,
+      automatic,
+      environment,
+      automatic,
+      environment,
+      automatic,
+      environment,
+    ])
+
+    const [card] = await listTasks(getDb())
+
+    expect(card).toMatchObject({ id, column: 'attention', retryable: null, retryAt: null })
+  })
+
+  it('counts the automatic retries again from zero after a person starts the task', async () => {
+    await seed('failed', {}, [
+      environment,
+      automatic,
+      environment,
+      automatic,
+      environment,
+      automatic,
+      environment,
+      { stage: 'intake', detail: { decision: 'retry' } },
+      environment,
+    ])
+
+    const [card] = await listTasks(getDb())
+
+    expect(card).toMatchObject({ column: 'retrying', retryable: 'environment' })
   })
 })
 
@@ -375,6 +444,43 @@ describe('actions', () => {
       'failed',
     ])
     expect(deleted.sort()).toEqual(['factory/51', 'factory/52'])
+  })
+
+  it('runs again on its own each task whose time came, oldest first and a few at a time', async () => {
+    const past = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
+    const due = (issueNumber: number, minutes: number) =>
+      seed('failed', { issueNumber }, [
+        { stage: 'failed', detail: { quota: true, resumesAt: past(minutes) } },
+      ])
+    const newest = await due(71, 5)
+    const oldest = await due(72, 50)
+    const middle = await due(73, 20)
+    const notYet = await seed('failed', { issueNumber: 74 }, [
+      {
+        stage: 'failed',
+        detail: { quota: true, resumesAt: new Date(Date.now() + 3600_000).toISOString() },
+      },
+    ])
+    const work = await seed('failed', { issueNumber: 75 }, [
+      { stage: 'failed', detail: { error: 'the tests failed' } },
+    ])
+
+    expect(await runDueRetries(deps(), { limit: 2 })).toEqual({ started: 2, skipped: 0 })
+
+    const stages = new Map((await getDb().select().from(task)).map((t) => [t.id, t.stage] as const))
+    expect([oldest, middle, newest, notYet, work].map((id) => stages.get(id))).toEqual([
+      'intake',
+      'intake',
+      'failed',
+      'failed',
+      'failed',
+    ])
+    expect(deleted.sort()).toEqual(['factory/72', 'factory/73'])
+    // Nobody decided it: the run is marked as the factory's own, and no decision is made up for it.
+    expect(await getDb().select().from(decision)).toEqual([])
+    const intake = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, oldest))
+    expect(intake.at(-1)?.detail).toMatchObject({ decision: 'retry', automatic: true })
+    expect(queued.map((q) => q.input)).toEqual([{ taskId: oldest }, { taskId: middle }])
   })
 
   it('counts a task that moved on since the board was read, and starts the rest', async () => {

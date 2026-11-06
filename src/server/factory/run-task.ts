@@ -4,7 +4,7 @@ import { question as questionTable, task } from '../db/schema'
 import { fetchIssue as defaultFetchIssue } from '../github/issues'
 import { createGithubApi } from '../github/pulls'
 
-import { Asked, QuotaStop } from './run-support'
+import { Asked, QuotaStop, quotaDetail } from './run-support'
 import { loadRepoConfig } from './repo-config'
 import { Run, type RunState } from './run'
 import type { Parked, RunResult, RunTaskDeps } from './run-types'
@@ -126,7 +126,7 @@ async function fail(
   await enterStage(deps.db, taskId, 'failed', {
     failedAt: state.current,
     error: message,
-    ...(error instanceof QuotaStop ? { quota: true, resetsAt: error.resetsAt } : {}),
+    ...(error instanceof QuotaStop ? quotaDetail(error, new Date()) : {}),
   })
   return { status: 'failed', stage: state.current, error: message }
 }

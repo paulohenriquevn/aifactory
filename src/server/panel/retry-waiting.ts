@@ -1,4 +1,4 @@
-import { ActionRefused, retry, type ActionDeps } from './actions'
+import { ActionRefused, retry, retryAutomatically, type ActionDeps } from './actions'
 import { listTasks } from './queries'
 
 /**
@@ -16,6 +16,35 @@ export async function retryWaiting(
   for (const card of waiting) {
     try {
       await retry(deps, card.id)
+      started += 1
+    } catch (error) {
+      if (!(error instanceof ActionRefused)) throw error
+      skipped += 1
+    }
+  }
+  return { started, skipped }
+}
+
+/**
+ * Runs again, on its own, each failed task whose time came (see `retryAt`), the longest-waiting first and
+ * no more than `limit` in one pass, so a quota coming back for a hundred tasks does not start a hundred
+ * sandboxes in the same minute. A task that moved on since the board was read is counted and left.
+ */
+export async function runDueRetries(
+  deps: ActionDeps,
+  { limit, now = new Date() }: { limit: number; now?: Date },
+): Promise<{ started: number; skipped: number }> {
+  const due = (await listTasks(deps.db))
+    .filter(
+      (c) => c.stage === 'failed' && c.retryAt !== null && Date.parse(c.retryAt) <= now.getTime(),
+    )
+    .sort((a, b) => Date.parse(a.retryAt!) - Date.parse(b.retryAt!))
+    .slice(0, limit)
+  let started = 0
+  let skipped = 0
+  for (const card of due) {
+    try {
+      await retryAutomatically(deps, card.id)
       started += 1
     } catch (error) {
       if (!(error instanceof ActionRefused)) throw error

@@ -27,7 +27,7 @@ export type ActionDeps = {
   inTransaction: <T>(
     work: (
       tx: Database,
-      enqueueRun: (input: { taskId: number; decisionId: number }, key: string) => Promise<void>,
+      enqueueRun: (input: { taskId: number; decisionId?: number }, key: string) => Promise<void>,
     ) => Promise<T>,
   ) => Promise<T>
 }
@@ -46,10 +46,10 @@ async function requeue(
   deps: ActionDeps,
   taskId: number,
   from: string[],
-  kind: 'request_changes' | 'retry',
+  kind: 'request_changes' | 'retry' | 'automatic_retry',
   note: string,
   sha: string | null,
-) {
+): Promise<number | null> {
   return deps.inTransaction(async (tx, enqueueRun) => {
     const moved = await tx
       .update(task)
@@ -58,8 +58,18 @@ async function requeue(
       .returning({ id: task.id })
     if (moved.length === 0) {
       throw new ActionRefused(
-        `this task cannot be ${kind === 'retry' ? 'retried' : 'sent back'} now`,
+        `this task cannot be ${kind === 'request_changes' ? 'sent back' : 'retried'} now`,
       )
+    }
+    if (kind === 'automatic_retry') {
+      // Nobody decided this one, so no decision is recorded in anybody's name: the intake says it was the
+      // factory's own, and the count of these is what stops it after a few.
+      const [event] = await tx
+        .insert(stageEvent)
+        .values({ taskId, stage: 'intake', detail: { decision: 'retry', note, automatic: true } })
+        .returning({ id: stageEvent.id })
+      await enqueueRun({ taskId }, `task-${taskId}-auto${event.id}`)
+      return null
     }
     const [made] = await tx
       .insert(decision)
@@ -143,6 +153,19 @@ export async function retry(
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
   const decisionId = await requeue(deps, taskId, allowed, 'retry', '', row.headSha)
   return { decisionId }
+}
+
+/**
+ * Starts a failed task again because its failure passed by itself (a quota came back, an outage
+ * ended), with no person asking. The same as `retry` but for the record: nothing is decided in
+ * anybody's name.
+ */
+export async function retryAutomatically(deps: ActionDeps, taskId: number) {
+  const row = await load(deps.db, taskId)
+  if (row.stage !== 'failed') throw new ActionRefused('only a failed task runs again on its own')
+  const { token } = await deps.github.installationToken(row.repository)
+  await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
+  await requeue(deps, taskId, ['failed'], 'automatic_retry', '', row.headSha)
 }
 
 /**

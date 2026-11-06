@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { Stage, TimelineEvent } from '../../shared/panel'
 
-import { ago, describeEvent, money, shortSha, stageLabel } from './format'
+import { ago, describeEvent, money, runsAgain, shortSha, stageLabel } from './format'
 
 describe('money', () => {
   it('writes cents, and a sum too small to be one as zero', () => {
@@ -21,6 +21,21 @@ describe('shortSha', () => {
     expect(shortSha(null)).toBe('')
     expect(shortSha(undefined)).toBe('')
     expect(shortSha('')).toBe('')
+  })
+})
+
+describe('runsAgain', () => {
+  const now = Date.parse('2026-11-04T12:00:00Z')
+  const after = (seconds: number) => new Date(now + seconds * 1000).toISOString()
+
+  it('says how long until the factory runs a task again, in the largest unit that fits', () => {
+    expect(runsAgain(after(30), now)).toBe('runs again in under a minute')
+    expect(runsAgain(after(5 * 60), now)).toBe('runs again in 5m')
+    expect(runsAgain(after(3 * 3600 + 120), now)).toBe('runs again in 3h')
+  })
+
+  it('says it is due once the time went by, because the next pass picks it up', () => {
+    expect(runsAgain(after(-600), now)).toBe('runs again on the next pass')
   })
 })
 

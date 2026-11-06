@@ -12,6 +12,16 @@ export function ago(iso: string, now = Date.now()): string {
   return `${Math.floor(seconds / 86_400)}d ago`
 }
 
+/** How long until the factory runs a failed task again on its own. */
+export function runsAgain(iso: string, now = Date.now()): string {
+  const seconds = Math.round((Date.parse(iso) - now) / 1000)
+  if (seconds <= 0) return 'runs again on the next pass'
+  if (seconds < 60) return 'runs again in under a minute'
+  if (seconds < 3600) return `runs again in ${Math.floor(seconds / 60)}m`
+  if (seconds < 86_400) return `runs again in ${Math.floor(seconds / 3600)}h`
+  return `runs again in ${Math.floor(seconds / 86_400)}d`
+}
+
 const LABELS: Record<Stage, string> = {
   intake: 'queued',
   sandbox: 'starting sandbox',

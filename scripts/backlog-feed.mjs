@@ -21,7 +21,6 @@ import {
   OPEN,
   parseBacklog,
   repoFor,
-  resetAt,
   settleKnown,
   stuckBehind,
   takeResumed,
@@ -150,7 +149,7 @@ async function outcomeOf(entry) {
 
 async function work(item) {
   const repo = repoFor(item)
-  const entry = (entries()[item.id] ??= { repo, startedAt: new Date().toISOString(), attempts: 0 })
+  const entry = (entries()[item.id] ??= { repo, startedAt: new Date().toISOString() })
   if (!entry.issue) {
     const issue = issueFor(item)
     // GitHub answers 5xx now and then: that is worth a few tries, and is not a verdict on the item.
@@ -173,21 +172,11 @@ async function work(item) {
     save()
     log(item.id, `issue ${repo}#${entry.issue} opened`)
   }
+  let announced = ''
   for (;;) {
     await respectPause()
     const result = await outcomeOf(entry)
-    if (result.outcome === 'quota') {
-      const at = resetAt(result.resetsAt)
-      pausedUntil =
-        (at && at.getTime() > Date.now() ? at.getTime() : Date.now() + 30 * 60_000) + 60_000
-      stampAtPause = stampNow()
-      log(
-        item.id,
-        `usage limit, everything waits until ${new Date(pausedUntil).toISOString().slice(11, 19)}`,
-      )
-    } else if (result.outcome === 'failed' && isInfraFailure(result.reason) && entry.attempts < 3) {
-      log(item.id, `failed on the environment (${result.reason.slice(0, 80)}), trying again`)
-    } else {
+    if (result.outcome !== 'waiting') {
       Object.assign(entry, result, { finishedAt: new Date().toISOString() })
       save()
       log(
@@ -198,20 +187,25 @@ async function work(item) {
       )
       return
     }
-    entry.attempts += 1
-    await respectPause()
-    const retried = await call('POST', `/api/panel/tasks/${entry.taskId}/retry`, {})
-    if (retried.status !== 200) {
-      Object.assign(entry, {
-        outcome: 'failed',
-        reason: `could not retry: ${JSON.stringify(retried.body).slice(0, 200)}`,
-      })
-      save()
-      return
+    // The factory runs the task again by itself at `retryAt`; the feeder only waits for it. A usage limit holds
+    // back every item until then, because a new one would stop on the same limit; an outage holds back this one.
+    const until = Math.max(Date.parse(result.retryAt), Date.now()) + 60_000
+    if (result.retryAt !== announced) {
+      announced = result.retryAt
+      const when = new Date(until).toISOString().slice(11, 19)
+      log(
+        item.id,
+        result.quota
+          ? `usage limit, everything waits until ${when}`
+          : `failed on the environment (${result.reason.slice(0, 80)}), the factory runs it again; waiting until ${when}`,
+      )
     }
-    entry.taskId = undefined // a retry may be a new task row in the same issue
-    const again = await findTask(entry.repo, entry.issue)
-    if (again) entry.taskId = again.id
+    if (result.quota) {
+      pausedUntil = until
+      stampAtPause = stampNow()
+    } else {
+      await sleep(until - Date.now())
+    }
   }
 }
 
@@ -227,7 +221,6 @@ async function retryFailed() {
       if (r.status !== 200) continue
       for (const field of ['outcome', 'reason', 'failedAt', 'finishedAt']) delete e[field]
       e.taskId = undefined
-      e.attempts = 0
       log(id, 'run again after an environment failure')
     } else if (!e.issue) {
       delete entries()[id]

@@ -204,26 +204,6 @@ export function stuckBehind(items, state) {
 }
 
 /**
- * When a usage limit says it resets, as a Date, or undefined. Both "Nov 5th, 2026 11:48 AM" and a bare
- * "7:38 PM" are local time; a bare time is today's, or tomorrow's when it has already passed.
- */
-export function resetAt(text, now = new Date()) {
-  if (!text) return undefined
-  const bare = /^\s*(\d{1,2}):(\d{2})\s*([AaPp][Mm])\s*$/.exec(String(text))
-  if (bare) {
-    let hours = Number(bare[1]) % 12
-    if (bare[3].toLowerCase() === 'pm') hours += 12
-    const d = new Date(now)
-    d.setHours(hours, Number(bare[2]), 0, 0)
-    if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1)
-    return d
-  }
-  const clean = String(text).replace(/(\d)(st|nd|rd|th)\b/, '$1')
-  const d = new Date(clean)
-  return Number.isNaN(d.getTime()) ? undefined : d
-}
-
-/**
  * What became of a task, from its detail in the panel. `integrated` is the only success: the work is
  * merged into the integration branch.
  */
@@ -253,7 +233,10 @@ export function classify(detail) {
     }
   if (task.stage === 'failed') {
     const reason = String(info.error ?? 'failed')
-    if (info.quota) return { outcome: 'quota', reason, resetsAt: info.resetsAt }
+    // The factory runs this one again by itself (a quota coming back, an outage passing) and says when:
+    // the feeder waits, and never retries it on its own, which would race the factory for the same task.
+    if (task.retryAt)
+      return { outcome: 'waiting', reason, retryAt: task.retryAt, quota: info.quota === true }
     return { outcome: 'failed', reason: reason.slice(0, 400), failedAt: info.failedAt }
   }
   return { outcome: undefined }
