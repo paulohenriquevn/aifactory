@@ -291,13 +291,16 @@ export async function throughOutage(fn, { waits = OUTAGE_WAITS_MS, sleep, onWait
 /**
  * The files a new account lands in: the token the panel saves, the environment file the login script
  * writes, and the factory's Codex login. Mirrors `tokenFile` in src/server/factory/claude-token.ts and
- * `defaultCodexHome` in src/server/factory/harness-codex.ts.
+ * `CODEX_STORE` in src/server/factory/codex-auth.ts.
  */
 export function credentialFiles(env, cwd, home) {
+  // The Codex login the panel makes is factory-auth.json; auth.json is the one the CLI made before it.
+  const codexHome = env.FACTORY_CODEX_HOME || `${home}/.codex-factory-1`
   return [
     env.FACTORY_CLAUDE_TOKEN_FILE || `${cwd}/.secrets/claude-oauth-token`,
     `${cwd}/.env.local`,
-    `${env.FACTORY_CODEX_HOME || `${home}/.codex-factory-1`}/auth.json`,
+    `${codexHome}/auth.json`,
+    `${codexHome}/factory-auth.json`,
   ]
 }
 

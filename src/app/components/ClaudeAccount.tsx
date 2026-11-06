@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import type { ClaudeLoginState } from '../../shared/panel'
 import { del, get, post } from '../lib/api'
 
+import { RetryWaiting } from './RetryWaiting'
+
 /**
  * Changing the Claude Code account without leaving the panel. The owner opens a link signed in to the
  * account they want, copies the code the page shows, and pastes it here; the panel checks that the account
@@ -13,7 +15,6 @@ export function ClaudeAccount({ onChanged }: { onChanged: () => void }) {
   const [login, setLogin] = useState<ClaudeLoginState>({ status: 'idle' })
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
-  const [retried, setRetried] = useState<string>()
 
   // A login started before the page was reloaded is still waiting for its code.
   useEffect(() => {
@@ -34,24 +35,6 @@ export function ClaudeAccount({ onChanged }: { onChanged: () => void }) {
       if (next.status === 'done') onChanged()
     } catch (error) {
       setLogin({ status: 'error', message: error instanceof Error ? error.message : String(error) })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function retryWaiting() {
-    setBusy(true)
-    try {
-      const { started } = await post<{ started: number; skipped: number }>(
-        '/api/panel/retry-waiting',
-      )
-      setRetried(
-        started === 0
-          ? 'Nenhuma tarefa estava esperando.'
-          : `${started} ${started === 1 ? 'tarefa começou' : 'tarefas começaram'} de novo.`,
-      )
-    } catch (error) {
-      setRetried(error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(false)
     }
@@ -133,20 +116,7 @@ export function ClaudeAccount({ onChanged }: { onChanged: () => void }) {
             Pronto: a fábrica já usa a conta nova, sem reiniciar nada. Testei com uma chamada e ela
             respondeu.
           </p>
-          {retried ? (
-            <p role="status" className="text-muted-foreground">
-              {retried}
-            </p>
-          ) : (
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={busy}
-              onClick={() => void retryWaiting()}
-            >
-              Refazer as tarefas que esperavam a conta
-            </Button>
-          )}
+          <RetryWaiting />
         </div>
       ) : null}
 

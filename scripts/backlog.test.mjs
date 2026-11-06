@@ -413,6 +413,7 @@ describe('the credentials a usage pause watches', () => {
       '/repo/.secrets/claude-oauth-token',
       '/repo/.env.local',
       '/home/p/.codex-factory-1/auth.json',
+      '/home/p/.codex-factory-1/factory-auth.json',
     ])
   })
 
@@ -422,6 +423,7 @@ describe('the credentials a usage pause watches', () => {
       '/s/claude',
       '/repo/.env.local',
       '/s/codex/auth.json',
+      '/s/codex/factory-auth.json',
     ])
   })
 })

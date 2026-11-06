@@ -13,7 +13,6 @@ import {
   CODEX_VERSION,
   codexCredentialFromEnv,
   codexHarness,
-  loadCodexLogin,
   cleaned,
   parseCodexResult,
   placeholderAuth,
@@ -147,53 +146,13 @@ describe('codexCredentialFromEnv', () => {
       ).kind,
     ).toBe('subscription')
     expect(() => codexCredentialFromEnv({ FACTORY_CODEX_HOME: home }, has(false))).toThrow(
-      /codex login --device-auth/,
+      /connect Codex from the Setup page/,
     )
     expect(() => codexCredentialFromEnv({ FACTORY_CODEX_AUTH: 'api-key' }, has(true))).toThrow(
       /OPENAI_API_KEY is not set/,
     )
     expect(() => codexCredentialFromEnv({ FACTORY_CODEX_AUTH: 'x' }, has(true))).toThrow(
       /api-key or subscription/,
-    )
-  })
-})
-
-describe('loadCodexLogin', () => {
-  it('uses the stored token while it has days left, without calling out', async () => {
-    const home = loginDir(5 * 24 * 3600)
-    const fetch = async () => {
-      throw new Error('must not be called')
-    }
-
-    const login = await loadCodexLogin(home, { fetch, now: () => NOW })
-
-    expect(login.accountId).toBe('acct-1')
-    expect(login.accessToken.split('.').length).toBe(3)
-  })
-
-  it('renews a token close to expiring and keeps the rotated refresh token', async () => {
-    const home = loginDir(3600)
-    const fresh = SECRET_ACCESS(NOW / 1000 + 10 * 24 * 3600)
-    let sent: { client_id: string; refresh_token: string } | undefined
-    const fetch = async (_url: string, init?: RequestInit) => {
-      sent = JSON.parse(String(init?.body))
-      return new Response(JSON.stringify({ access_token: fresh, refresh_token: 'refresh-next' }))
-    }
-
-    const login = await loadCodexLogin(home, { fetch, now: () => NOW })
-
-    expect(sent).toMatchObject({ client_id: 'app_test', refresh_token: 'refresh-real' })
-    expect(login.accessToken).toBe(fresh)
-    const stored = JSON.parse(readFileSync(join(home, 'auth.json'), 'utf8'))
-    expect(stored.tokens.refresh_token).toBe('refresh-next')
-    expect(stored.tokens.account_id).toBe('acct-1')
-  })
-
-  it('says how to log in again when the renewal is refused', async () => {
-    const home = loginDir(60)
-    const fetch = async () => new Response('{}', { status: 401 })
-    await expect(loadCodexLogin(home, { fetch, now: () => NOW })).rejects.toThrow(
-      /could not be renewed \(HTTP 401\).*codex login --device-auth/,
     )
   })
 })

@@ -422,3 +422,18 @@ export type ClaudeLoginState =
   | { status: 'checking' }
   | { status: 'done' }
   | { status: 'error'; message: string }
+
+/** Where the change of the factory's Codex account is, as the panel shows it. No token is ever part of it. */
+export type CodexLoginState =
+  | { status: 'idle' }
+  | { status: 'waiting'; userCode: string; verificationUri: string }
+  | { status: 'checking' }
+  | { status: 'done' }
+  | { status: 'error'; message: string }
+
+/** The factory's Codex account: who it is, and where a change of account is. */
+export type CodexConnection = {
+  account:
+    { connected: false; problem?: string } | { connected: true; email?: string; plan?: string }
+  login: CodexLoginState
+}

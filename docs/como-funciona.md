@@ -742,20 +742,30 @@ O Codex não informa custo em dólar, então `costUsd` fica vazio.
 | `subscription` | login em `FACTORY_CODEX_HOME` | `Authorization: Bearer` em `chatgpt.com`    |
 
 Com as duas, vale a chave; `FACTORY_CODEX_AUTH=api-key|subscription` escolhe. O login da assinatura
-fica em `~/.codex-factory-1` por padrão:
+fica em `~/.codex-factory-1` por padrão (`FACTORY_CODEX_HOME` muda a pasta), no arquivo
+`factory-auth.json`, que é o store de credenciais do TheoKit.
 
-```bash
-CODEX_HOME=~/.codex-factory-1 codex login --device-auth
-```
+O login é feito pelo painel. Na página Setup, abaixo da linha do Codex, "Conectar o Codex" (ou "Entrar
+com outra conta", quando já há uma) inicia o login por dispositivo do TheoKit: o painel mostra um
+endereço da OpenAI e um código curto, o dono abre o endereço na conta do ChatGPT que quer usar e digita
+o código, e a página percebe sozinha quando ele terminar. Antes de guardar o login, o servidor faz uma
+pergunta pequena ao `codex exec` com ele, numa pasta temporária e sem o token de renovação; uma conta no
+limite de uso é recusada ali, com a data em que o limite acaba. A página mostra o e-mail e o plano da
+conta em uso, lidos do ID token, e nunca recebe um token. Quem já tinha feito
+`CODEX_HOME=~/.codex-factory-1 codex login --device-auth` não precisa repetir: na primeira leitura a
+fábrica copia esse `auth.json` para o store e deixa o original como está.
 
-O `auth.json` do Codex tem um token de renovação que rotaciona. Se o Codex do uso diário e a
-fábrica compartilharem o mesmo login, o primeiro que renovar invalida o outro, por isso a fábrica
-tem um login só dela. O access token dura 10 dias. A fábrica o renova no host quando faltam menos
-de 2 dias, e grava o token novo no mesmo arquivo. Se a renovação for recusada, a task diz como
-fazer o login de novo. Cada execução simultânea do Codex por assinatura precisa do seu login
-(`~/.codex-factory-2` e assim por diante); o Claude por token não tem essa restrição. A renovação
-foi coberta por teste de unidade e exercitada contra a OpenAI em 2026-11-04. A OpenAI recomenda não
-usar login de assinatura em repositório público.
+O token de renovação rotaciona. Se o Codex do uso diário e a fábrica compartilharem o mesmo login, o
+primeiro que renovar invalida o outro, por isso a fábrica tem um login só dela. O access token dura 10
+dias. A fábrica o renova no host quando faltam menos de 2 dias, para que ele não vença no meio de uma
+execução. A leitura, a renovação e a troca de conta pelo painel passam pelo mesmo lock entre processos
+(o do TheoKit, com `proper-lockfile`) e releem o arquivo dentro dele, então o servidor e o worker nunca
+gastam o mesmo token de renovação duas vezes, e uma renovação nunca grava a conta antiga por cima da
+nova. O `AuthProvider` do TheoKit ainda não aceita uma margem de renovação (usetheokit/theokit#1286),
+por isso a fábrica chama a renovação do SDK com o mesmo lock. Se a renovação for recusada, a task diz
+para conectar o Codex de novo pela página Setup. Cada execução simultânea do Codex por assinatura
+precisa do seu login (`~/.codex-factory-2` e assim por diante); o Claude por token não tem essa
+restrição. A OpenAI recomenda não usar login de assinatura em repositório público.
 
 ## Alimentando a fábrica com um backlog
 

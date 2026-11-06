@@ -1,11 +1,13 @@
 import { assertSafeName, type HarnessOptions } from './engine-models'
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 
 import type { FetchLike } from '../github/app'
+
+import { codexHomeOf, freshCodexLogin, hasCodexLogin, type CodexLogin } from './codex-auth'
 
 import {
   assertSessionId,
@@ -23,19 +25,17 @@ export const CODEX_VERSION = '0.166.0'
 
 const CODEX = '$HOME/.local/bin/codex'
 const AUTH_FILE = '$HOME/.codex/auth.json'
-const REFRESH_URL = 'https://auth.openai.com/oauth/token'
-/** The access token is replaced when it has less than this left. It lasts ten days. */
-const REFRESH_MARGIN_S = 2 * 24 * 3600
 
 /**
- * How Codex pays. An API key signs calls to the OpenAI API. A subscription is the ChatGPT login
- * `codex login --device-auth` wrote in `home`: it must be a login of the factory's own, because the
- * refresh token rotates and two users of one login invalidate each other.
+ * How Codex pays. An API key signs calls to the OpenAI API. A subscription is the factory's own ChatGPT
+ * login, kept in `home` (see `codex-auth.ts`), which the Setup page makes.
  */
 export type CodexCredential =
   { kind: 'api-key'; secret: string } | { kind: 'subscription'; home: string }
 
 export const defaultCodexHome = () => join(homedir(), '.codex-factory-1')
+
+const NO_LOGIN = 'connect Codex from the Setup page'
 
 /** Picks the credential from the environment, the API key first. */
 export function codexCredentialFromEnv(
@@ -43,98 +43,22 @@ export function codexCredentialFromEnv(
   exists: (path: string) => boolean = existsSync,
 ): CodexCredential {
   const apiKey = env.OPENAI_API_KEY
-  const home = env.FACTORY_CODEX_HOME || defaultCodexHome()
+  const home = codexHomeOf(env)
   const wanted = env.FACTORY_CODEX_AUTH
   if (wanted !== undefined && wanted !== 'api-key' && wanted !== 'subscription') {
     throw new Error(`FACTORY_CODEX_AUTH must be api-key or subscription, got ${wanted}`)
   }
   const kind =
-    wanted ?? (apiKey ? 'api-key' : exists(join(home, 'auth.json')) ? 'subscription' : undefined)
+    wanted ?? (apiKey ? 'api-key' : hasCodexLogin(env, exists) ? 'subscription' : undefined)
   if (kind === 'api-key') {
     if (!apiKey) throw new Error('OPENAI_API_KEY is not set')
     return { kind, secret: apiKey }
   }
   if (kind === 'subscription') {
-    if (!exists(join(home, 'auth.json'))) {
-      throw new Error(
-        `no Codex login in ${home} (run CODEX_HOME=${home} codex login --device-auth)`,
-      )
-    }
+    if (!hasCodexLogin(env, exists)) throw new Error(`no Codex login in ${home} (${NO_LOGIN})`)
     return { kind, home }
   }
-  throw new Error(
-    `OPENAI_API_KEY is not set and there is no Codex login in ${home} (run CODEX_HOME=${home} codex login --device-auth)`,
-  )
-}
-
-type AuthFile = {
-  auth_mode?: string
-  OPENAI_API_KEY?: string | null
-  tokens: {
-    id_token: string
-    access_token: string
-    refresh_token: string
-    account_id?: string
-  }
-  last_refresh?: string
-}
-
-export type CodexLogin = { accessToken: string; idToken: string; accountId?: string }
-
-const claimsOf = (jwt: string): { exp?: number; client_id?: string } => {
-  const payload = jwt.split('.')[1] ?? ''
-  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
-}
-
-/**
- * Reads the factory's Codex login and renews the access token when it is close to expiring. The
- * refresh token is used here, on the host, and never reaches a sandbox.
- */
-export async function loadCodexLogin(
-  home: string,
-  io: { fetch?: FetchLike; now?: () => number } = {},
-): Promise<CodexLogin> {
-  const path = join(home, 'auth.json')
-  const auth = JSON.parse(readFileSync(path, 'utf8')) as AuthFile
-  const now = io.now ?? Date.now
-  const exp = claimsOf(auth.tokens.access_token).exp ?? 0
-  if (exp - now() / 1000 < REFRESH_MARGIN_S) {
-    const clientId = claimsOf(auth.tokens.access_token).client_id
-    const response = await (io.fetch ?? ((url, init) => fetch(url, init)))(REFRESH_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        client_id: clientId,
-        grant_type: 'refresh_token',
-        refresh_token: auth.tokens.refresh_token,
-        scope: 'openid profile email',
-      }),
-    })
-    if (!response.ok) {
-      throw new Error(
-        `the Codex login in ${home} could not be renewed (HTTP ${response.status}); run CODEX_HOME=${home} codex login --device-auth`,
-      )
-    }
-    const fresh = (await response.json()) as {
-      access_token: string
-      refresh_token?: string
-      id_token?: string
-    }
-    auth.tokens = {
-      ...auth.tokens,
-      access_token: fresh.access_token,
-      refresh_token: fresh.refresh_token ?? auth.tokens.refresh_token,
-      id_token: fresh.id_token ?? auth.tokens.id_token,
-    }
-    auth.last_refresh = new Date(now()).toISOString()
-    writeFileSync(path, JSON.stringify(auth, null, 2))
-    chmodSync(path, 0o600)
-  }
-  return {
-    accessToken: auth.tokens.access_token,
-    idToken: auth.tokens.id_token,
-    accountId: auth.tokens.account_id,
-  }
+  throw new Error(`OPENAI_API_KEY is not set and there is no Codex login in ${home} (${NO_LOGIN})`)
 }
 
 /** A token with the original claims and a signature that verifies against nothing. */
@@ -176,7 +100,11 @@ export function codexHarness(
 
   const subscriptionLogin = async () =>
     credential.kind === 'subscription'
-      ? (login ??= await loadCodexLogin(credential.home, io))
+      ? (login ??= await freshCodexLogin({
+          env: { FACTORY_CODEX_HOME: credential.home },
+          ...(io.fetch ? { fetch: io.fetch as typeof fetch } : {}),
+          ...(io.now ? { now: io.now } : {}),
+        }))
       : undefined
 
   async function invoke(
