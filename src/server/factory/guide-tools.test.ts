@@ -246,6 +246,44 @@ describe('what the agents guide reads', () => {
       chosen: { builder: null, planner: null, reviewer: null },
       effective: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
       repositoriesWithOwn: [],
+      chosenModel: { builder: null, planner: null, reviewer: null },
+      chosenEffort: { builder: null, planner: null, reviewer: null },
+      engines: {
+        'claude-code': {
+          models: [
+            {
+              id: 'sonnet',
+              label: 'Sonnet',
+              note: 'Apelido: o mais recente.',
+              efforts: ['low', 'high'],
+            },
+            {
+              id: 'opus',
+              label: 'Opus',
+              note: 'Apelido: o mais recente.',
+              efforts: ['low', 'medium', 'high'],
+            },
+          ],
+          efforts: ['low', 'medium', 'high'],
+        },
+        codex: {
+          models: [
+            {
+              id: 'gpt-6.1-sol',
+              label: 'GPT-6.1-Sol',
+              note: 'O cavalo de batalha.',
+              efforts: ['low', 'medium', 'high', 'ultra'],
+            },
+            {
+              id: 'gpt-6-luna',
+              label: 'GPT-6-Luna',
+              note: 'Rápido e barato.',
+              efforts: ['low', 'medium'],
+            },
+          ],
+          efforts: ['low', 'medium', 'high', 'ultra'],
+        },
+      },
     },
     shared: [
       { id: 'theo', title: 'Contexto da fábrica', when: 'sempre', text: 'ctx', template: false },
@@ -359,11 +397,67 @@ describe('what the agents guide reads about the coding agents', () => {
         chosen: { builder: 'codex', planner: null, reviewer: null },
         effective: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
         repositoriesWithOwn: [{ repository: 'o/r', builder: 'codex', reviewer: null }],
+        chosenModel: { builder: 'gpt-6-luna', planner: null, reviewer: null },
+        chosenEffort: { builder: 'medium', planner: null, reviewer: null },
+        engines: {
+          'claude-code': {
+            models: [
+              {
+                id: 'sonnet',
+                label: 'Sonnet',
+                note: 'Apelido: o mais recente.',
+                efforts: ['low', 'high'],
+              },
+              {
+                id: 'opus',
+                label: 'Opus',
+                note: 'Apelido: o mais recente.',
+                efforts: ['low', 'medium', 'high'],
+              },
+            ],
+            efforts: ['low', 'medium', 'high'],
+          },
+          codex: {
+            models: [
+              {
+                id: 'gpt-6.1-sol',
+                label: 'GPT-6.1-Sol',
+                note: 'O cavalo de batalha.',
+                efforts: ['low', 'medium', 'high', 'ultra'],
+              },
+              {
+                id: 'gpt-6-luna',
+                label: 'GPT-6-Luna',
+                note: 'Rápido e barato.',
+                efforts: ['low', 'medium'],
+              },
+            ],
+            efforts: ['low', 'medium', 'high', 'ultra'],
+          },
+        },
       }),
     ).toEqual({
       inUse: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
       chosenInThePanel: { builder: 'codex', planner: null, reviewer: null },
+      modelInUse: { builder: 'gpt-6-luna', planner: null, reviewer: null },
+      effortInUse: { builder: 'medium', planner: null, reviewer: null },
       available: ['claude-code (cannot start: CLAUDE_CODE_OAUTH_TOKEN is not set)', 'codex'],
+      modelsOfEachAgent: {
+        'claude-code': {
+          models: [
+            { id: 'sonnet', name: 'Sonnet', efforts: ['low', 'high'] },
+            { id: 'opus', name: 'Opus', efforts: ['low', 'medium', 'high'] },
+          ],
+          efforts: ['low', 'medium', 'high'],
+        },
+        codex: {
+          models: [
+            { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol', efforts: ['low', 'medium', 'high', 'ultra'] },
+            { id: 'gpt-6-luna', name: 'GPT-6-Luna', efforts: ['low', 'medium'] },
+          ],
+          efforts: ['low', 'medium', 'high', 'ultra'],
+        },
+      },
       repositoriesWithTheirOwnAgent: [{ repository: 'o/r', builder: 'codex', reviewer: null }],
     })
   })

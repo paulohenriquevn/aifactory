@@ -199,3 +199,45 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('the issue has no description')
   })
 })
+
+describe('claudeCodeHarness model and effort', () => {
+  const run = async (options: { model?: string; effort?: string }, resume = false) => {
+    const sandbox = new FakeSandbox(() => ({
+      stdout: JSON.stringify({ is_error: false, result: 'ok' }),
+    }))
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+    const harness = claudeCodeHarness({ kind: 'subscription', secret: 't' }, options)
+    const input = { prompt: 'P', cwd: '/work', timeoutMs: 5 }
+    if (resume) await harness.resume!(backend, '11111111-1111-4111-8111-111111111111', input)
+    else await harness.run(backend, input)
+    return sandbox.backend.commands.at(-1)!
+  }
+
+  it('tells the agent which model and how much effort, when it was chosen', async () => {
+    const command = await run({ model: 'opus', effort: 'high' })
+    expect(command).toContain('--dangerously-skip-permissions --model opus --effort high <')
+  })
+
+  it('tells it the same when it picks a session back up', async () => {
+    const command = await run({ model: 'opus', effort: 'high' }, true)
+    expect(command).toContain(
+      '--model opus --effort high --resume 11111111-1111-4111-8111-111111111111',
+    )
+  })
+
+  it('says nothing about either when none was chosen, so the agent uses its own default', async () => {
+    const command = await run({})
+    expect(command).not.toContain('--model')
+    expect(command).not.toContain('--effort')
+    expect(await run({ model: 'sonnet' })).not.toContain('--effort')
+  })
+
+  it('refuses a name a shell would read, instead of putting it in the command', async () => {
+    expect(() =>
+      claudeCodeHarness({ kind: 'api-key', secret: 'k' }, { model: 'x; rm -rf /' }),
+    ).toThrow(/not a plain name/)
+    expect(() => claudeCodeHarness({ kind: 'api-key', secret: 'k' }, { effort: '$(id)' })).toThrow(
+      /not a plain name/,
+    )
+  })
+})

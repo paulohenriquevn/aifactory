@@ -458,16 +458,32 @@ a continuação depois de uma resposta). O contexto da fábrica, que o framework
 dos agentes do painel, aparece dobrado dentro de cada um deles. Dá para buscar por nome, ferramenta ou
 qualquer palavra de uma instrução, com o trecho achado destacado, e copiar cada instrução.
 
-**Trocar o agente de código pela interface.** No Construtor, no Planejador e no Revisor há um seletor com
-os agentes que a fábrica sabe rodar (`claude-code` e `codex`). A escolha fica no banco (tabela `setting`),
+**Trocar o agente de código, o modelo e o esforço pela interface.** No Construtor, no Planejador e no Revisor
+há um seletor com os agentes que a fábrica sabe rodar (`claude-code` e `codex`), e ao lado dele o **Modelo**
+e o **Esforço**. A escolha fica no banco (tabela `setting`),
 é lida no começo de cada execução e vale para as próximas **sem reiniciar nada**; as execuções em andamento
 terminam com o agente antigo. O Planejador e o Revisor podem seguir o Construtor ("O mesmo do Construtor"),
 que é o padrão; escolher um revisor diferente dá uma segunda opinião de verdade. Sem escolha, vale o que o
 ambiente diz (`FACTORY_HARNESS`, `FACTORY_PLANNER`, `FACTORY_REVIEWER`) e, sem isso, `claude-code`. Um agente
 sem credencial aparece como "indisponível", com o que falta, e não pode ser escolhido, porque uma escolha
 que quebra toda execução é pior do que nenhuma. Um repositório com agente próprio (campo "Builder" ou
-"Reviewer" em Repositórios) ignora esta escolha, e o seletor lista quais são. O Guia dos Agentes faz a mesma
-troca, com o seu OK. A conta do Claude Code (assinatura ou chave de API) continua sendo definida no
+"Reviewer" em Repositórios) ignora esta escolha, e o seletor lista quais são. Os modelos oferecidos são os do agente escolhido e mudam com ele: para o `codex`, a lista que a própria CLI
+guarda para a sua conta (`models_cache.json`, só os que ela mostra, cada um com os níveis de esforço que
+aceita); para o `claude-code`, os apelidos que a CLI documenta (`sonnet`, `opus`, `fable`) e os níveis
+`low` a `max`. Sem escolha, o agente usa o próprio padrão, que sempre funciona. Um modelo vale para o agente
+para o qual foi escolhido (fica guardado como `codex:gpt-6.1-sol`): se o agente mudar, ou uma issue pedir o
+outro por label, ele não é entregue ao agente errado. O Planejador e o Revisor usam o modelo e o esforço do
+Construtor enquanto não tiverem os seus, desde que seja o mesmo agente. O servidor só aceita o que o agente
+oferece (um modelo de um não vale para o outro, um esforço que o modelo não aceita é recusado), e o nome
+vai para a linha de comando só se for um nome simples, sem nada que um shell leia: `--model` e `--effort`
+no Claude Code, `-m` e `-c model_reasoning_effort` no Codex, inclusive ao retomar uma sessão. O Guia dos
+Agentes faz a mesma troca, com o seu OK.
+
+**O modelo dos agentes do painel não se troca pela tela.** O chat, os guias e os dois assistentes de texto
+têm o modelo fixado quando o servidor sobe: o TheoKit exige que um arquivo de `agents/` entregue o agente
+pronto, não uma função que o monte a cada pedido (testado: devolve erro 500). Por isso o modelo deles segue
+nas variáveis `FACTORY_CHAT_MODEL`, `FACTORY_CHAT_CODEX_MODEL`, `FACTORY_GUIDE_MODEL` e
+`FACTORY_ASSIST_MODEL`, e só vale depois de reiniciar o painel. A página diz isso em cada um. A conta do Claude Code (assinatura ou chave de API) continua sendo definida no
 ambiente (`FACTORY_CLAUDE_AUTH`), porque envolve um segredo.
 
 Nada ali é uma cópia: o catálogo (`factory/agent-catalog.ts`, servido em `GET /api/panel/agents`) monta a

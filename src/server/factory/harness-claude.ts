@@ -1,3 +1,4 @@
+import { assertSafeName, type HarnessOptions } from './engine-models'
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 
 import {
@@ -61,7 +62,13 @@ export function claudeCredentialFromEnv(env: NodeJS.ProcessEnv): ClaudeCredentia
  * because the sandbox is the boundary (a microVM with an explicit egress allowlist and no
  * secrets), and a headless run has nobody to answer a prompt.
  */
-export function claudeCodeHarness(credential: ClaudeCredential): CodingHarness {
+export function claudeCodeHarness(
+  credential: ClaudeCredential,
+  options: HarnessOptions = {},
+): CodingHarness {
+  // Both are checked here because they end up in a command line, whatever put them there.
+  const model = options.model ? ` --model ${assertSafeName(options.model, 'model')}` : ''
+  const effort = options.effort ? ` --effort ${assertSafeName(options.effort, 'effort')}` : ''
   const variable = credential.kind === 'api-key' ? 'ANTHROPIC_API_KEY' : 'CLAUDE_CODE_OAUTH_TOKEN'
 
   async function invoke(
@@ -72,7 +79,7 @@ export function claudeCodeHarness(credential: ClaudeCredential): CodingHarness {
     await backend.uploadFile(PROMPT_FILE, prompt)
     // `cwd` is a path the factory built (see run-task), never text from the issue.
     const result = await backend.execute(
-      `cd ${cwd} && ${variable}=placeholder-not-a-secret CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p --output-format json --dangerously-skip-permissions${flags} < ${PROMPT_FILE}`,
+      `cd ${cwd} && ${variable}=placeholder-not-a-secret CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude -p --output-format json --dangerously-skip-permissions${model}${effort}${flags} < ${PROMPT_FILE}`,
       { timeoutMs },
     )
     return parseClaudeResult(result.exitCode, result.stdout, result.stderr)

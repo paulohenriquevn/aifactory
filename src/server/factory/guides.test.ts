@@ -86,6 +86,8 @@ describe('the guides', () => {
     expect(GUIDE_INSTRUCTIONS('agents')).toContain('You cannot change a prompt')
     expect(GUIDE_INSTRUCTIONS('agents')).toContain('update_agent_settings')
     expect(GUIDE_INSTRUCTIONS('agents')).toContain('Never choose an agent that cannot start')
+    expect(GUIDE_INSTRUCTIONS('agents')).toContain('modelsOfEachAgent')
+    expect(GUIDE_INSTRUCTIONS('agents')).toContain('takes a restart of the panel')
   })
 
   it('lets the board guide answer "what needs me" from the inbox, not from one column', () => {

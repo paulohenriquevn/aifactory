@@ -173,8 +173,19 @@ export function enginesForGuide(settings: AgentSettings) {
   return {
     inUse: settings.effective,
     chosenInThePanel: settings.chosen,
+    modelInUse: settings.chosenModel,
+    effortInUse: settings.chosenEffort,
     available: settings.options.map((o) =>
       o.ready ? o.id : `${o.id} (cannot start: ${o.problem})`,
+    ),
+    modelsOfEachAgent: Object.fromEntries(
+      Object.entries(settings.engines).map(([id, e]) => [
+        id,
+        {
+          models: e.models.map((m) => ({ id: m.id, name: m.label, efforts: m.efforts })),
+          efforts: e.efforts,
+        },
+      ]),
     ),
     repositoriesWithTheirOwnAgent: settings.repositoriesWithOwn,
   }

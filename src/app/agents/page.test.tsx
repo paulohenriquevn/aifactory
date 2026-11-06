@@ -41,6 +41,44 @@ const view: AgentsView = {
     chosen: { builder: null, planner: null, reviewer: null },
     effective: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
     repositoriesWithOwn: [],
+    chosenModel: { builder: null, planner: null, reviewer: null },
+    chosenEffort: { builder: null, planner: null, reviewer: null },
+    engines: {
+      'claude-code': {
+        models: [
+          {
+            id: 'sonnet',
+            label: 'Sonnet',
+            note: 'Apelido: o mais recente.',
+            efforts: ['low', 'high'],
+          },
+          {
+            id: 'opus',
+            label: 'Opus',
+            note: 'Apelido: o mais recente.',
+            efforts: ['low', 'medium', 'high'],
+          },
+        ],
+        efforts: ['low', 'medium', 'high'],
+      },
+      codex: {
+        models: [
+          {
+            id: 'gpt-6.1-sol',
+            label: 'GPT-6.1-Sol',
+            note: 'O cavalo de batalha.',
+            efforts: ['low', 'medium', 'high', 'ultra'],
+          },
+          {
+            id: 'gpt-6-luna',
+            label: 'GPT-6-Luna',
+            note: 'Rápido e barato.',
+            efforts: ['low', 'medium'],
+          },
+        ],
+        efforts: ['low', 'medium', 'high', 'ultra'],
+      },
+    },
   },
   shared: [
     {

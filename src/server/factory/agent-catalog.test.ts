@@ -133,16 +133,35 @@ describe('the catalog of agents', () => {
   })
 
   it('reports the model and the coding agent as they are configured now', () => {
-    expect(agent('builder').engine.value).toBe('claude-code')
-    expect(agent('builder', { FACTORY_HARNESS: 'codex' }).engine.value).toBe('codex')
+    expect(agent('builder').engine.value).toBe('claude-code · modelo padrão')
+    expect(agent('builder', { FACTORY_HARNESS: 'codex' }).engine.value).toBe(
+      'codex · modelo padrão',
+    )
+    expect(
+      agent('builder', {
+        FACTORY_HARNESS: 'codex',
+        FACTORY_MODEL_BUILDER: 'codex:gpt-6.1-sol',
+        FACTORY_EFFORT_BUILDER: 'codex:high',
+      }).engine.value,
+    ).toBe('codex · gpt-6.1-sol · esforço high')
+    // A model chosen for the other agent is not the one this agent is told to use.
+    expect(agent('builder', { FACTORY_MODEL_BUILDER: 'codex:gpt-6.1-sol' }).engine.value).toBe(
+      'claude-code · modelo padrão',
+    )
     expect(agent('planner', { FACTORY_HARNESS: 'codex' }).engine.value).toBe(
-      'codex (o mesmo do construtor)',
+      'codex · modelo padrão (o mesmo agente do construtor)',
     )
     expect(
       agent('planner', { FACTORY_HARNESS: 'codex', FACTORY_PLANNER: 'claude-code' }).engine.value,
-    ).toBe('claude-code')
-    expect(agent('reviewer').engine.value).toContain('o mesmo do construtor')
-    expect(agent('reviewer', { FACTORY_REVIEWER: 'codex' }).engine.value).toBe('codex')
+    ).toBe('claude-code · modelo padrão')
+    expect(
+      agent('planner', { FACTORY_HARNESS: 'codex', FACTORY_MODEL_BUILDER: 'codex:gpt-6.1-sol' })
+        .engine.value,
+    ).toContain('gpt-6.1-sol')
+    expect(agent('reviewer').engine.value).toContain('o mesmo agente do construtor')
+    expect(agent('reviewer', { FACTORY_REVIEWER: 'codex' }).engine.value).toBe(
+      'codex · modelo padrão',
+    )
     expect(agent('chat').engine.value).toContain('openrouter/google/gemini-2.5-flash')
     expect(agent('chat', { FACTORY_CHAT_MODEL: 'openrouter/x/y' }).engine.value).toContain(
       'openrouter/x/y',
@@ -155,6 +174,16 @@ describe('the catalog of agents', () => {
       'openrouter/a/b',
     )
     expect(agent('chat').engine.change).toContain('FACTORY_CHAT_MODEL')
+  })
+
+  it('says the model of a panel agent is changed in the environment and needs a restart, and a builder one is not', () => {
+    for (const id of ['chat', 'guide-board', 'assist', 'assist-setup']) {
+      expect(agent(id).engine.change, id).toContain('depois de reiniciar o painel')
+    }
+    for (const id of ['builder', 'reviewer', 'planner']) {
+      expect(agent(id).engine.change, id).not.toContain('FACTORY_')
+      expect(agent(id).engine.change, id).toContain('Agentes')
+    }
   })
 
   it('adds the context of the factory to every panel agent, and to no agent that builds', () => {

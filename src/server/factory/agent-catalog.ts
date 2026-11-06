@@ -2,13 +2,14 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { GUIDE_IDS, GUIDE_NAMES, type GuideId } from '../../shared/guides'
-import type { AgentEntry, AgentPrompt, AgentsView, AgentTool } from '../../shared/panel'
+import type { AgentEntry, AgentPrompt, AgentRole, AgentsView, AgentTool } from '../../shared/panel'
 import { ASSIST_INSTRUCTIONS, SETUP_INSTRUCTIONS } from '../agents/prompts/assist'
 import { proposeTool } from '../agents/tools/propose'
 import { repoFileTool, repoTreeTool } from '../agents/tools/repo'
 
 import type { AssistantSpec } from './assistant'
 import { CHAT_SPEC } from './chat-agent'
+import { optionsFor } from './engine-models'
 import { DEFAULT_HARNESS } from './harness-registry'
 import { buildPrompt } from './harness'
 import { guideCodexModel, guideModel, guideSpec } from './guides'
@@ -58,6 +59,12 @@ const SANDBOX_TOOL: AgentTool = {
   effect: 'sandbox',
 }
 
+/** The agent of a role with the model and the effort it is told to use, or "default" where nothing is set. */
+function engineValue(env: NodeJS.ProcessEnv, role: AgentRole, engine: string): string {
+  const { model, effort } = optionsFor(env, role, engine)
+  return `${engine} · ${model ?? 'modelo padrão'}${effort ? ` · esforço ${effort}` : ''}`
+}
+
 /** The agents that build, review and plan. They run in a sandbox the factory makes for each run. */
 function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
   const builder = env.FACTORY_HARNESS || DEFAULT_HARNESS
@@ -71,7 +78,7 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
       name: 'Construtor',
       role: 'Escreve o código de uma issue num sandbox isolado, roda os testes do projeto e entrega o resultado, que a fábrica confere e envia.',
       runsIn: 'sandbox',
-      engine: { value: builder, change: choose },
+      engine: { value: engineValue(env, 'builder', builder), change: choose },
       when: 'Quando uma issue com a label factory vira tarefa. Volta a ele quando os checks ou o revisor pedem mudanças, quando você responde a uma pergunta dele e quando você pede mudanças num PR.',
       tools: [SANDBOX_TOOL],
       shared: [],
@@ -125,7 +132,7 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
       role: 'Lê a mudança do construtor como alguém de fora e decide entre aprovar e pedir mudanças. Não edita nada.',
       runsIn: 'sandbox',
       engine: {
-        value: env.FACTORY_REVIEWER || `${builder} (o mesmo do construtor, numa sessão nova)`,
+        value: `${engineValue(env, 'reviewer', env.FACTORY_REVIEWER || builder)}${env.FACTORY_REVIEWER ? '' : ' (o mesmo agente do construtor, numa sessão nova)'}`,
         change:
           'Aqui mesmo, na página Agentes, ou a label reviewer:<nome> numa issue. Um agente diferente do construtor dá uma segunda opinião de verdade.',
       },
@@ -155,7 +162,7 @@ function factoryAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
       role: 'Lê o repositório e divide um objetivo seu em issues pequenas e independentes, para você revisar. Não altera nada.',
       runsIn: 'sandbox',
       engine: {
-        value: env.FACTORY_PLANNER || `${builder} (o mesmo do construtor)`,
+        value: `${engineValue(env, 'planner', env.FACTORY_PLANNER || builder)}${env.FACTORY_PLANNER ? '' : ' (o mesmo agente do construtor)'}`,
         change: 'Aqui mesmo, na página Agentes. Sem escolha, usa o agente do Construtor.',
       },
       when: 'Quando você cria um plano na página Planos. Termina com um JSON que a fábrica transforma na lista de issues.',
@@ -188,7 +195,7 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
     engine: {
       value: `${chatModel(env)} (OpenRouter) ou ${chatCodexModel(env)} (ChatGPT)`,
       change:
-        'FACTORY_CHAT_MODEL e FACTORY_CHAT_CODEX_MODEL. O seletor do campo de mensagem escolhe entre os dois.',
+        'O seletor do campo de mensagem escolhe entre os dois. O modelo de cada um é FACTORY_CHAT_MODEL e FACTORY_CHAT_CODEX_MODEL, no arquivo de ambiente: só vale depois de reiniciar o painel, porque o framework fixa o modelo dos agentes do painel quando o servidor sobe.',
     },
     when: `Na tela inicial. ${PANEL_WHERE}`,
     tools: toolsOf(CHAT_SPEC),
@@ -210,7 +217,8 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
       runsIn: 'server',
       engine: {
         value: `${guideModel(env)} (OpenRouter) ou ${guideCodexModel(env)} (ChatGPT)`,
-        change: 'FACTORY_GUIDE_MODEL (cai em FACTORY_CHAT_MODEL) e FACTORY_CHAT_CODEX_MODEL.',
+        change:
+          'FACTORY_GUIDE_MODEL (cai em FACTORY_CHAT_MODEL) e FACTORY_CHAT_CODEX_MODEL, no arquivo de ambiente: só valem depois de reiniciar o painel, porque o framework fixa o modelo dos agentes do painel quando o servidor sobe.',
       },
       when: `No painel ao lado da página, pelo botão Guia. ${PANEL_WHERE}`,
       tools: toolsOf(spec),
@@ -238,7 +246,8 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
     runsIn: 'server',
     engine: {
       value: assistModel(env),
-      change: 'FACTORY_ASSIST_MODEL, com a chave do provedor do modelo.',
+      change:
+        'FACTORY_ASSIST_MODEL, no arquivo de ambiente, com a chave do provedor do modelo. Só vale depois de reiniciar o painel, porque o framework fixa o modelo dos agentes do painel quando o servidor sobe.',
     },
     when: `Embaixo de cada caixa de texto do painel. Propõe um texto e nada muda até você apertar "Use this". ${PANEL_WHERE}`,
     tools: [{ name: 'propose', description: proposeTool.description, effect: 'reads' }],
@@ -261,7 +270,8 @@ function panelAgents(env: NodeJS.ProcessEnv): AgentEntry[] {
     runsIn: 'server',
     engine: {
       value: assistModel(env),
-      change: 'FACTORY_ASSIST_MODEL, com a chave do provedor do modelo.',
+      change:
+        'FACTORY_ASSIST_MODEL, no arquivo de ambiente, com a chave do provedor do modelo. Só vale depois de reiniciar o painel, porque o framework fixa o modelo dos agentes do painel quando o servidor sobe.',
     },
     when: `No botão "Set this up for me", na página Repositórios. É o único que pode ler um repositório, e só os arquivos de build e de teste. ${PANEL_WHERE}`,
     tools: [proposeTool, repoTreeTool, repoFileTool].map((tool) => ({

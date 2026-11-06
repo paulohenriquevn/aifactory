@@ -49,3 +49,38 @@ describe('pickHarness', () => {
     )
   })
 })
+
+describe('what an agent is told about its model', () => {
+  it('asks for the options of the agent that ends up chosen, not of the one that was the default', () => {
+    const asked: string[] = []
+    const registry = {
+      'claude-code': () => ({ name: 'claude-code' }) as never,
+      codex: () => ({ name: 'codex' }) as never,
+    }
+    const built: Record<string, unknown> = {}
+    const spy = {
+      'claude-code': (o?: unknown) => ((built['claude-code'] = o), registry['claude-code']()),
+      codex: (o?: unknown) => ((built.codex = o), registry.codex()),
+    }
+    const optionsFor = (engine: string) => (
+      asked.push(engine),
+      engine === 'codex' ? { model: 'gpt-6.1-sol' } : { model: 'opus' }
+    )
+
+    pickHarness(spy, 'claude-code', [], 'harness', optionsFor)
+    pickHarness(spy, 'claude-code', ['harness:codex'], 'harness', optionsFor)
+
+    expect(asked).toEqual(['claude-code', 'codex'])
+    expect(built).toEqual({ 'claude-code': { model: 'opus' }, codex: { model: 'gpt-6.1-sol' } })
+  })
+
+  it('builds the agent with no options when none are asked for', () => {
+    let seen: unknown = 'untouched'
+    pickHarness(
+      { 'claude-code': (o) => ((seen = o), { name: 'claude-code' } as never) },
+      'claude-code',
+      [],
+    )
+    expect(seen).toBeUndefined()
+  })
+})

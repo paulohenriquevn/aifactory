@@ -141,6 +141,21 @@ describe('describeApproval for the choice of agent', () => {
     expect(out.request).toContain('próximas execuções, sem reiniciar')
   })
 
+  it("says which model and effort each role gets, and that null is the agent's own default", () => {
+    const out = describeApproval('update_agent_settings', {
+      models: { builder: 'gpt-6.1-sol', reviewer: null },
+      efforts: { builder: 'high' },
+    })
+    expect(out.request).toContain('- Construtor, modelo: gpt-6.1-sol')
+    expect(out.request).toContain('- Revisor, modelo: o padrão do agente')
+    expect(out.request).toContain('- Construtor, esforço: high')
+    expect(out.request).not.toContain('Planejador')
+    expect(
+      describeApproval('update_agent_settings', { models: {}, efforts: { planner: undefined } })
+        .request,
+    ).toContain('- nada muda')
+  })
+
   it("says that a null goes back to the builder's agent, and that an empty change changes nothing", () => {
     expect(describeApproval('update_agent_settings', { planner: null }).request).toContain(
       '- Planejador: volta ao padrão (o mesmo agente do Construtor)',

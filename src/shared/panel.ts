@@ -392,6 +392,25 @@ export type AgentSettings = {
   chosen: Record<AgentRole, string | null>
   /** What each role really uses now. */
   effective: Record<AgentRole, string>
+  /** The model and the effort the owner chose for a role, when they belong to the agent it uses; null for the agent's own default. */
+  chosenModel: Record<AgentRole, string | null>
+  chosenEffort: Record<AgentRole, string | null>
+  /** The models and effort levels each agent can be given. */
+  engines: Record<string, EngineModels>
   /** Repositories that name an agent of their own, which wins over what is chosen here. */
   repositoriesWithOwn: { repository: string; builder: string | null; reviewer: string | null }[]
+}
+
+/** A model a coding agent can be told to use, and the effort levels it takes. */
+export type ModelOption = {
+  id: string
+  label: string
+  note: string
+  efforts: string[]
+}
+
+export type EngineModels = {
+  models: ModelOption[]
+  /** The effort levels the agent takes when no model is chosen. */
+  efforts: string[]
 }

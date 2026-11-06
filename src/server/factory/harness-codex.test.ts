@@ -284,3 +284,49 @@ describe('codexHarness', () => {
     await expect(harness.resume?.(backend, 'x; rm -rf /', input)).rejects.toThrow(/UUID/)
   })
 })
+
+describe('codexHarness model and effort', () => {
+  const done = JSON.stringify({ type: 'turn.completed' })
+  const command = async (options: { model?: string; effort?: string }, resume?: string) => {
+    const harness = codexHarness({ kind: 'api-key', secret: 'k' }, {}, options)
+    const sandbox = new FakeSandbox(() => ({ stdout: done }))
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+    const input = { prompt: 'P', cwd: '/work/repo', timeoutMs: 5 }
+    if (resume) await harness.resume!(backend, resume, input)
+    else await harness.run(backend, input)
+    return sandbox.backend.commands.at(-1)!
+  }
+
+  it('tells the agent which model and how much effort, when it was chosen', async () => {
+    const run = await command({ model: 'gpt-6.1-sol', effort: 'high' })
+    expect(run).toContain(
+      'exec -m gpt-6.1-sol -c model_reasoning_effort=high --skip-git-repo-check',
+    )
+  })
+
+  it('tells it the same when it picks a session back up', async () => {
+    const run = await command(
+      { model: 'gpt-6-luna', effort: 'low' },
+      '11111111-1111-4111-8111-111111111111',
+    )
+    expect(run).toContain(
+      'exec resume 11111111-1111-4111-8111-111111111111 -m gpt-6-luna -c model_reasoning_effort=low --skip-git-repo-check',
+    )
+  })
+
+  it('says nothing about either when none was chosen', async () => {
+    const run = await command({})
+    expect(run).not.toContain(' -m ')
+    expect(run).not.toContain('model_reasoning_effort')
+    expect(await command({ model: 'gpt-6-luna' })).not.toContain('model_reasoning_effort')
+  })
+
+  it('refuses a name a shell would read', () => {
+    expect(() => codexHarness({ kind: 'api-key', secret: 'k' }, {}, { model: 'a b' })).toThrow(
+      /not a plain name/,
+    )
+    expect(() =>
+      codexHarness({ kind: 'api-key', secret: 'k' }, {}, { effort: 'high; id' }),
+    ).toThrow(/not a plain name/)
+  })
+})

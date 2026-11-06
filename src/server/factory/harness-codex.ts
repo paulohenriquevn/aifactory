@@ -1,3 +1,4 @@
+import { assertSafeName, type HarnessOptions } from './engine-models'
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -164,8 +165,14 @@ export function placeholderAuth(login: CodexLogin, now: () => number = Date.now)
 export function codexHarness(
   credential: CodexCredential,
   io: { fetch?: FetchLike; now?: () => number } = {},
+  options: HarnessOptions = {},
 ): CodingHarness {
   let login: CodexLogin | undefined
+  // Both are checked here because they end up in a command line, whatever put them there.
+  const model = options.model ? ` -m ${assertSafeName(options.model, 'model')}` : ''
+  const effort = options.effort
+    ? ` -c model_reasoning_effort=${assertSafeName(options.effort, 'effort')}`
+    : ''
 
   const subscriptionLogin = async () =>
     credential.kind === 'subscription'
@@ -181,7 +188,7 @@ export function codexHarness(
     const env = credential.kind === 'api-key' ? 'OPENAI_API_KEY=placeholder-not-a-secret ' : ''
     // `cwd` is a path the factory built, and `resume` was checked to be a UUID.
     const result = await backend.execute(
-      `cd ${cwd} && ${env}${CODEX} exec${resume ? ` resume ${resume}` : ''} --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json - < ${PROMPT_FILE}`,
+      `cd ${cwd} && ${env}${CODEX} exec${resume ? ` resume ${resume}` : ''}${model}${effort} --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json - < ${PROMPT_FILE}`,
       { timeoutMs },
     )
     return parseCodexResult(result.exitCode, result.stdout, result.stderr)

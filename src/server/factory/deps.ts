@@ -4,6 +4,7 @@ import { getDb } from '../db'
 import { createGithubApp } from '../github/app'
 
 import type { ReleaseMode } from './deliver'
+import { optionsFor } from './engine-models'
 import { DEFAULT_HARNESS, harnessRegistry, pickHarness } from './harness-registry'
 import type { RunTaskDeps } from './run-task'
 import { sandboxProviderFromEnv } from './sandbox-provider'
@@ -47,13 +48,18 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
   const slug = required(env, 'GITHUB_APP_SLUG')
   const registry = harnessRegistry(env)
   const fallback = env.FACTORY_HARNESS || DEFAULT_HARNESS
-  const pick = (labels: string[]) => pickHarness(registry, fallback, labels)
+  const pick = (labels: string[]) =>
+    pickHarness(registry, fallback, labels, 'harness', (engine) =>
+      optionsFor(env, 'builder', engine),
+    )
   // The reviewer defaults to the builder's own agent in a fresh session. A different agent is a
   // real second opinion, so FACTORY_REVIEWER or a `reviewer:<name>` label can name one.
   const reviewerName = env.FACTORY_REVIEWER
   const pickReviewer = (labels: string[]) =>
     reviewerName || labels.some((l) => /^reviewer:/i.test(l))
-      ? pickHarness(registry, reviewerName ?? fallback, labels, 'reviewer')
+      ? pickHarness(registry, reviewerName ?? fallback, labels, 'reviewer', (engine) =>
+          optionsFor(env, 'reviewer', engine),
+        )
       : undefined
   return {
     db: getDb(),

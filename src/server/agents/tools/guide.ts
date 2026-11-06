@@ -177,12 +177,21 @@ export const agentPromptTool = tool('agent_prompt')
   .build()
 
 const engine = z.string().max(40).nullable().optional()
+const perRole = z.object({ builder: engine, planner: engine, reviewer: engine }).optional()
 
 export const updateAgentSettingsTool = tool('update_agent_settings')
   .describe(
-    'Choose which coding agent builds, which plans and which reviews. Send only the roles that change. null goes back to the default: the planner and the reviewer then use the same agent as the builder. It applies to the next runs, not the ones in progress.',
+    'Choose which coding agent builds, which plans and which reviews, and which model and effort level each uses. Send only what changes. For a model or an effort give an id from the engines list of list_agents for the agent that role will use. null goes back to the default: the planner and the reviewer then use the same agent as the builder, and an agent without a chosen model uses its own default. It applies to the next runs, not the ones in progress.',
   )
-  .input(z.object({ builder: engine, planner: engine, reviewer: engine }))
+  .input(
+    z.object({
+      builder: engine,
+      planner: engine,
+      reviewer: engine,
+      models: perRole,
+      efforts: perRole,
+    }),
+  )
   .execute(async (input) => {
     await changeAgentSettings(getDb(), input)
     return 'Saved. It applies to the next runs; the ones in progress finish with the agent they started with.'

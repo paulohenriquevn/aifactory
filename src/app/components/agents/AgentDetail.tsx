@@ -68,7 +68,7 @@ export function AgentDetail({
 
       {role ? (
         <EngineChooser
-          key={`${role}:${settings.chosen[role]}:${settings.effective[role]}`}
+          key={`${role}:${settings.chosen[role]}:${settings.effective[role]}:${settings.chosenModel[role]}:${settings.chosenEffort[role]}`}
           role={role}
           settings={settings}
           onSaved={onSettingsSaved}

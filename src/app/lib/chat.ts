@@ -157,9 +157,20 @@ const APPROVALS: Record<string, (a: Args, repo?: RepositoryView) => Approval> = 
           ? `- ${names[role]}: volta ao padrão (o mesmo agente do Construtor)`
           : `- ${names[role]}: ${String(a[role])}`,
       )
+    const extra = (Object.keys(names) as (keyof typeof names)[]).flatMap((role) =>
+      (['models', 'efforts'] as const).flatMap((kind) => {
+        const map = a[kind] as Record<string, unknown> | undefined
+        if (!map || map[role] === undefined) return []
+        const what = kind === 'models' ? 'modelo' : 'esforço'
+        return [
+          `- ${names[role]}, ${what}: ${map[role] === null ? 'o padrão do agente' : String(map[role])}`,
+        ]
+      }),
+    )
+    const all = [...lines, ...extra]
     return {
       title: 'Trocar o agente de código',
-      request: `${lines.length > 0 ? lines.join('\n') : '- nada muda'}\nVale para as próximas execuções, sem reiniciar. As que estão rodando terminam com o agente antigo.`,
+      request: `${all.length > 0 ? all.join('\n') : '- nada muda'}\nVale para as próximas execuções, sem reiniciar. As que estão rodando terminam com o agente antigo.`,
     }
   },
   acknowledge_watch: (a) => ({
