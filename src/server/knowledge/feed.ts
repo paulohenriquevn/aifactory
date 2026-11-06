@@ -40,7 +40,9 @@ export class KnowledgeFeed {
 
   /**
    * Delivers the base and starts keeping it current. A base that could not be delivered leaves the agent
-   * without one, said in the log, rather than stopping the work.
+   * without one, said in the log, rather than stopping the work. An agent that starts without a base keeps
+   * working without one: its prompt never named the folder, so a copy made later would be read by nobody
+   * and recorded as if it had been.
    */
   static async open(
     source: KnowledgeSource | undefined,
@@ -50,7 +52,7 @@ export class KnowledgeFeed {
   ): Promise<KnowledgeFeed> {
     const feed = new KnowledgeFeed(source, backend, project, recipient)
     await feed.refresh()
-    if (source) {
+    if (feed.delivered) {
       feed.timer = setInterval(() => void feed.refresh(), REFRESH_MS)
       feed.timer.unref?.()
     }

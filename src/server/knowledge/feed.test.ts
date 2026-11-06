@@ -132,6 +132,19 @@ describe('the knowledge base in an agent sandbox', () => {
     expect(delivered).toHaveLength(1)
   })
 
+  it('never copies a base into a sandbox whose agent started without one, since its prompt never named it', async () => {
+    vi.useFakeTimers()
+    const backend = new FakeBackend(() => ({}))
+    const { fake, delivered } = source([undefined, pin('a')])
+    const feed = await KnowledgeFeed.open(fake, backend, 'acme/app', { taskId: 9 })
+
+    await vi.advanceTimersByTimeAsync(REFRESH_MS * 3)
+
+    expect(feed.dir).toBeUndefined()
+    expect(delivered).toEqual([])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('leaves the agent without a base when none is ready, and says nothing is there', async () => {
     const backend = new FakeBackend(() => ({}))
     const { fake } = source([undefined])
