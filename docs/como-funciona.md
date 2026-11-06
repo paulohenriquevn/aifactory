@@ -674,8 +674,8 @@ arquivo, e ele vale por cima do `.env.local`, então a conta nova entra na próx
 nada. Em seguida, "Refazer as tarefas que esperavam a conta" recomeça as da coluna "Will retry itself". O
 link expira em 10 minutos.
 
-O painel não reinicia o alimentador do backlog. Ele guarda a pausa de cota na memória, então, se estava
-pausado, continua pausado até ser reiniciado (`systemctl --user restart aifactory-feeder`).
+O alimentador do backlog guarda a pausa de cota na memória, mas a encerra sozinho quando um arquivo de
+credencial muda (o token do painel, o `.env.local` ou o login do Codex da fábrica), em até 15 segundos.
 
 Pelo terminal, use `scripts/claude-login.sh`. Em outro terminal largo, entre na conta que quer usar e rode
 `claude setup-token` (abra o link num navegador logado nessa conta e cole o código de volta). Depois rode o
@@ -774,7 +774,8 @@ node scripts/backlog-feed.mjs --concurrency 1          # alimenta e espera cada 
 
 O estado fica em `.backlog-feed/state.json` e a execução pode ser parada e retomada. O resultado de cada
 item é `integrated` (mergeado em `workspace`), `pr-open` (o PR ficou para uma pessoa), `handoff`, `failed` ou
-`not-started`. Uma parada por cota do agente faz todo o resto esperar até a hora de reset e repete a tarefa.
+`not-started`. Uma parada por cota do agente faz todo o resto esperar até a hora de reset, ou até um arquivo de
+credencial mudar, e repete a tarefa.
 Uma falha de ambiente (sandbox, rede) é repetida uma vez.
 
 ## Escolhendo o agente
