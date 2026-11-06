@@ -13,9 +13,18 @@ export const openTask = (id: number) => ({ pathname: '/work', search: `?task=${i
 export function Card({ task }: { task: TaskCard }) {
   return (
     <Link to={openTask(task.id)} className="block">
-      <Surface size="sm" className="flex h-[140px] flex-col p-3 hover:border-primary/60">
-        <div className="truncate text-xs text-muted-foreground">
-          {task.repository} #{task.issueNumber}
+      <Surface size="sm" className="flex h-[152px] flex-col p-3 hover:border-primary/60">
+        <div className="flex items-baseline gap-2 text-xs text-muted-foreground">
+          <span
+            className="min-w-0 flex-1 truncate"
+            title={`${task.repository} #${task.issueNumber}`}
+          >
+            {task.repository.split('/').pop()} #{task.issueNumber}
+          </span>
+          <span className="shrink-0">
+            {task.costUsd >= 0.005 ? `${money(task.costUsd)} · ` : ''}
+            {ago(task.updatedAt)}
+          </span>
         </div>
         <div title={task.title} className="mt-1 line-clamp-2 text-sm font-medium text-foreground">
           {task.title}
@@ -30,60 +39,59 @@ export function Card({ task }: { task: TaskCard }) {
             attempt {task.attempts} of 3
           </div>
         ) : null}
-        <div className="mt-auto flex items-center justify-between gap-2">
-          <StageBadge stage={task.stage} integrated={task.integrated} retryable={task.retryable} />
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {task.costUsd >= 0.005 ? `${money(task.costUsd)} · ` : ''}
-            {ago(task.updatedAt)}
-          </span>
+        <div className="mt-auto">
+          <StageBadge
+            stage={task.stage}
+            integrated={task.integrated}
+            retryable={task.retryable}
+            wrap
+          />
         </div>
       </Surface>
     </Link>
   )
 }
 
-/** A column is this wide whatever it holds. */
-const COLUMN_WIDTH = 'w-[264px] shrink-0'
+/**
+ * Every column is the same width, full or empty, and they share the room equally, so the board looks the
+ * same however many tasks there are. None goes below this: under it the board scrolls instead.
+ */
+const COLUMN = 'minmax(150px, 1fr)'
 
 function Column({ title, tasks }: { title: string; tasks: TaskCard[] }) {
   return (
     <section aria-label={title} className="min-w-0">
-      <h2 className="mb-2 truncate text-sm font-semibold text-foreground">
+      <h2 className="sticky top-0 z-10 mb-2 truncate bg-background pb-1 text-sm font-semibold text-foreground">
         {title} <span className="font-normal text-muted-foreground">{tasks.length}</span>
       </h2>
       <div className="space-y-2">
         {tasks.map((task) => (
           <Card key={task.id} task={task} />
         ))}
+        {tasks.length === 0 ? <p className="text-xs text-muted-foreground">Nothing here.</p> : null}
       </div>
     </section>
   )
 }
 
 /**
- * The board. Only the columns that have cards are drawn, all the same width, side by side; the ones with
- * nothing in them are named in one line above, so none is hidden and none takes the width of a column of
- * cards. When there are more columns than the screen holds, the board scrolls sideways.
+ * The board: every column, always, side by side, with cards in them or not. It scrolls inside its own
+ * frame when the screen is narrower than the columns need, so the sideways scrollbar stays at the bottom
+ * of the screen where it can be found, and the column titles stay at the top.
  */
 export function Board({ tasks }: { tasks: TaskCard[] }) {
-  const columns = COLUMNS.map((column) => ({
-    ...column,
-    tasks: tasks.filter((t) => t.column === column.id),
-  }))
-  const full = columns.filter((c) => c.tasks.length > 0)
-  const empty = columns.filter((c) => c.tasks.length === 0)
   return (
-    <div>
-      {empty.length > 0 ? (
-        <p aria-label="Empty columns" className="mb-3 text-xs text-muted-foreground">
-          Nothing in: {empty.map((c) => c.title).join(' · ')}
-        </p>
-      ) : null}
-      <div className="flex items-start gap-4 overflow-x-auto pb-3">
-        {full.map((c) => (
-          <div key={c.id} className={COLUMN_WIDTH}>
-            <Column title={c.title} tasks={c.tasks} />
-          </div>
+    <div className="max-h-[calc(100vh-170px)] overflow-auto pb-2">
+      <div
+        className="grid items-start gap-2.5"
+        style={{ gridTemplateColumns: `repeat(${COLUMNS.length}, ${COLUMN})` }}
+      >
+        {COLUMNS.map((column) => (
+          <Column
+            key={column.id}
+            title={column.title}
+            tasks={tasks.filter((t) => t.column === column.id)}
+          />
         ))}
       </div>
     </div>
