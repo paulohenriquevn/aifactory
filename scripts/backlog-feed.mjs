@@ -4,6 +4,7 @@
 //
 //   node scripts/backlog-feed.mjs --backlog ~/theokit/BACKLOG.md [--concurrency 1] [--limit 10]
 //        [--only B-1,B-2] [--dry-run] [--state .backlog-feed/state.json]
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
@@ -21,6 +22,7 @@ import {
   parseBacklog,
   repoFor,
   resetAt,
+  settleKnown,
   stuckBehind,
 } from './backlog.mjs'
 
@@ -245,10 +247,43 @@ function summary(items) {
   return counts
 }
 
+/** The local clone of each repository, beside the backlog's own checkout, read to see what is on develop. */
+const CLONES = dirname(dirname(BACKLOG))
+
+/** The commit on a repository's `origin/develop` that carries the item's `Plan:` trailer, or nothing. */
+function onDevelop(item) {
+  if (!item.slug) return undefined
+  const clone = resolve(CLONES, repoFor(item).split('/')[1])
+  if (!existsSync(clone)) return undefined
+  const out = execFileSync(
+    'git',
+    ['-C', clone, 'log', 'origin/develop', '-1', '--format=%h', `--grep=^Plan: ${item.slug}$`],
+    { encoding: 'utf8' },
+  )
+  return out.trim() || undefined
+}
+
+function fetchClones() {
+  for (const repo of ['theokit', 'theokit-gateways', 'theokit-sdk']) {
+    const clone = resolve(CLONES, repo)
+    if (!existsSync(clone)) continue
+    try {
+      execFileSync('git', ['-C', clone, 'fetch', '-q', 'origin', 'develop'], { stdio: 'ignore' })
+    } catch (error) {
+      log(`could not fetch ${clone}, so what is on develop is read as last fetched:`, error.message)
+    }
+  }
+}
+
 async function main() {
   const items = parseBacklog(readFileSync(BACKLOG, 'utf8')).filter(
     (i) => !ONLY || ONLY.includes(i.id),
   )
+  fetchClones()
+  for (const item of settleKnown(items, entries(), onDevelop)) {
+    log(item.id, entries()[item.id].outcome, '-', entries()[item.id].note.slice(0, 100))
+  }
+  if (!flag('dry-run')) save()
   const open = items.filter((i) => OPEN.includes(i.status))
   log(`${open.length} open items in ${BACKLOG}`, JSON.stringify(summary(items)))
   if (flag('dry-run')) {

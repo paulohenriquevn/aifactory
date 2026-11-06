@@ -12,6 +12,7 @@ import {
   parseBacklog,
   repoFor,
   resetAt,
+  settleKnown,
   stuckBehind,
   throughOutage,
 } from './backlog.mjs'
@@ -452,5 +453,50 @@ describe('credentialStamp', () => {
       throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
     }
     expect(() => credentialStamp(['/a'], denied)).toThrow(/EACCES/)
+  })
+})
+
+describe('settleKnown', () => {
+  const backlog = parseBacklog(`## B-7 - Publish to npm
+
+repo: apps/theoclaw
+status: raw
+deferred_2026-11-02: owner decision (operator conversation): not published for now
+dod:
+  - npm i -g works
+
+## B-8 - Already built
+
+> Registered 2026-10-20 by \`/backlog-item\` (slug: \`built\`).
+
+repo: theokit
+status: approved
+dod:
+  - it works
+`)
+  const onDevelop = (item) => (item.slug === 'built' ? 'abc1234' : undefined)
+
+  it('reads a deferral the owner recorded on the item', () => {
+    expect(backlog[0].deferred).toContain('not published for now')
+    expect(backlog[1].deferred).toBeUndefined()
+  })
+
+  it('records a deferred item and one already on develop, so neither is opened', () => {
+    const state = {}
+    const settled = settleKnown(backlog, state, onDevelop)
+    expect(settled.map((s) => s.id)).toEqual(['B-7', 'B-8'])
+    expect(state['B-7'].outcome).toBe('deferred')
+    expect(state['B-8']).toMatchObject({ outcome: 'integrated' })
+    expect(state['B-8'].note).toContain('abc1234')
+    expect(nextRunnable(backlog, state)).toBeUndefined()
+  })
+
+  it('settles a failed run of an item on develop, and leaves an integrated one as it was', () => {
+    const state = { 'B-8': { outcome: 'failed', issue: 3 } }
+    settleKnown(backlog, state, onDevelop)
+    expect(state['B-8'].outcome).toBe('integrated')
+    const done = { 'B-8': { outcome: 'integrated', issue: 3 } }
+    expect(settleKnown(backlog, done, onDevelop).map((s) => s.id)).toEqual(['B-7'])
+    expect(done['B-8'].issue).toBe(3)
   })
 })
