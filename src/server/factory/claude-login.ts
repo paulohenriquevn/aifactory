@@ -31,10 +31,13 @@ export type LoginDeps = {
   codeMs?: number
   expiresMs?: number
   now?: () => number
+  enterMs?: number
 }
 
 const LINK_MS = 30_000
 const CODE_MS = 60_000
+/** How long after the code its Enter is pressed. */
+const ENTER_MS = 300
 const EXPIRES_MS = 10 * 60_000
 
 /** Where claude is: a service does not have the owner's own folders in its PATH. */
@@ -49,11 +52,16 @@ export function claudeBinary(env: NodeJS.ProcessEnv = process.env): string {
  * without the carriage returns the terminal adds.
  */
 export function plain(text: string): string {
-  return text
-    .replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-    .replace(/\x1b[()][0-9A-B]/g, '')
-    .replace(/\r/g, '')
+  return (
+    text
+      // Every OSC (links, and the queries the CLI sends the terminal), then every CSI, private ones included.
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+      .replace(/\x1b\[[0-9;?<=>]*[ -/]*[@-~]/g, '')
+      .replace(/\x1b[()][0-9A-B]/g, '')
+      .replace(/\r/g, '')
+      // Control characters the TUI leaves around (shift-in, bell): never part of what it said.
+      .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
+  )
 }
 
 const HOSTS = ['claude.com', 'claude.ai', 'anthropic.com']
@@ -92,9 +100,25 @@ export function lastWords(printed: string): string {
     .split('\n')
     .map((l) => l.trim())
     .filter(
-      (l) => l !== '' && !/https?:\/\//.test(l) && !/sk-ant-/.test(l) && !/^[*✶✻✽✢·]+$/.test(l),
+      (l) =>
+        l !== '' &&
+        !/https?:\/\//.test(l) &&
+        !/sk-ant-/.test(l) &&
+        !/^[*✶✻✽✢·]+$/.test(l) &&
+        // The CLI echoes the pasted code masked, with its last characters showing: never what it said.
+        !/^\*{8,}/.test(l),
     )
   return (lines.at(-1) ?? '').slice(0, 160)
+}
+
+/**
+ * What the CLI printed, with every run that could be part of a secret (the code, the token) replaced by its
+ * length, so the server log can say what the CLI did without carrying anything that signs in.
+ */
+export function shapeOf(printed: string): string {
+  return plain(printed)
+    .replace(/[A-Za-z0-9_]{16,}/g, (run) => `<${run.length}>`)
+    .slice(-1500)
 }
 
 /** A code from the sign-in page: letters, digits and a few signs, with the "#" that ends it. */
@@ -287,6 +311,8 @@ export async function submitClaudeCode(
     }
   }
   const mine = attempt
+  // What came before is the sign-in screen; only what the CLI says after the code says how it went.
+  const printedBefore = mine.printed.length
   state = { status: 'checking' }
   const verify = deps.verify ?? realVerify
   const save = deps.save ?? ((token: string) => saveStoredToken(token))
@@ -300,12 +326,21 @@ export async function submitClaudeCode(
       if (found) resolve(found)
     })
     mine.terminal.onExit(() => resolve(seen()))
-    mine.terminal.write(`${trimmed}\r`)
+    // Enter goes on its own: the CLI takes a long code that arrives with it as a paste, the Enter included,
+    // and never sends it.
+    mine.terminal.write(trimmed)
+    mine.timers.push(setTimeout(() => mine.terminal.write('\r'), deps.enterMs ?? ENTER_MS))
   })
   if (attempt !== mine) return state
 
   if (!token || !TOKEN_PATTERN.test(token)) {
-    const said = lastWords(mine.printed)
+    console.error(
+      JSON.stringify({
+        event: 'claude_login_no_token',
+        printedAfterCode: shapeOf(mine.printed.slice(printedBefore)),
+      }),
+    )
+    const said = lastWords(mine.printed.slice(printedBefore))
     finish({
       status: 'error',
       message: said

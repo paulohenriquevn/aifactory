@@ -13,6 +13,7 @@ import {
   verdictOf,
   type LoginDeps,
   type Terminal,
+  shapeOf,
 } from './claude-login'
 
 afterEach(() => resetClaudeLogin())
@@ -186,13 +187,29 @@ describe('handing the code to the CLI', () => {
     const submitted = submitClaudeCode(`  ${CODE}\n`, {
       verify: async (token) => void checked.push(token),
       save: (token) => void saved.push(token),
+      enterMs: 5,
     })
-    expect(t.typed).toEqual([`${CODE}\r`])
+    await sleep(20)
     t.print(`\nLong-lived authentication token created:\n${TOKEN}\n`)
     expect(await submitted).toEqual({ status: 'done' })
     expect(checked).toEqual([TOKEN])
     expect(saved).toEqual([TOKEN])
     expect(t.killed()).toBe(1)
+  })
+
+  it('presses Enter apart from the code, because a long code typed with it is taken as a paste and never sent', async () => {
+    const t = await waitingLogin()
+    const long = `${'a'.repeat(48)}#${'b'.repeat(43)}`
+    const submitted = submitClaudeCode(long, {
+      verify: async () => undefined,
+      save: () => {},
+      enterMs: 5,
+    })
+    expect(t.typed).toEqual([long])
+    await sleep(20)
+    expect(t.typed).toEqual([long, '\r'])
+    t.print(TOKEN)
+    expect(await submitted).toEqual({ status: 'done' })
   })
 
   it('never returns the token in the state the panel reads', async () => {
@@ -235,5 +252,26 @@ describe('handing the code to the CLI', () => {
     await waitingLogin()
     const state = await submitClaudeCode(CODE, { codeMs: 5 })
     expect(state).toMatchObject({ status: 'error', message: expect.stringMatching(/não valeu/) })
+  })
+})
+
+describe('what the terminal printed around the code', () => {
+  it('drops the terminal queries the CLI sends, so none of them reaches the owner', () => {
+    expect(plain('\x1b[>0q\x1b]7501;?\x07\x1b]11;?\x1b\\ready')).toBe('ready')
+  })
+
+  it('never gives the masked echo of the pasted code as what the CLI said', () => {
+    const printed =
+      'Paste code here if prompted >\n\x1b[>0q****************************567890\n\x0f**********\n'
+    expect(lastWords(printed)).toBe('Paste code here if prompted >')
+  })
+
+  it('shows the shape of the output with every long secret-like run replaced by its length', () => {
+    const token = `sk-ant-oat01-${'a'.repeat(95)}`
+    const shape = shapeOf(
+      `\x1b[32mLong-lived token:\x1b[0m\n${token.slice(0, 50)}\n${token.slice(50)}\n`,
+    )
+    expect(shape).not.toContain('aaaaaaaaaaaaaaaa')
+    expect(shape).toBe('Long-lived token:\nsk-ant-oat01-<37>\n<58>\n')
   })
 })
