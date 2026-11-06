@@ -4,12 +4,14 @@
 //
 //   node scripts/backlog-feed.mjs --backlog ~/theokit/BACKLOG.md [--concurrency 1] [--limit 10]
 //        [--only B-1,B-2] [--dry-run] [--state .backlog-feed/state.json]
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 
 import {
   classify,
+  credentialFiles,
+  credentialStamp,
   isInfraFailure,
   throughOutage,
   issueFor,
@@ -97,8 +99,20 @@ function save() {
 const entries = () => state.items
 
 let pausedUntil = 0
+let stampAtPause = ''
+const credentials = credentialFiles(process.env, process.cwd(), homedir())
+const stampNow = () => credentialStamp(credentials, (path) => statSync(path).mtimeMs)
+
+/** Waits out a usage limit, unless the owner puts in another account first. */
 async function respectPause() {
-  while (Date.now() < pausedUntil) await sleep(15_000)
+  while (Date.now() < pausedUntil) {
+    if (stampNow() !== stampAtPause) {
+      pausedUntil = 0
+      log('a credential changed, the usage pause is over')
+      return
+    }
+    await sleep(15_000)
+  }
 }
 
 async function findTask(repo, number) {
@@ -163,6 +177,7 @@ async function work(item) {
       const at = resetAt(result.resetsAt)
       pausedUntil =
         (at && at.getTime() > Date.now() ? at.getTime() : Date.now() + 30 * 60_000) + 60_000
+      stampAtPause = stampNow()
       log(
         item.id,
         `usage limit, everything waits until ${new Date(pausedUntil).toISOString().slice(11, 19)}`,

@@ -243,3 +243,33 @@ export async function throughOutage(fn, { waits = OUTAGE_WAITS_MS, sleep, onWait
     }
   }
 }
+
+/**
+ * The files a new account lands in: the token the panel saves, the environment file the login script
+ * writes, and the factory's Codex login. Mirrors `tokenFile` in src/server/factory/claude-token.ts and
+ * `defaultCodexHome` in src/server/factory/harness-codex.ts.
+ */
+export function credentialFiles(env, cwd, home) {
+  return [
+    env.FACTORY_CLAUDE_TOKEN_FILE || `${cwd}/.secrets/claude-oauth-token`,
+    `${cwd}/.env.local`,
+    `${env.FACTORY_CODEX_HOME || `${home}/.codex-factory-1`}/auth.json`,
+  ]
+}
+
+/**
+ * When each credential file was last written, as one value: a pause for a usage limit ends early when it
+ * changes, because the owner has just put in another account. A missing file counts as a state of its own.
+ */
+export function credentialStamp(files, mtimeOf) {
+  return files
+    .map((path) => {
+      try {
+        return String(mtimeOf(path))
+      } catch (error) {
+        if (error?.code === 'ENOENT') return 'none'
+        throw error
+      }
+    })
+    .join('|')
+}

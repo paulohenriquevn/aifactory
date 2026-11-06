@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   classify,
+  credentialFiles,
+  credentialStamp,
   isInfraFailure,
   issueFor,
   needsAPerson,
@@ -400,5 +402,55 @@ describe('throughOutage', () => {
   it('has waits that add up to several minutes, longer than a restart of the panel', async () => {
     const { OUTAGE_WAITS_MS } = await import('./backlog.mjs')
     expect(OUTAGE_WAITS_MS.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(7 * 60_000)
+  })
+})
+
+describe('the credentials a usage pause watches', () => {
+  it('are the panel token, the environment file and the Codex login, in the default places', () => {
+    expect(credentialFiles({}, '/repo', '/home/p')).toEqual([
+      '/repo/.secrets/claude-oauth-token',
+      '/repo/.env.local',
+      '/home/p/.codex-factory-1/auth.json',
+    ])
+  })
+
+  it('follow the paths the factory is told to use', () => {
+    const env = { FACTORY_CLAUDE_TOKEN_FILE: '/s/claude', FACTORY_CODEX_HOME: '/s/codex' }
+    expect(credentialFiles(env, '/repo', '/home/p')).toEqual([
+      '/s/claude',
+      '/repo/.env.local',
+      '/s/codex/auth.json',
+    ])
+  })
+})
+
+describe('credentialStamp', () => {
+  const mtimes = { '/a': 100, '/b': 200 }
+  const stat = (path) => {
+    if (!(path in mtimes)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    return mtimes[path]
+  }
+
+  it('stays the same while no credential file changes', () => {
+    expect(credentialStamp(['/a', '/b'], stat)).toBe(credentialStamp(['/a', '/b'], stat))
+  })
+
+  it('changes when a credential file is rewritten', () => {
+    const before = credentialStamp(['/a', '/b'], stat)
+    const after = credentialStamp(['/a', '/b'], (path) => (path === '/b' ? 201 : stat(path)))
+    expect(after).not.toBe(before)
+  })
+
+  it('changes when a missing credential file appears', () => {
+    const before = credentialStamp(['/a', '/c'], stat)
+    const after = credentialStamp(['/a', '/c'], (path) => (path === '/c' ? 5 : stat(path)))
+    expect(after).not.toBe(before)
+  })
+
+  it('fails loudly on an error other than a missing file', () => {
+    const denied = () => {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    }
+    expect(() => credentialStamp(['/a'], denied)).toThrow(/EACCES/)
   })
 })
