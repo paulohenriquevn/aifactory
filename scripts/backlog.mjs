@@ -247,8 +247,14 @@ export const TERMINAL = ['done', 'failed', 'handoff', 'released']
 const INFRA =
   /Internal Server Error|remote rejected|GitHub answered 5\d\d|\b50[234]\b|\b429\b|ECONN|ETIMEDOUT|ENOTFOUND|socket|fetch failed|sandbox (could not|failed)|out of memory|OOM|heap|is not running|killed \(most likely out of memory|was restarted|usage limit exceeded|Status code 402|timed out after \d+ ms/i
 
+/** An agent that used all its time: a new run stops at the same place (see AGENT_OUT_OF_TIME in src/shared/panel.ts). */
+const AGENT_OUT_OF_TIME = /^the agent did not finish\b.*\btimed out\b/is
+
 /** Whether a failure came from the environment (GitHub, the network, the sandbox) and not from the work. */
-export const isInfraFailure = (reason) => INFRA.test(String(reason ?? ''))
+export const isInfraFailure = (reason) => {
+  const text = String(reason ?? '')
+  return !AGENT_OUT_OF_TIME.test(text) && INFRA.test(text)
+}
 
 /** How long to wait before each new try when the panel cannot be reached: a restart takes under a minute. */
 export const OUTAGE_WAITS_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 120_000, 120_000]

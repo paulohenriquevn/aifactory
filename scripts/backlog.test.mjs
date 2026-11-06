@@ -277,6 +277,15 @@ describe('classify', () => {
 })
 
 describe('isInfraFailure', () => {
+  it('does not count an agent that used all its time, which a new run would repeat', () => {
+    expect(
+      isInfraFailure(
+        'the agent did not finish the rework: codex failed: timed out after 1500000 ms (exit 124)',
+      ),
+    ).toBe(false)
+    expect(isInfraFailure('[work] clone failed: timed out after 30000 ms')).toBe(true)
+  })
+
   it('recognises what GitHub, the network and the sandbox do to a run', () => {
     for (const reason of [
       '`git push origin factory/1` exited 1: remote: Internal Server Error',

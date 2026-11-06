@@ -86,6 +86,10 @@ passada, a que espera há mais tempo primeiro:
   resolve.
 - Falha de ambiente (rede, GitHub, sandbox, reinício): espera 5, 10 e 20 minutos, e para depois da
   terceira vez. Aí vai para "Needs a person".
+- Agente que usou todo o tempo da execução (25 minutos) não volta sozinho, mesmo que o texto diga "timed
+  out": nada em volta falhou, e uma nova execução pararia no mesmo ponto gastando a mesma cota. Vai para
+  "Needs a person", que divide a issue ou dá mais tempo. O timeout de um comando do ambiente (clone,
+  instalação) continua sendo falha de ambiente.
 
 O reinício automático não grava uma decisão em nome de ninguém: o evento `intake` leva
 `automatic: true`, e um "Retry" de uma pessoa zera a contagem. O cartão diz quando a task roda de novo, e

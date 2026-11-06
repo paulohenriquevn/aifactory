@@ -71,4 +71,24 @@ describe('a failure that passes by itself', () => {
     expect(retryableFailure(null)).toBeNull()
     expect(retryableFailure(undefined)).toBeNull()
   })
+
+  it('leaves with a person an agent that used all its time, and still retries a command of the environment that timed out', () => {
+    expect(
+      retryableFailure({
+        error:
+          'the agent did not finish the rework: codex failed: timed out after 1500000 ms (exit 124)',
+      }),
+    ).toBeNull()
+    expect(
+      retryableFailure({
+        error: 'the agent did not finish: codex failed: request timed out after 1500000 ms',
+      }),
+    ).toBeNull()
+    expect(retryableFailure({ error: '[work] clone failed: timed out after 30000 ms' })).toBe(
+      'environment',
+    )
+    expect(retryableFailure({ error: 'the agent did not finish: GitHub answered 502' })).toBe(
+      'environment',
+    )
+  })
 })

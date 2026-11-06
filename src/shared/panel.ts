@@ -38,11 +38,20 @@ export type Retryable = 'quota' | 'environment' | null
 const ENVIRONMENT =
   /Internal Server Error|remote rejected|GitHub answered 5\d\d|\b50[234]\b|\b429\b|ECONN|ETIMEDOUT|ENOTFOUND|socket|fetch failed|out of memory|OOM|heap|is not running|killed \(most likely out of memory|was restarted|usage limit exceeded|Status code 402|timed out after \d+ ms|clone failed/i
 
+/**
+ * An agent that used all the time a run gives it. Nothing around it failed: a new run of the same issue on
+ * the same code stops at the same place and spends the same quota, so it goes to a person, who splits the
+ * issue or gives the agent more time. A command of the environment that timed out (a clone, an install) is
+ * not this one.
+ */
+const AGENT_OUT_OF_TIME = /^the agent did not finish\b.*\btimed out\b/is
+
 /** From the detail the factory recorded when a task failed. */
 export function retryableFailure(detail: Record<string, unknown> | null | undefined): Retryable {
   if (!detail) return null
   if (detail.quota === true) return 'quota'
-  return typeof detail.error === 'string' && ENVIRONMENT.test(detail.error) ? 'environment' : null
+  if (typeof detail.error !== 'string' || AGENT_OUT_OF_TIME.test(detail.error)) return null
+  return ENVIRONMENT.test(detail.error) ? 'environment' : null
 }
 
 export function columnOf(stage: Stage, retryable: Retryable = null): Column {
