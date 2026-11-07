@@ -148,7 +148,7 @@ Outras garantias:
 - Texto que veio da issue (título, corpo) chega ao git por arquivo, nunca por uma linha de shell.
 - O sandbox é criado com `persistent: false`. Sem isso o SDK tira um snapshot de cerca de 1 GB a
   cada parada, e 20 execuções esgotam o armazenamento do plano Hobby (erro 402).
-- Prazos: sandbox 30 minutos, agente 25 minutos, cada check 10 minutos. O job renova o lock a cada
+- Prazos: sandbox 50 minutos, agente 25 minutos, cada check 10 minutos. O job renova o lock a cada
   40 segundos (`extendLease`), então um worker que morre libera a task em minutos.
 - O sandbox sempre é parado, inclusive quando o run falha ou o lock expira.
 
@@ -970,7 +970,7 @@ responde `/api/health` mesmo sem as credenciais.
 3. Para publicar uma mudança, `scripts/deploy.sh`: compila e reinicia o servidor, os workers e o
    alimentador que estiverem rodando, sem tocar no túnel e sem ligar um alimentador parado.
    Reiniciar não interrompe as execuções em andamento: o systemd sinaliza só o processo do TheoKit
-   (`KillMode=mixed`), que para de pegar jobs, espera a execução em que está (até 32 minutos,
+   (`KillMode=mixed`), que para de pegar jobs, espera a execução em que está (até 52 minutos,
    `src/server/factory/drain.ts`, via `jobs.worker.shutdownTimeoutMs`) e sai. Os comandos do agente
    continuam rodando enquanto isso. Por isso um deploy com tarefas trabalhando demora o tempo da mais
    longa delas, e o painel segue respondendo nesse meio-tempo. Mudou uma unit em `ops/systemd/`? Rode

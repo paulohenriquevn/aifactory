@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   cacheVolume,
@@ -454,6 +454,69 @@ describe('reading a command while it runs', () => {
       '-c',
       'claude -p',
     ])
+    await sandbox.stop()
+  })
+})
+
+describe('a docker sandbox that reaches its time limit', () => {
+  it('says that it reached its limit when a command runs after it was stopped', async () => {
+    vi.useFakeTimers()
+    try {
+      const { docker } = fakeDocker((args) =>
+        args[0] === 'exec' && args.includes('timeout')
+          ? { stdout: '', stderr: 'Error response from daemon: No such container: x', code: 1 }
+          : undefined,
+      )
+      const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create({
+        ...spec,
+        timeoutMs: 1_800_000,
+      })
+      await vi.advanceTimersByTimeAsync(1_800_000)
+
+      const result = await sandbox.backend.execute('npm test')
+
+      expect(result).toEqual({
+        stdout: '',
+        stderr:
+          'the sandbox reached its 30-minute limit and was stopped; the run took longer than a run may last',
+        exitCode: 1,
+        timedOut: false,
+      })
+      await sandbox.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps what a command that still succeeds after the limit printed', async () => {
+    vi.useFakeTimers()
+    try {
+      const { docker } = fakeDocker((args) =>
+        args[0] === 'exec' && args.includes('timeout')
+          ? { stdout: 'ok\n', stderr: '', code: 0 }
+          : undefined,
+      )
+      const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
+      await vi.advanceTimersByTimeAsync(spec.timeoutMs)
+
+      expect(await sandbox.backend.execute('true')).toMatchObject({ stdout: 'ok\n', exitCode: 0 })
+      await sandbox.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the error of a command that fails before the limit', async () => {
+    const { docker } = fakeDocker((args) =>
+      args[0] === 'exec' && args.includes('timeout')
+        ? { stdout: '', stderr: 'npm ERR! missing script', code: 1 }
+        : undefined,
+    )
+    const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
+
+    const result = await sandbox.backend.execute('npm test')
+
+    expect(result.stderr).toBe('npm ERR! missing script')
     await sandbox.stop()
   })
 })

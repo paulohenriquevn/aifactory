@@ -109,6 +109,9 @@ async function must(docker: Docker, args: string[], opts: DockerOptions = {}) {
 const DEFAULT_COMMAND_MS = 10 * 60_000
 
 class DockerBackend extends SandboxBackend {
+  /** Set when the sandbox's time limit stopped it: every command after that fails for this reason. */
+  private stoppedAtLimitMs?: number
+
   constructor(
     private readonly docker: Docker,
     private readonly container: string,
@@ -117,6 +120,11 @@ class DockerBackend extends SandboxBackend {
     // default, which is what a microVM's own network needs. The base class fills in its own 30 seconds when
     // given nothing, so the default goes to it too, and `execute` reads the constant, not `this.config`.
     super({ timeoutMs: DEFAULT_COMMAND_MS })
+  }
+
+  /** Records that the sandbox was stopped because it reached its limit of `limitMs`. */
+  stoppedAtLimit(limitMs: number): void {
+    this.stoppedAtLimitMs = limitMs
   }
 
   async execute(command: string, opts: { timeoutMs?: number } = {}): Promise<ExecuteResult> {
@@ -157,6 +165,15 @@ class DockerBackend extends SandboxBackend {
       command,
     ]
     const result = await this.docker(args, onStdout ? { onStdout } : {})
+    // Docker's own words for a container that is gone ("No such container") do not say why it went.
+    if (this.stoppedAtLimitMs !== undefined && result.code !== 0) {
+      return {
+        stdout: '',
+        stderr: `the sandbox reached its ${Math.round(this.stoppedAtLimitMs / 60_000)}-minute limit and was stopped; the run took longer than a run may last`,
+        exitCode: result.code,
+        timedOut: false,
+      }
+    }
     // A command killed with SIGKILL (137) is either one that ignored the timeout or one the kernel killed
     // for the sandbox's memory limit. Docker remembers the second, and it is not a timeout: saying so
     // is the difference between "make it faster" and "give it more memory".
@@ -504,7 +521,10 @@ export function dockerSandboxProvider(deps: DockerProviderDeps = {}): IsolatedSa
         const backend = new DockerBackend(docker, name)
         await trustProxy(docker, backend, name, cert)
         await waitForProxy(docker, name, sleep)
-        const timer = setTimeout(() => void stop().catch(() => {}), spec.timeoutMs)
+        const timer = setTimeout(() => {
+          backend.stoppedAtLimit(spec.timeoutMs)
+          void stop().catch(() => {})
+        }, spec.timeoutMs)
         timer.unref()
         return {
           backend,

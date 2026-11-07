@@ -76,9 +76,9 @@ const LIST_TTL_MS = 15_000
 /**
  * A token with less than this left is replaced rather than handed out. A run takes one token at its start and
  * keeps it to the end (the firewall's git header is set once, when its sandbox is made), and a run lasts up to
- * 32 minutes (`JOB_SHUTDOWN_WAIT_MS`), so a token handed out has to outlive that. GitHub's last an hour.
+ * 52 minutes (`JOB_SHUTDOWN_WAIT_MS`), so a token handed out has to outlive that. GitHub's last an hour.
  */
-export const TOKEN_LIFE_LEFT_MS = 35 * 60_000
+export const TOKEN_LIFE_LEFT_MS = 55 * 60_000
 
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 

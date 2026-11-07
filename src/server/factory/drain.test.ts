@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { TOKEN_LIFE_LEFT_MS } from '../github/app'
 import { JOB_SHUTDOWN_WAIT_MS } from './drain'
 import { DEFAULT_TIMEOUTS } from './run'
 
@@ -26,6 +27,15 @@ describe('a restart of a process that runs tasks', () => {
     vi.unstubAllEnvs()
 
     expect(loaded.jobs?.worker.shutdownTimeoutMs).toBe(JOB_SHUTDOWN_WAIT_MS)
+  })
+
+  it('lets a run last long enough for a builder, the checks, a review and a rework', () => {
+    expect(DEFAULT_TIMEOUTS.sandboxMs).toBe(50 * 60_000)
+  })
+
+  it('ends every run before the GitHub token it took at the start expires, an hour after it was made', () => {
+    expect(TOKEN_LIFE_LEFT_MS).toBeGreaterThan(JOB_SHUTDOWN_WAIT_MS)
+    expect(TOKEN_LIFE_LEFT_MS).toBeLessThan(60 * 60_000)
   })
 
   it('waits for a run longer than a run can last, since its sandbox stops it at the latest', () => {

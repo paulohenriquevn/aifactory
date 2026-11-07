@@ -62,7 +62,7 @@ if [[ "${NO_RESTART:-}" == "1" ]]; then exit 0; fi
 working="select count(*) from task where stage in ('sandbox','build','push','verify','review','pr')"
 if busy=$(docker compose exec -T postgres psql -U factory -d factory -At -c "$working" 2>/dev/null) \
   && [[ "$busy" != "0" ]]; then
-  echo "$busy tarefa(s) estão trabalhando; o reinício espera elas terminarem (até 32 minutos)." >&2
+  echo "$busy tarefa(s) estão trabalhando; o reinício espera elas terminarem (até 52 minutos)." >&2
 fi
 
 systemctl --user stop aifactory-feeder
