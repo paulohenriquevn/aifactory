@@ -48,6 +48,51 @@ Use "changes" when there is any blocker or major finding. Use "approve" only whe
 `
 }
 
+/**
+ * What the reviewer reads when the builder changed nothing and said the issue is already resolved. An
+ * approval closes the issue on GitHub, so the reviewer checks the claim in the code and the tests instead
+ * of trusting it.
+ */
+export function resolvedPrompt(input: {
+  repo: string
+  issueNumber: number
+  title: string
+  body: string
+  baseSha: string
+  /** What the builder said when it changed nothing. */
+  claim: string
+  knowledgeDir?: string
+}): string {
+  return `You are an independent code reviewer for the repository ${input.repo}. Another agent was given the issue below, changed nothing, and said the code at ${input.baseSha} already does what the issue asks. You did not write that answer and you must not change the code.
+
+# ${input.title} (#${input.issueNumber})
+
+${input.body || '(the issue has no description)'}
+
+What the other agent said:
+
+${input.claim}
+
+That is a claim, not evidence. Check it at ${input.baseSha}, the commit checked out here:
+- Find the code that does each thing the issue asks for, and the tests that cover it. Read them.
+- Run the tests that cover it when you can.
+- Decide whether anything the issue asks for is still missing or wrong.
+- Do not edit, create or delete files, and do not run any git command that writes.
+${
+  input.knowledgeDir
+    ? `
+${knowledgeRules(input.knowledgeDir)}
+`
+    : ''
+}
+Finish with one JSON object on its own, and nothing after it:
+
+{"verdict":"approve"|"changes","summary":"one or two sentences: where the code and the tests are, or what is missing","findings":[{"severity":"blocker"|"major"|"minor","file":"path or omit","issue":"what is still missing or wrong"}]}
+
+Use "approve" only when everything the issue asks for is already in the code and tested: the issue is closed with your summary as the reason. Use "changes" when anything is missing, wrong or untested, and say what in the findings.
+`
+}
+
 const SEVERITIES: Severity[] = ['blocker', 'major', 'minor']
 
 /** Every top-level `{...}` in the text, balanced and string-aware, in order. */

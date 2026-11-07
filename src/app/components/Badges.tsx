@@ -23,11 +23,14 @@ const TONE: Record<Stage, Variant> = {
 export function StageBadge({
   stage,
   integrated,
+  resolved,
   retryable,
   wrap = false,
 }: {
   stage: Stage
   integrated?: boolean
+  /** Delivered without a pull request: the code already did what the issue asks. */
+  resolved?: boolean
   retryable?: Retryable
   /** Let the label go to a second line, for a card too narrow to hold it. */
   wrap?: boolean
@@ -39,7 +42,7 @@ export function StageBadge({
       variant={variant}
       className={wrap ? 'max-w-full whitespace-normal leading-tight' : 'whitespace-nowrap'}
     >
-      {stageLabel(stage, { integrated, retryable })}
+      {stageLabel(stage, { integrated, resolved, retryable })}
     </Badge>
   )
 }

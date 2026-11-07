@@ -22,6 +22,7 @@ const card = (over: Partial<TaskCard>): TaskCard => ({
   updatedAt: '2026-11-04T10:05:00Z',
   approved: false,
   integrated: false,
+  resolved: false,
   retryable: null,
   retryAt: null,
   preRelease: null,

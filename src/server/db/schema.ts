@@ -62,6 +62,11 @@ export const task = pgTable(
     pullRequestUrl: text('pull_request_url'),
     /** The commit on the integration branch once the factory merged the pull request. */
     mergedSha: text('merged_sha'),
+    /**
+     * The commit of the integration branch where the issue was found already resolved: the agent changed
+     * nothing, the checks passed there and the reviewer confirmed it. Such a task has no pull request.
+     */
+    resolvedSha: text('resolved_sha'),
     /** What the run has spent so far, agents included. It grows while the run is going. */
     costUsd: real('cost_usd').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

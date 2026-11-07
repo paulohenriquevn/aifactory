@@ -39,7 +39,7 @@ const PAGES: Record<GuideId, string> = {
   board: `Your page is "Board" (menu item "Quadro"). It shows every task of the factory. A task is one issue the factory is building.
 
 What the owner sees:
-- Seven columns: "Queued" (waiting its turn), "Working" (an agent is building or the checks are running), "Waiting for you" (the agent asked a question on the issue), "Will retry itself" (it failed for a reason that passes: a usage limit of the agent, or the network or GitHub or the machine; the factory runs it again alone), "Delivered" (a pull request is open and has passed the checks), "Released" (published), "Needs a person" (the work itself failed, or it was handed over after three tries).
+- Seven columns: "Queued" (waiting its turn), "Working" (an agent is building or the checks are running), "Waiting for you" (the agent asked a question on the issue), "Will retry itself" (it failed for a reason that passes: a usage limit of the agent, or the network or GitHub or the machine; the factory runs it again alone), "Delivered" (a pull request is open and has passed the checks, or the issue was already resolved: the agent changed nothing, the checks passed, the reviewer confirmed it and the factory closed the issue with that evidence), "Released" (published), "Needs a person" (the work itself failed, or it was handed over after three tries).
 - Badges: "integrated" means the pull request was already merged into the integration branch; "waiting for the limit" and "will retry" are the two kinds of self-retrying failure; "attempt 2 of 3" is how many times the checks ran.
 - A view switch "Board" and "List"; clicking a card opens the task beside the board, with its timeline, checks, reviews and cost.
 - The button "New job" opens an issue and starts the work.

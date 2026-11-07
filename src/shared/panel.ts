@@ -165,6 +165,11 @@ export type TaskCard = {
   approved: boolean
   /** The pull request was merged into the integration branch, so it is on the pre-release branch too. */
   integrated: boolean
+  /**
+   * Delivered without a pull request: the agent changed nothing, the checks passed at the commit and the
+   * reviewer confirmed the code already does what the issue asks. The factory closed the issue.
+   */
+  resolved: boolean
   /** A failed task the factory will run again by itself once a limit or an outage has passed. */
   retryable: Retryable
   /** When the factory runs it again on its own, set exactly when `retryable` is. */

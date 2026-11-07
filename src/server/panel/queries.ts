@@ -119,6 +119,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       updatedAt: iso(new Date(seen?.last ?? r.createdAt)),
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
       integrated: r.mergedSha !== null,
+      resolved: r.resolvedSha !== null,
       retryable: again?.retryable ?? null,
       retryAt: again?.at.toISOString() ?? null,
       preRelease: lastDelivery(delivered, r, 'prerelease'),
@@ -291,7 +292,7 @@ export async function inbox(db: Database): Promise<InboxItem[]> {
         summary: quota ? `Out of quota. ${error}` : error,
         at,
       })
-    } else if (card.stage === 'done' && !card.approved) {
+    } else if (card.stage === 'done' && !card.approved && !card.resolved) {
       items.push({ task: card, kind: 'review', summary: 'Pull request ready to review', at })
     }
   }

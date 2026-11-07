@@ -104,6 +104,7 @@ describe('listTasks', () => {
       pullRequestUrl: 'https://github.com/paulo/app/pull/1',
       approved: false,
       integrated: false,
+      resolved: false,
       retryable: null,
     })
     expect(cards.find((c) => c.id !== id)?.column).toBe('attention')
@@ -324,6 +325,16 @@ describe('inbox', () => {
     ])
     expect(items[0].summary).toBe('Out of quota. the codex quota ran out')
     expect(items[1].summary).toBe('A or B?')
+  })
+
+  it('leaves out an issue delivered as already resolved, which has no pull request to review', async () => {
+    const resolved = await seed('done', { headSha: 'abc', resolvedSha: 'abc' }, [
+      { stage: 'done', detail: { resolved: true, sha: 'abc' } },
+    ])
+
+    expect(await inbox(getDb())).toEqual([])
+    const [card] = await listTasks(getDb())
+    expect(card).toMatchObject({ id: resolved, column: 'review', resolved: true })
   })
 })
 

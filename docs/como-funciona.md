@@ -207,7 +207,19 @@ checadas sem modelo e valem como achados que impedem a aprovação:
 | Revisor pede mudanças na 3ª tentativa               | `handoff`: PR em rascunho (título `[needs a person]`) e comentário na issue com o que sobrou |
 | Veredito inválido, ou revisor que falha             | `handoff` na hora: não há o que devolver ao construtor                                       |
 | Retrabalho que não muda nada                        | `failed` em `push`: revisar o mesmo commit de novo não adiantaria                            |
+| Primeira passada sem mudança, checks e revisor ok   | `done` sem PR: a issue é fechada com a evidência                                             |
+| Primeira passada sem mudança, algo não confirma     | `failed` em `verify` ou `review`, com o motivo e o que o construtor disse                    |
 | Cota do revisor esgotada                            | `failed` em `review` com `quota: true`                                                       |
+
+**Issue que o código já resolve.** Quando o construtor não muda nada numa issue nova e diz que o código já
+faz o que ela pede, a fábrica trata isso como uma alegação. Os checks rodam no commit de onde o run partiu
+(sem check run no GitHub, porque o commit não é da fábrica), e o revisor recebe a issue e o que o
+construtor disse, com a instrução de conferir no código e nos testes, sem confiar no texto. Se os dois
+confirmam, a fábrica comenta na issue o commit, os checks que passaram, a conclusão do revisor e o que o
+construtor encontrou, fecha a issue como concluída e marca a task `done`, sem PR (`resolved_sha` na
+task). No painel ela aparece em Delivered como "already resolved" e não entra na caixa de entrada. Se os
+checks falham ou o revisor aponta algo faltando, a issue fica aberta e a task vai para uma pessoa, com o
+motivo.
 
 O retomar usa `claude -p --resume <id>` ou `codex exec resume <id>`, na mesma sessão e no mesmo
 sandbox. O retrabalho gera um novo commit (`<título>: address feedback (attempt n)`), e os checks

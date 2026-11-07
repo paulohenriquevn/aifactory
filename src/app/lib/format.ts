@@ -43,8 +43,13 @@ const LABELS: Record<Stage, string> = {
  */
 export function stageLabel(
   stage: Stage,
-  extra: { integrated?: boolean; retryable?: 'quota' | 'environment' | null } = {},
+  extra: {
+    integrated?: boolean
+    resolved?: boolean
+    retryable?: 'quota' | 'environment' | null
+  } = {},
 ): string {
+  if (stage === 'done' && extra.resolved) return 'already resolved'
   if (stage === 'done' && extra.integrated) return 'integrated'
   if (stage === 'failed' && extra.retryable === 'quota') return 'waiting for the limit'
   if (stage === 'failed' && extra.retryable === 'environment') return 'will retry'
@@ -82,6 +87,7 @@ export function describeEvent(event: TimelineEvent): string {
     case 'waiting':
       return text(d.question)
     case 'done':
+      if (d.resolved) return `already resolved at ${text(d.sha).slice(0, 7)}, issue closed`
       return [
         text(d.pullRequestUrl),
         d.preRelease ? `pre-release ${text(d.preRelease)}` : '',

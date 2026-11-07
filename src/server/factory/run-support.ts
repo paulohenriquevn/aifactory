@@ -129,6 +129,37 @@ export function pullRequestBody(input: {
   ].join('\n')
 }
 
+/**
+ * The comment that closes an issue the code already resolved: the commit, the checks that passed there, the
+ * reviewer's confirmation and what the agent found, so whoever opened it can check it and reopen it.
+ */
+export function resolvedComment(input: {
+  sha: string
+  claim: string
+  reviewer: string
+  review: string
+  rows: StoredCheck[]
+}): string {
+  return [
+    `The factory found this already resolved at ${input.sha}, so it changed nothing and is closing the issue.`,
+    '',
+    `Checks the factory ran on \`${input.sha.slice(0, 7)}\`:`,
+    '',
+    checkSummary(input.rows),
+    '',
+    `Independent review by ${input.reviewer}: ${input.review}`,
+    '',
+    '<details><summary>What the agent found</summary>',
+    '',
+    input.claim.slice(0, 3_000),
+    '',
+    '</details>',
+    '',
+    'If something the issue asks for is still missing, reopen it and say what.',
+    '',
+  ].join('\n')
+}
+
 export const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 /** The commit identity as a git config file. Newlines would start a new setting, so refuse them. */

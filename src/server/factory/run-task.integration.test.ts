@@ -95,6 +95,8 @@ const githubApi: GithubApi & {
   bases: (string | undefined)[]
   drafts: boolean[]
   comments: string[]
+  /** The issues the factory closed. */
+  closed: number[]
   replies: IssueComment[]
   releases: ReleaseInput[]
   releaseFails: boolean
@@ -121,6 +123,7 @@ const githubApi: GithubApi & {
   bases: [],
   drafts: [],
   comments: [],
+  closed: [],
   replies: [],
   releases: [],
   releaseFails: false,
@@ -179,6 +182,9 @@ const githubApi: GithubApi & {
     this.comments.push(body)
     return `comment-${this.comments.length}`
   },
+  async closeIssue(_repo, _token, issue) {
+    this.closed.push(issue)
+  },
   async listIssueComments() {
     return githubApi.replies
   },
@@ -191,6 +197,7 @@ beforeEach(() => {
   githubApi.bases = []
   githubApi.drafts = []
   githubApi.comments = []
+  githubApi.closed = []
   githubApi.replies = []
   githubApi.releases = []
   githubApi.releaseFails = false
@@ -472,16 +479,17 @@ describe('runTask', () => {
     expect(sandbox.backend.files.get('/tmp/factory-commit-message.txt')).toContain('evil.example')
   })
 
-  it('fails, and says why, when the agent changes nothing', async () => {
+  it('never pushes when the agent changes nothing, and fails when the reviewer does not confirm it', async () => {
     const id = await seedTask()
     const sandbox = new FakeSandbox(
       changed((c) => (c.includes('status --porcelain') ? { stdout: '' } : undefined)),
     )
+    const reviewer = reviewerSaying(verdictJson('changes', [finding], 'truncate is missing'))
 
-    const result = await runTask(deps(sandbox), id)
+    const result = await runTask(deps(sandbox, { reviewer }), id)
 
-    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
-    expect(await stagesOf(id)).toEqual(['sandbox', 'build', 'push', 'failed'])
+    expect(result).toMatchObject({ status: 'failed', stage: 'review' })
+    expect(await stagesOf(id)).toEqual(['sandbox', 'build', 'verify', 'review', 'failed'])
     expect(sandbox.backend.commands.some((c) => c.includes('push origin'))).toBe(false)
     expect(sandbox.stopped).toBe(1)
   })
@@ -1071,9 +1079,11 @@ describe('runTask review loop', () => {
       }),
     }
 
-    const result = await runTask(deps(sandbox, { harness: already }), id)
+    const reviewer = reviewerSaying(verdictJson('changes', [finding], 'it does not'))
 
-    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
+    const result = await runTask(deps(sandbox, { harness: already, reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'review' })
     expect(result.status === 'failed' && result.error).toContain(
       'The agent said: The behaviour already exists in src/truncate.js, so there is nothing to add.',
     )
@@ -2182,6 +2192,94 @@ describe('runTask with a knowledge base', () => {
         baseSha: 'abc123def',
       },
     ])
+  })
+
+  describe('an issue the code already resolves', () => {
+    const untouched = (extra?: (command: string) => Reply | undefined) =>
+      new FakeSandbox(
+        changed(
+          (c) => extra?.(c) ?? (c.includes('status --porcelain') ? { stdout: '' } : undefined),
+        ),
+      )
+    const already: CodingHarness = {
+      name: 'already',
+      egress: agentEgress,
+      run: async () => ({
+        ok: true,
+        summary: 'truncate already exists in src/truncate.js, tested in test/truncate.test.js',
+        costUsd: 0.07,
+      }),
+    }
+
+    it('closes the issue with the evidence once the checks pass and the reviewer confirms it', async () => {
+      const id = await seedTask()
+      const reviewer = reviewerSaying(
+        verdictJson('approve', [], 'src/truncate.js does it and test/truncate.test.js covers it'),
+      )
+
+      const result = await runTask(deps(untouched(), { harness: already, reviewer }), id)
+
+      expect(result).toMatchObject({ status: 'resolved', sha: 'abc123def' })
+      expect(githubApi.closed).toEqual([7])
+      expect(githubApi.comments).toHaveLength(1)
+      expect(githubApi.comments[0]).toContain('already resolved at abc123def')
+      expect(githubApi.comments[0]).toContain('truncate already exists in src/truncate.js')
+      expect(githubApi.comments[0]).toContain(
+        'src/truncate.js does it and test/truncate.test.js covers it',
+      )
+      expect(githubApi.pulls).toEqual([])
+      expect(githubApi.checkRuns).toEqual([])
+      expect(reviewer.prompts[0]).toMatch(/claim, not evidence/)
+      const [row] = await getDb().select().from(task).where(eq(task.id, id))
+      expect(row).toMatchObject({ stage: 'done', resolvedSha: 'abc123def', pullRequestUrl: null })
+      expect(await stagesOf(id)).toEqual(['sandbox', 'build', 'verify', 'review', 'done'])
+    })
+
+    it('leaves the issue open for a person when the checks fail at the commit', async () => {
+      const id = await seedTask()
+      const sandbox = untouched((c) =>
+        c.endsWith('npm test') ? { exitCode: 1, stdout: 'not ok 1 - truncate' } : undefined,
+      )
+
+      const result = await runTask(deps(sandbox, { harness: already }), id)
+
+      expect(result).toMatchObject({ status: 'failed', stage: 'verify' })
+      expect(result.status === 'failed' && result.error).toMatch(
+        /^the agent made no change to the repository, and the checks did not pass at abc123d/,
+      )
+      expect(githubApi.closed).toEqual([])
+      expect(githubApi.comments).toEqual([])
+    })
+
+    it('leaves the issue open for a person when the reviewer finds something missing', async () => {
+      const id = await seedTask()
+      const reviewer = reviewerSaying(
+        verdictJson('changes', [finding], 'no test for an empty string'),
+      )
+
+      const result = await runTask(deps(untouched(), { harness: already, reviewer }), id)
+
+      expect(result).toMatchObject({ status: 'failed', stage: 'review' })
+      expect(result.status === 'failed' && result.error).toContain(
+        'the reviewer did not confirm the issue is resolved: no test for an empty string',
+      )
+      expect(githubApi.closed).toEqual([])
+    })
+
+    it('does not close the issue when the comment with the evidence cannot be posted', async () => {
+      const id = await seedTask()
+      const broken = {
+        ...githubApi,
+        commentOnIssue: async () => {
+          throw new Error('GitHub answered 403 commenting')
+        },
+      }
+
+      const result = await runTask(deps(untouched(), { harness: already, githubApi: broken }), id)
+
+      expect(result).toMatchObject({ status: 'failed' })
+      expect(githubApi.closed).toEqual([])
+    })
   })
 
   it('remembers an issue a run found nothing to change in, with what the agent said', async () => {

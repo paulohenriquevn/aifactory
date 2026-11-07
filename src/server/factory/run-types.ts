@@ -63,6 +63,8 @@ export type RunResult =
       reason: string
       preRelease?: string
     }
+  /** The code already did what the issue asks: the checks passed there, the reviewer agreed, the issue is closed. */
+  | { status: 'resolved'; sha: string; summary: string }
   | { status: 'waiting'; question: string }
   | { status: 'failed'; stage: string; error: string }
 

@@ -4,7 +4,7 @@ import type { Database } from '../db'
 import { stageEvent, task, type TaskStage } from '../db/schema'
 
 /** Columns of `task` that change together with the stage. */
-export type TaskPatch = Partial<{ headSha: string; pullRequestUrl: string }>
+export type TaskPatch = Partial<{ headSha: string; pullRequestUrl: string; resolvedSha: string }>
 
 /**
  * Moves a task to a stage and records that it did, in one transaction, so `task.stage` and the

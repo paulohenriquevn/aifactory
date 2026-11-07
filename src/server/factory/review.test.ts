@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
-import { parseVerdict, renderFindings, reviewPrompt, reworkPrompt } from './review'
+import { parseVerdict, renderFindings, resolvedPrompt, reviewPrompt, reworkPrompt } from './review'
 
 const answer = (verdict: unknown) => `I read the diff.\n\n${JSON.stringify(verdict)}`
 
@@ -276,5 +276,39 @@ describe('guards, at their edges', () => {
       headTestScript: undefined,
     })
     expect(other.issue).toContain('from "node --test" to null')
+  })
+})
+
+describe('resolvedPrompt', () => {
+  const input = {
+    repo: 'o/r',
+    issueNumber: 3,
+    title: 'Crash on empty input',
+    body: 'It throws on an empty string.',
+    baseSha: 'abc1234',
+    claim: 'Fixed by commit 9f00 in src/parse.ts, tested in tests/parse.test.ts.',
+  }
+
+  it("asks the reviewer to check the builder's claim against the code at the commit, not to trust it", () => {
+    const prompt = resolvedPrompt(input)
+    expect(prompt).toContain('# Crash on empty input (#3)')
+    expect(prompt).toContain('It throws on an empty string.')
+    expect(prompt).toContain('at abc1234')
+    expect(prompt).toContain('Fixed by commit 9f00 in src/parse.ts')
+    expect(prompt).toMatch(/claim, not evidence/)
+    expect(prompt).toContain('Do not edit, create or delete files')
+  })
+
+  it('says what each verdict means, so an approval closes the issue', () => {
+    const prompt = resolvedPrompt(input)
+    expect(prompt).toMatch(
+      /"approve" only when everything the issue asks for is already in the code/,
+    )
+    expect(prompt).toMatch(/the issue is closed/)
+    expect(prompt).toContain('"verdict"')
+  })
+
+  it('says when the issue has no description', () => {
+    expect(resolvedPrompt({ ...input, body: '' })).toContain('(the issue has no description)')
   })
 })

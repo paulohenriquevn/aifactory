@@ -29,7 +29,12 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
           <span>
             {task.repository} #{task.issueNumber}
           </span>
-          <StageBadge stage={task.stage} integrated={task.integrated} retryable={task.retryable} />
+          <StageBadge
+            stage={task.stage}
+            integrated={task.integrated}
+            resolved={task.resolved}
+            retryable={task.retryable}
+          />
           <span>{money(task.costUsd)}</span>
           {task.attempts > 0 ? <span>{task.attempts} of 3 attempts</span> : null}
           {task.headSha ? <code>{shortSha(task.headSha)}</code> : null}

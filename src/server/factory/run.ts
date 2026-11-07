@@ -23,6 +23,7 @@ import {
   MAX_ATTEMPTS,
   parseVerdict,
   renderFindings,
+  resolvedPrompt,
   reviewPrompt,
   reworkPrompt,
   type Finding,
@@ -39,6 +40,7 @@ import {
   oneLine,
   pullRequestBody,
   pushWithRetry,
+  resolvedComment,
   Asked,
   QuotaStop,
   StageFailure,
@@ -513,6 +515,105 @@ export class Run {
   }
 
   /**
+   * The builder changed nothing on a new issue and says the code already does what it asks. That is a claim:
+   * the checks run at the commit the run started from and the reviewer checks it against the code. When
+   * both agree, the issue is closed with that evidence and the task is delivered without a pull request;
+   * otherwise it goes to a person with what did not hold.
+   */
+  private async resolvedAlready(first: HarnessResult): Promise<RunResult | undefined> {
+    const { deps, taskId, row, token, api, continuation, state } = this.c
+    if (continuation) return undefined
+    const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
+    if (pending.stdout.trim() !== '') return undefined
+    await this.keepNoChange()
+    const said = `The agent said: ${oneLine(first.summary).slice(0, 700)}`
+    const at = this.baseSha.slice(0, 7)
+    const checked = await this.verify(this.baseSha, 1, { publish: false })
+    if (!checked.verdict.open) {
+      throw new StageFailure(
+        `the agent made no change to the repository, and the checks did not pass at ${at}: ${checked.verdict.reasons.join('; ')}. ${said}`,
+      )
+    }
+    const outcome = await this.reviewClaim(first.summary)
+    if (outcome.verdict !== 'approve') {
+      throw new StageFailure(
+        `the agent made no change to the repository, and the reviewer did not confirm the issue is resolved: ${outcome.summary}. ${said}`,
+      )
+    }
+    state.current = 'done'
+    await api.commentOnIssue(
+      row.repository,
+      token,
+      row.issueNumber,
+      resolvedComment({
+        sha: this.baseSha,
+        claim: first.summary,
+        reviewer: this.reviewer.name,
+        review: outcome.summary,
+        rows: checked.here,
+      }),
+    )
+    await api.closeIssue(row.repository, token, row.issueNumber)
+    await enterStage(
+      deps.db,
+      taskId,
+      'done',
+      {
+        sha: this.baseSha,
+        resolved: true,
+        agentSummary: first.summary.slice(0, 4_000),
+        review: outcome.summary,
+        costUsd: this.cost,
+      },
+      { headSha: this.baseSha, resolvedSha: this.baseSha },
+    )
+    return { status: 'resolved', sha: this.baseSha, summary: first.summary }
+  }
+
+  /** Has the reviewer check, without changing anything, that the code already resolves the issue. */
+  private async reviewClaim(claim: string): Promise<ReviewVerdict> {
+    const { deps, taskId, row, issue, state } = this.c
+    state.current = 'review'
+    await enterStage(deps.db, taskId, 'review', {
+      sha: this.baseSha,
+      attempt: 1,
+      reviewer: this.reviewer.name,
+      resolved: true,
+    })
+    const result = await this.settle(this.reviewer, 'reviewer', 1, () =>
+      this.reviewer.run(this.backend, {
+        cwd: this.repoDir,
+        timeoutMs: this.timeouts.reviewMs ?? 10 * 60_000,
+        prompt: resolvedPrompt({
+          repo: row.repository,
+          issueNumber: row.issueNumber,
+          title: issue.title,
+          body: issue.body,
+          baseSha: this.baseSha,
+          claim: claim.slice(0, 6_000),
+          knowledgeDir: this.feed?.dir,
+        }),
+      }),
+    )
+    // The reviewer reads and does not write. If it wrote anyway, none of it counts.
+    await must(this.backend, `git -C ${this.repoDir} reset --hard ${this.baseSha}`)
+    await must(this.backend, `git -C ${this.repoDir} clean -fd`)
+    const read: ReviewVerdict = result.ok
+      ? parseVerdict(result.summary)
+      : { verdict: 'invalid', summary: `the reviewer failed: ${result.summary}`, findings: [] }
+    await deps.db.insert(reviewTable).values({
+      taskId,
+      round: 1,
+      sha: this.baseSha,
+      reviewer: this.reviewer.name,
+      verdict: read.verdict,
+      summary: read.summary,
+      findings: read.findings,
+    })
+    return read
+  }
+
+  /**
    * The builder's first pass, up to the first push. It ends the run early when the agent asked
    * something (the run parks) or when a person's requested change needed no change.
    */
@@ -529,6 +630,8 @@ export class Run {
 
     const unchanged = await this.answeredWithNoChange(first)
     if (unchanged) return { result: unchanged }
+    const resolved = await this.resolvedAlready(first)
+    if (resolved) return { result: resolved }
     const sha = await this.commitAndPush(this.firstMessage(), {
       costUsd: first.costUsd,
       agentSummary: first.summary.slice(0, 4_000),
@@ -573,7 +676,11 @@ export class Run {
    * Runs the checks on the pushed commit and nothing else, stores each result, and publishes what they
    * add up to as a check run on the commit.
    */
-  private async verify(sha: string, attempt: number): Promise<Checked> {
+  private async verify(
+    sha: string,
+    attempt: number,
+    options: { publish: boolean } = { publish: true },
+  ): Promise<Checked> {
     const { deps, taskId, row, token, api, state } = this.c
     const { db } = deps
     state.current = 'verify'
@@ -605,6 +712,8 @@ export class Run {
       .orderBy(asc(evidence.id))
     const verdict = gate({ headSha: sha, required: this.checks.map((c) => c.name), evidence: rows })
     const here = rows.filter((r) => r.sha === sha)
+    // A commit of the integration branch that the run did not make gets no check run of the factory.
+    if (!options.publish) return { results, here, verdict }
     await api.createCheckRun(row.repository, token, {
       name: 'aifactory/verify',
       headSha: sha,

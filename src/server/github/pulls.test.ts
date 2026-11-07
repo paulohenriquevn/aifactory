@@ -153,6 +153,21 @@ describe('commentOnIssue', () => {
   })
 })
 
+describe('closeIssue', () => {
+  it('closes the issue as completed and throws when GitHub refuses', async () => {
+    const ok = fakeFetch({ 'PATCH /issues/7': { status: 200 } })
+    await createGithubApi(ok.fetch).closeIssue('o/r', 'tok', 7)
+    expect(ok.calls[0]).toMatchObject({
+      method: 'PATCH',
+      url: '/issues/7',
+      body: { state: 'closed', state_reason: 'completed' },
+    })
+
+    const refused = fakeFetch({ 'PATCH /issues/7': { status: 410 } })
+    await expect(createGithubApi(refused.fetch).closeIssue('o/r', 'tok', 7)).rejects.toThrow(/410/)
+  })
+})
+
 describe('releases', () => {
   const release = {
     tag: 'pre/7-abcdef1',

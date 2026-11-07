@@ -90,9 +90,22 @@ describe('stageLabel', () => {
       'failed',
     ])
   })
+
+  it('calls a task delivered without a pull request already resolved, before anything else', () => {
+    expect(stageLabel('done', { resolved: true })).toBe('already resolved')
+    expect(stageLabel('done', { resolved: true, integrated: true })).toBe('already resolved')
+    expect(stageLabel('done', { resolved: false })).toBe('pull request open')
+  })
 })
 
 describe('describeEvent', () => {
+  it('says at which commit an issue was already resolved, and that it was closed', () => {
+    const event = { id: 1, stage: 'done', at: '2026-11-04T10:00:00Z' } as TimelineEvent
+    expect(describeEvent({ ...event, detail: { resolved: true, sha: 'abc1234def' } })).toBe(
+      'already resolved at abc1234, issue closed',
+    )
+  })
+
   const line = (stage: Stage, detail: Record<string, unknown> | null) =>
     describeEvent({ id: 1, stage, at: '2026-11-04T10:00:00Z', detail } as TimelineEvent)
 

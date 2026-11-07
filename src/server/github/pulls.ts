@@ -107,6 +107,8 @@ export type GithubApi = {
   deleteBranch(repo: string, token: string, branch: string): Promise<void>
   /** Posts a comment and returns its id. */
   commentOnIssue(repo: string, token: string, issueNumber: number, body: string): Promise<string>
+  /** Closes an issue as completed: what it asked for is in the code. */
+  closeIssue(repo: string, token: string, issueNumber: number): Promise<void>
   /** The comments on an issue made since a time, oldest first. */
   listIssueComments(
     repo: string,
@@ -412,6 +414,17 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
         [201],
       )
       return String(((await response.json()) as { id: number }).id)
+    },
+
+    async closeIssue(repo, token, issueNumber) {
+      await ensure(
+        await call(repo, token, `/issues/${issueNumber}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ state: 'closed', state_reason: 'completed' }),
+        }),
+        `closing ${repo}#${issueNumber}`,
+        [200],
+      )
     },
 
     async listIssueComments(repo, token, issueNumber, since) {

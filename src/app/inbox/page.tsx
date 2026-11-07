@@ -42,6 +42,7 @@ export default function InboxPage() {
                     <StageBadge
                       stage={task.stage}
                       integrated={task.integrated}
+                      resolved={task.resolved}
                       retryable={task.retryable}
                     />
                     <span className="text-xs text-muted-foreground">{money(task.costUsd)}</span>
