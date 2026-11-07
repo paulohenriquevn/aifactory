@@ -1,8 +1,10 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { and, eq, sql } from 'drizzle-orm'
 import { join, relative, resolve } from 'node:path'
 
 import type { KnowledgeStatus } from '../../shared/knowledge'
 import type { Database } from '../db'
+import { repository as repositoryTable } from '../db/schema'
 import { validBranch } from '../factory/repo-config'
 import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
@@ -230,6 +232,21 @@ export async function saveKnowledge(
   if (branch === MEMORY_BRANCH) {
     throw new KnowledgeRefused(
       `${MEMORY_BRANCH} is the branch the factory writes its notes to; choose the branch of the rules`,
+    )
+  }
+  const [project] = await deps.db
+    .select({ fullName: repositoryTable.fullName })
+    .from(repositoryTable)
+    .where(
+      and(
+        sql`lower(${repositoryTable.fullName}) = lower(${repository})`,
+        eq(repositoryTable.enabled, true),
+      ),
+    )
+  if (project) {
+    // The other side of refuseKnowledgeRepository in panel/work.ts: an agent never works on its own rules.
+    throw new KnowledgeRefused(
+      `${project.fullName} is enabled as a project of the factory; disable it on the Repositories page first`,
     )
   }
   let token: string

@@ -4,6 +4,7 @@ import type { Database } from '../db'
 import { plan, planItem, repository } from '../db/schema'
 import { ensureBranches, integrationBranch } from '../factory/branches'
 import { DOMAIN, validBranch } from '../factory/repo-config'
+import { loadKnowledgeConfig } from '../knowledge/store'
 import type { AppRepos, GithubApp, ReachableRepository } from '../github/app'
 import type { IssuesApi } from '../github/issues-api'
 import type { GithubApi } from '../github/pulls'
@@ -157,6 +158,20 @@ export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView
  * Saves what the owner set for a repository. A repository the App does not reach cannot be created or
  * enabled, so the list is also the limit of what the factory can be pointed at.
  */
+/**
+ * The knowledge repository is never a project of the factory. Its rules bind every agent and change only
+ * through a pull request the owner merges; as a project, an issue there would have an agent rewrite them, and
+ * the factory would merge that into its integration branch and, in auto mode, release it.
+ */
+async function refuseKnowledgeRepository(db: Database, fullName: string) {
+  const knowledge = await loadKnowledgeConfig(db)
+  if (knowledge?.repository.toLowerCase() === fullName.toLowerCase()) {
+    throw new ActionRefused(
+      `${fullName} is the knowledge base of the factory; its rules change only through a pull request the owner merges`,
+    )
+  }
+}
+
 export async function saveRepository(
   deps: WorkDeps,
   fullName: string,
@@ -184,6 +199,7 @@ export async function saveRepository(
   }
   const enabledAfter = patch.enabled ?? existing?.enabled ?? false
   if (enabledAfter) {
+    await refuseKnowledgeRepository(deps.db, canonical!)
     const base = patch.baseBranch === undefined ? existing?.baseBranch : patch.baseBranch
     try {
       const { token } = await deps.github.installationToken(canonical!)

@@ -9,6 +9,8 @@ import { plan, planItem, repository } from '../db/schema'
 import type { ReachableRepository } from '../github/app'
 import type { IssuesApi, NewIssue } from '../github/issues-api'
 
+import { writeKnowledgeConfig } from '../knowledge/store'
+
 import { FakeBranches } from '../../test/fake-branches'
 
 import { ActionRefused } from './actions'
@@ -169,6 +171,30 @@ describe('the repositories page', () => {
       /not one of the repositories the GitHub App can reach/,
     )
     expect(await getDb().select().from(repository)).toEqual([])
+  })
+
+  it('refuses to enable the knowledge repository, so an agent never changes the rules it is held to', async () => {
+    await writeKnowledgeConfig(getDb(), { repository: 'paulo/App', branch: null })
+    try {
+      await expect(saveRepository(deps(), 'paulo/app', { enabled: true })).rejects.toThrow(
+        /Paulo\/App is the knowledge base of the factory; its rules change only through a pull request the owner merges/,
+      )
+      expect(await getDb().select().from(repository)).toEqual([])
+      expect(branches.created).toEqual([])
+    } finally {
+      await writeKnowledgeConfig(getDb(), null)
+    }
+  })
+
+  it('still disables the knowledge repository, and saves what else is asked of it', async () => {
+    await enable()
+    await writeKnowledgeConfig(getDb(), { repository: 'paulo/app', branch: null })
+    try {
+      await saveRepository(deps(), 'paulo/app', { enabled: false })
+      expect(await getDb().select().from(repository)).toMatchObject([{ enabled: false }])
+    } finally {
+      await writeKnowledgeConfig(getDb(), null)
+    }
   })
 
   it('refuses when GitHub cannot be asked, instead of saving blind', async () => {

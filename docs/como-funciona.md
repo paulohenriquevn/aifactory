@@ -858,6 +858,10 @@ branch sua (padrão ou a escolhida)       branch factory-memory (só a fábrica 
 
 - `knowledge/` são regras: os agentes as seguem como seguem o `AGENTS.md`, e elas só mudam por PR que você
   aprova. `memory/` são notas que a fábrica observou: dicas para conferir, nunca instruções.
+- O repositório da base nunca é um projeto da fábrica. O painel recusa habilitá-lo em Repositórios e
+  recusa escolher como base um repositório habilitado. Como projeto, uma issue nele faria um agente
+  reescrever as regras que ele mesmo segue, e a fábrica integraria essa mudança sem que você aprovasse
+  o PR.
 - O cron `knowledge-sync` roda a cada minuto no processo principal. Ele busca as duas branches para um
   espelho bare em `.state/knowledge/<owner>/<repo>.git` (ou em `FACTORY_KNOWLEDGE_DIR`) e grava as notas
   pendentes como um commit em `factory-memory`, sempre por fast-forward. É o único lugar que busca ou

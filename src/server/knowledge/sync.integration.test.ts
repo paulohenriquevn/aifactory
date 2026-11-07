@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
-import { ingress, knowledgeNote, task } from '../db/schema'
+import { ingress, knowledgeNote, repository, task } from '../db/schema'
 
 import { FORMAT, MEMORY_BRANCH } from './format'
 import { runGit } from './git'
@@ -16,7 +16,7 @@ import { Mirror } from './mirror'
 import { knowledgePass } from './pass'
 import { KnowledgeReader, NO_KNOWLEDGE } from './reader'
 import { knowledgeSource } from './source'
-import { currentPin, loadSyncState, recordNotes } from './store'
+import { currentPin, loadKnowledgeConfig, loadSyncState, recordNotes } from './store'
 import {
   KnowledgeRefused,
   knowledgeStatus,
@@ -62,6 +62,16 @@ async function knowledgeRepo(files: { path: string; content: string }[]) {
   return { remote, commit, writer }
 }
 
+/** The clock of every test: the sync is told it, and the notes are dated by it. */
+const CLOCK = '2026-11-06T12:00:00Z'
+
+/** Keeps notes as a run does, dated by the test's clock instead of the database's, which would move the day. */
+async function keep(notes: Parameters<typeof recordNotes>[1]) {
+  const kept = await recordNotes(getDb(), notes)
+  await getPool().query('update knowledge_note set created_at = $1', [CLOCK])
+  return kept
+}
+
 function deps(remote: string, over: Partial<KnowledgeDeps> = {}) {
   const pulls: { head: string; base?: string; title: string; body: string }[] = []
   const d: KnowledgeDeps = {
@@ -96,7 +106,7 @@ function deps(remote: string, over: Partial<KnowledgeDeps> = {}) {
     remote: () => remote,
     author,
     templateDir: 'templates/knowledge',
-    now: () => new Date('2026-11-06T12:00:00Z'),
+    now: () => new Date(CLOCK),
     ...over,
   }
   return { d, pulls }
@@ -147,6 +157,31 @@ describe('choosing the knowledge repository', () => {
     await expect(
       saveKnowledge(deps(remote).d, { repository: 'me/kb', branch: MEMORY_BRANCH }),
     ).rejects.toThrow(/branch the factory writes its notes to/)
+  })
+
+  it('refuses a repository the factory works on, so an agent never changes the rules it is held to', async () => {
+    const { remote } = await knowledgeRepo([{ path: 'MEMORY.md', content: INDEX }])
+    await getDb().insert(repository).values({ fullName: 'Me/KB', enabled: true })
+    try {
+      await expect(saveKnowledge(deps(remote).d, { repository: 'me/kb' })).rejects.toThrow(
+        /Me\/KB is enabled as a project of the factory; disable it on the Repositories page first/,
+      )
+      expect(await loadKnowledgeConfig(getDb())).toBeUndefined()
+    } finally {
+      await getPool().query('truncate table repository restart identity cascade')
+    }
+  })
+
+  it('takes a repository the factory knows but does not work on', async () => {
+    const { remote } = await knowledgeRepo([{ path: 'MEMORY.md', content: INDEX }])
+    await getDb().insert(repository).values({ fullName: 'me/kb', enabled: false })
+    try {
+      expect((await saveKnowledge(deps(remote).d, { repository: 'me/kb' })).repository).toBe(
+        'me/kb',
+      )
+    } finally {
+      await getPool().query('truncate table repository restart identity cascade')
+    }
   })
 
   it('refuses a repository the App does not reach, and says why', async () => {
@@ -231,8 +266,8 @@ describe('the sync of every minute', () => {
     const { d } = deps(remote)
     await saveKnowledge(d, { repository: 'me/kb' })
     const t = await aTask()
-    await recordNotes(getDb(), [note(t.id, 'The tests need corepack enable first.')])
-    await recordNotes(getDb(), [note(t.id, 'The tests  need corepack enable first.')])
+    await keep([note(t.id, 'The tests need corepack enable first.')])
+    await keep([note(t.id, 'The tests  need corepack enable first.')])
 
     const state = await syncKnowledge(d)
 
@@ -257,9 +292,9 @@ describe('the sync of every minute', () => {
     const { d } = deps(remote)
     await saveKnowledge(d, { repository: 'me/kb' })
     const t = await aTask()
-    await recordNotes(getDb(), [note(t.id, 'The first fact about this repository.')])
+    await keep([note(t.id, 'The first fact about this repository.')])
     await syncKnowledge(d)
-    await recordNotes(getDb(), [note(t.id, 'The second fact about this repository.')])
+    await keep([note(t.id, 'The second fact about this repository.')])
     await syncKnowledge(d)
 
     const index = await remoteFile(remote, MEMORY_BRANCH, 'memory/projects/acme/app/INDEX.md')
@@ -276,7 +311,7 @@ describe('the sync of every minute', () => {
     writeFileSync(hook, '#!/bin/sh\necho "protected" >&2\nexit 1\n')
     chmodSync(hook, 0o755)
     const t = await aTask()
-    await recordNotes(getDb(), [note(t.id, 'A fact the remote will not take today.')])
+    await keep([note(t.id, 'A fact the remote will not take today.')])
 
     await expect(syncKnowledge(d)).rejects.toThrow(/protected/)
 
@@ -311,7 +346,7 @@ describe('the slice an agent receives', () => {
     const { d } = deps(remote)
     await saveKnowledge(d, { repository: 'me/kb' })
     const t = await aTask()
-    await recordNotes(getDb(), [
+    await keep([
       note(t.id, 'A note about the app project.'),
       note(t.id, 'A note about the web project.', 'acme/web'),
     ])
@@ -345,7 +380,7 @@ describe('the base as the assistants read it', () => {
     const { d } = deps(remote)
     await saveKnowledge(d, { repository: 'me/kb' })
     const t = await aTask()
-    await recordNotes(getDb(), [note(t.id, 'The tests of acme/app need a database.')])
+    await keep([note(t.id, 'The tests of acme/app need a database.')])
     await syncKnowledge(d)
     const reader = new KnowledgeReader(getDb(), d.root)
 

@@ -89,6 +89,8 @@ reads that file, not a convention.
   `KnowledgeFeed` on it, which copies the project's slice to `/tmp/knowledge` and replaces it when the base
   moves. Only the `knowledge-sync` cron fetches or pushes, and only to `factory-memory`, never to the
   owner's branch. `src/server/knowledge/every-agent.test.ts` fails for an agent without it.
+- **The knowledge repository is never a project.** Its rules change only through a pull request the owner
+  merges, so `saveRepository` refuses to enable it and `saveKnowledge` refuses a repository that is enabled.
 - **Every text box in the panel has an `<Assist>`.** `src/app/every-box.test.ts` fails when a file with a
   textarea has none. The premise is that the owner never has to be a programmer.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;
