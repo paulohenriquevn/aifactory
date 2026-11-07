@@ -317,6 +317,8 @@ export const repository = pgTable('repository', {
   checks: jsonb('checks').$type<{ name: string; command: string }[]>(),
   /** Domains the sandbox may reach besides GitHub, the agent and the npm registry. */
   egress: jsonb('egress').$type<string[]>().notNull().default([]),
+  /** The domains of the project's `.factory/setup.json` the owner approved; only these reach the firewall. */
+  approvedRecipeEgress: jsonb('approved_recipe_egress').$type<string[]>().notNull().default([]),
   /** The branch the work starts from and the pull request targets, when it is not the default branch. */
   baseBranch: text('base_branch'),
   /** The branch a release promotes into, when it is not the repository's default branch. */

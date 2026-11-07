@@ -28,7 +28,8 @@
     "src/server/knowledge/format.ts",
     "src/server/knowledge/okf.ts",
     "src/server/factory/transcript.ts",
-    "src/app/lib/transcript.ts"
+    "src/app/lib/transcript.ts",
+    "src/server/factory/recipe.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

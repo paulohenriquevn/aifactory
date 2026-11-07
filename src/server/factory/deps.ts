@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 
 import { knowledgeRoot, knowledgeSource } from '../knowledge/source'
+import { readRecipe } from './recipe'
 import { getDb } from '../db'
 import { createGithubApp } from '../github/app'
 
@@ -71,5 +72,6 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
     reviewer: pickReviewer,
     author: { name: `${slug}[bot]`, email: `${slug}[bot]@users.noreply.github.com` },
     knowledge: knowledgeSource(getDb(), knowledgeRoot(env)),
+    fetchRecipe: (repo, token) => readRecipe(repo, token),
   }
 }

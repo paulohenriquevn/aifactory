@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
-import { plan, planItem, repository } from '../db/schema'
+import { plan, planItem, repository, task } from '../db/schema'
 import type { ReachableRepository } from '../github/app'
 import type { IssuesApi, NewIssue } from '../github/issues-api'
 
@@ -401,6 +401,17 @@ describe('a job from the panel', () => {
     expect(world.created[0].issue.body).toContain('Write it.')
     expect(world.created[0].issue.body).toContain('Opened from the aifactory panel')
     expect(world.tokens.at(-1)).toBe('Paulo/App')
+  })
+
+  it('says what GitHub answered when it refuses the issue, and leaves no task behind', async () => {
+    await enable()
+    world.failOn = 0
+    const before = await getDb().select().from(task)
+    await expect(
+      createJob(deps(), { repository: 'paulo/app', title: 'Add it', body: '', start: true }),
+    ).rejects.toThrow('GitHub answered 502 creating an issue')
+    expect(world.created).toEqual([])
+    expect(await getDb().select().from(task)).toEqual(before)
   })
 
   it('opens an issue without the label when it should wait, and creates no label for it', async () => {

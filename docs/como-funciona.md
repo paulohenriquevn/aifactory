@@ -605,6 +605,26 @@ ele abre. Nenhum comando.
    branch de onde o trabalho parte, o agente que constrói e o que revisa, e até onde vai o release. Isso vale para toda execução daquele
    repositório. Uma label `harness:` ou `reviewer:` na issue ainda vence o padrão do repositório.
 
+   **A receita do projeto.** Um projeto pode dizer o que precisa num arquivo `.factory/setup.json`, com o
+   comando de instalação, os checks e os domínios que as ferramentas dele alcançam:
+
+   ```json
+   {
+     "install": "pip install -e .",
+     "checks": [{ "name": "test", "command": "pytest" }],
+     "egress": ["pypi.org", "files.pythonhosted.org"]
+   }
+   ```
+
+   A fábrica lê o arquivo pela API do GitHub, na branch padrão, antes de existir sandbox, então o agente
+   não amplia a própria saída editando o arquivo na branch dele. A precedência é o painel, depois a
+   receita, depois o padrão: os checks da receita valem quando o painel não define nenhum, e a instalação
+   roda como o primeiro check. Um domínio da receita só chega ao firewall depois de aprovado: a página
+   Repositories mostra a receita embaixo dos ajustes, marca cada domínio como aberto ou esperando você, e
+   diz o que a próxima execução passaria a alcançar antes de você aprovar. Só um domínio que a receita da
+   branch padrão pede naquele momento pode ser aprovado. Uma receita que não é JSON, tem um campo
+   desconhecido ou um domínio inválido faz a execução falhar com o motivo, que a página também mostra.
+
    **A branch de integração.** Por padrão é `workspace` (veja "Entrega"): o agente parte dali, o assistente
    de setup lê os arquivos dali, o planejador lê o repositório dali, e o PR é aberto contra ela. Um projeto
    que integra em outra branch preenche "Branch the work starts from". Vazio volta a `workspace`. O nome é

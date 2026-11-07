@@ -290,6 +290,21 @@ export type RepositoryView = {
   releaseMode: 'manual' | 'trial' | 'auto' | null
 }
 
+/** A project's `.factory/setup.json` on its default branch, and which of its domains wait for the owner. */
+export type RecipeView = {
+  fullName: string
+  recipe: {
+    install?: string
+    checks?: { name: string; command: string }[]
+    egress: string[]
+  } | null
+  /** Domains the recipe asks for that the sandbox does not reach until the owner approves them. */
+  pending: string[]
+  approved: string[]
+  /** Why the recipe cannot be used; a run fails with the same reason. */
+  problem: string | null
+}
+
 export type RepositoriesView = {
   repositories: RepositoryView[]
   /** The agents the owner can pick for a repository. */

@@ -11,6 +11,8 @@ export type RepoConfig = {
   checks?: CheckSpec[]
   /** Domains the sandbox may reach besides GitHub, the agent and the npm registry. */
   egress: string[]
+  /** Domains of the project's recipe (`.factory/setup.json`) the owner approved in the panel. */
+  approvedRecipeEgress?: string[]
   /** The branch work starts from and pull requests target; absent means the default branch. */
   baseBranch?: string
   /** The branch a release lands on; absent means the repository's default branch. */
@@ -51,6 +53,7 @@ export async function loadRepoConfig(db: Database, fullName: string): Promise<Re
   return {
     checks: row.checks && row.checks.length > 0 ? row.checks : undefined,
     egress: row.egress,
+    approvedRecipeEgress: row.approvedRecipeEgress,
     baseBranch: row.baseBranch ?? undefined,
     releaseBranch: row.releaseBranch ?? undefined,
     askQuestions: row.askQuestions,

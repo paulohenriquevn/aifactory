@@ -1,3 +1,4 @@
+import type { Recipe } from './recipe'
 import type { KnowledgeSource } from '../knowledge/source'
 import type { Database } from '../db'
 import type { question as questionTable } from '../db/schema'
@@ -43,6 +44,11 @@ export type RunTaskDeps = {
    * current while it works; without a source (the tests) the agents work without one.
    */
   knowledge?: KnowledgeSource
+  /**
+   * Reads the project's `.factory/setup.json` from its default branch on GitHub. Without it (the tests)
+   * a run uses only what the owner set in the panel.
+   */
+  fetchRecipe?: (repo: string, token: string) => Promise<Recipe | undefined>
 }
 
 export type RunResult =

@@ -2,6 +2,7 @@ import { and, eq, isNotNull, isNull } from 'drizzle-orm'
 
 import { question as questionTable, task } from '../db/schema'
 import { fetchIssue as defaultFetchIssue } from '../github/issues'
+import { withRecipe } from './recipe'
 import { createGithubApi } from '../github/pulls'
 
 import { Asked, QuotaStop, quotaDetail } from './run-support'
@@ -91,7 +92,11 @@ async function execute(
       taskId,
       row,
       issue,
-      repo: await loadRepoConfig(db, row.repository),
+      // Read from GitHub before any sandbox exists, so nothing the agent does can change it.
+      repo: withRecipe(
+        await loadRepoConfig(db, row.repository),
+        await deps.fetchRecipe?.(row.repository, token),
+      ),
       token,
       api: deps.githubApi ?? createGithubApi(),
       branch: `factory/${row.issueNumber}`,

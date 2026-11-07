@@ -34,6 +34,7 @@ import type { NewNote } from '../knowledge/store'
 
 import { FakeSandbox, type Reply } from './fake-sandbox'
 import { eventsOf } from './transcript-store'
+import { parseRecipe } from './recipe'
 import type { CodingHarness } from './harness'
 import { mergeEgress, resumeTask, runTask, type RunTaskDeps } from './run-task'
 import { release } from './deliver'
@@ -2381,5 +2382,82 @@ describe('the transcript of a run', () => {
 
     const after = await eventsOf(getDb(), id, { afterSeq: 3 })
     expect(after.map((e) => e.content)).toEqual(['step 4', 'step 5'])
+  })
+})
+
+describe("a project's recipe", () => {
+  const recipe = {
+    install: 'pnpm install',
+    checks: [{ name: 'test', command: 'pnpm test' }],
+    egress: ['files.example.org'],
+  }
+  const domainsOf = (sandbox: FakeSandbox) => sandbox.specs[0].egress.map((e) => e.domain)
+
+  it('runs without a domain the recipe asks for until the owner approves it, and with it after', async () => {
+    const asked: string[] = []
+    const fetchRecipe = async (repo: string, token: string) => {
+      asked.push(`${repo} ${token}`)
+      return recipe
+    }
+    await getDb().insert(repository).values({ fullName: 'paulo/app', enabled: true })
+    const before = new FakeSandbox(changed())
+    await runTask(deps(before, { fetchRecipe }), await seedTask(7))
+    expect(domainsOf(before)).not.toContain('files.example.org')
+    expect(asked).toEqual([`paulo/app ${TOKEN}`])
+
+    await getDb()
+      .update(repository)
+      .set({ approvedRecipeEgress: ['files.example.org'] })
+      .where(eq(repository.fullName, 'paulo/app'))
+    const after = new FakeSandbox(changed())
+    await runTask(deps(after, { fetchRecipe }), await seedTask(8))
+    expect(domainsOf(after)).toContain('files.example.org')
+  })
+
+  it("runs the recipe's install and checks when the panel sets none", async () => {
+    const sandbox = new FakeSandbox(changed())
+    const id = await seedTask()
+    await runTask(deps(sandbox, { fetchRecipe: async () => recipe }), id)
+    const checked = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
+    expect(checked.map((e) => e.command)).toEqual(['pnpm install', 'pnpm test'])
+  })
+
+  it('reads the recipe before any sandbox exists, so what the agent writes to the file changes nothing', async () => {
+    let sandboxes = 0
+    const sandbox = new FakeSandbox(
+      changed((command) =>
+        command.includes('.factory/setup.json')
+          ? { stdout: '{"egress":["evil.example"]}' }
+          : undefined,
+      ),
+    )
+    const create = sandbox.create.bind(sandbox)
+    sandbox.create = async (spec) => {
+      sandboxes += 1
+      return create(spec)
+    }
+    let readWhenSandboxes = -1
+    const fetchRecipe = async () => {
+      readWhenSandboxes = sandboxes
+      return undefined
+    }
+    await runTask(deps(sandbox, { fetchRecipe }), await seedTask())
+    expect(readWhenSandboxes).toBe(0)
+    expect(domainsOf(sandbox)).not.toContain('evil.example')
+  })
+
+  it('fails the run and names the file when the recipe cannot be used', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const result = await runTask(
+      deps(sandbox, {
+        fetchRecipe: async (repo) => parseRecipe(repo, '{"egress":["*"]}'),
+      }),
+      id,
+    )
+    expect(result).toMatchObject({ status: 'failed' })
+    expect(sandbox.specs).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row.stage).toBe('failed')
   })
 })

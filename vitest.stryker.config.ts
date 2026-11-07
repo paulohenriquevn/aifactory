@@ -32,6 +32,7 @@ export default defineConfig({
       'src/server/knowledge/okf.test.ts',
       'src/server/factory/transcript.test.ts',
       'src/app/lib/transcript.test.ts',
+      'src/server/factory/recipe.test.ts',
       'src/app/panel.test.tsx',
       'src/app/page.test.tsx',
     ],
