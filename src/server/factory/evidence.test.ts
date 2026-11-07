@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { FakeBackend } from './fake-sandbox'
-import { gate, runChecks } from './evidence'
+import { failingChecks, gate, runChecks } from './evidence'
 
 const row = (name: string, sha: string, passed: boolean) => ({ name, sha, passed })
 
@@ -55,6 +55,30 @@ describe('gate', () => {
   })
 })
 
+describe('failingChecks', () => {
+  const result = (name: string, passed: boolean, output = '') => ({
+    name,
+    command: name,
+    exitCode: passed ? 0 : 1,
+    timedOut: false,
+    passed,
+    output,
+    durationMs: 1,
+  })
+
+  it('names only the checks whose last run failed, once each', () => {
+    const results = [
+      result('tests', false, 'flaky'),
+      result('tests', true),
+      result('lint', false, 'first'),
+      result('lint', false, 'second'),
+      result('types', true),
+    ]
+
+    expect(failingChecks(results).map((r) => [r.name, r.output])).toEqual([['lint', 'second']])
+  })
+})
+
 describe('runChecks', () => {
   it('runs each command in the repository and reports the real exit code', async () => {
     const backend = new FakeBackend((c) =>
@@ -73,12 +97,43 @@ describe('runChecks', () => {
       1_000,
     )
 
-    expect(backend.commands).toEqual(['cd /work/repo && npm test', 'cd /work/repo && npm run lint'])
+    expect(backend.commands).toEqual([
+      'cd /work/repo && npm test',
+      'cd /work/repo && npm test',
+      'cd /work/repo && npm run lint',
+    ])
     expect(results.map((r) => [r.name, r.passed, r.exitCode])).toEqual([
+      ['test', false, 1],
       ['test', false, 1],
       ['lint', true, 0],
     ])
     expect(results[0].output).toBe('not ok 1boom')
+  })
+
+  it('runs a failed check once more and keeps both results, the second deciding', async () => {
+    let runs = 0
+    const backend = new FakeBackend(() => (++runs === 1 ? { exitCode: 1, stdout: 'timeout' } : {}))
+
+    const results = await runChecks(backend, '/r', [{ name: 'test', command: 'npm test' }], 1)
+
+    expect(results.map((r) => [r.name, r.passed])).toEqual([
+      ['test', false],
+      ['test', true],
+    ])
+  })
+
+  it('does not run again a check that ran out of time', async () => {
+    const backend = new FakeBackend(() => ({}))
+    let runs = 0
+    backend.execute = async () => {
+      runs++
+      return { stdout: '', stderr: '', exitCode: 124, timedOut: true }
+    }
+
+    const results = await runChecks(backend, '/r', [{ name: 'test', command: 'npm test' }], 1)
+
+    expect(runs).toBe(1)
+    expect(results).toHaveLength(1)
   })
 
   it('fails a check that timed out even if it exited 0', async () => {

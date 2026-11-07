@@ -17,7 +17,14 @@ import { parseLearned, withoutLearned } from '../knowledge/format'
 import { cloneRepository } from './clone'
 import { ensureBranches, integrationBranch, PRE_RELEASE_BRANCH } from './branches'
 import { createPreRelease, release } from './deliver'
-import { DEFAULT_CHECKS, gate, runChecks, type CheckResult, type Verdict } from './evidence'
+import {
+  DEFAULT_CHECKS,
+  failingChecks,
+  gate,
+  runChecks,
+  type CheckResult,
+  type Verdict,
+} from './evidence'
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
 import { buildPrompt, type CodingHarness, type HarnessResult } from './harness'
 import {
@@ -1099,11 +1106,7 @@ export class Run {
           const after = attempt > 1 ? ` (after ${attempt} attempts)` : ''
           throw new StageFailure(`no pull request: ${checked.verdict.reasons.join('; ')}${after}`)
         }
-        sha = await this.rework(
-          attempt + 1,
-          [],
-          checked.results.filter((r) => !r.passed),
-        )
+        sha = await this.rework(attempt + 1, [], failingChecks(checked.results))
         continue
       }
 

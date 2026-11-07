@@ -999,7 +999,8 @@ describe('runTask review loop', () => {
       changed((c) => {
         if (!c.endsWith('npm test')) return undefined
         runs += 1
-        return runs === 1 ? { exitCode: 1, stdout: 'not ok 1 - rejects max below 1' } : undefined
+        // It fails on the first commit, and again when the factory runs it a second time there.
+        return runs <= 2 ? { exitCode: 1, stdout: 'not ok 1 - rejects max below 1' } : undefined
       }),
     )
 
@@ -1007,12 +1008,37 @@ describe('runTask review loop', () => {
 
     expect(result).toMatchObject({ status: 'done', sha: 'abc123def2' })
     expect(builder.resumed[0]).toContain('not ok 1 - rejects max below 1')
+    expect(builder.resumed[0].split('not ok 1 - rejects max below 1')).toHaveLength(2)
     expect(githubApi.checkRuns.map((c) => c.conclusion)).toEqual(['failure', 'success'])
     expect((await getDb().select().from(evidence)).map((e) => [e.sha, e.passed])).toEqual([
+      ['abc123def', false],
       ['abc123def', false],
       ['abc123def2', true],
     ])
     expect(await stagesOf(id)).not.toContain('failed')
+  })
+
+  it('opens the pull request without a rework when a check fails once and passes when run again', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    let runs = 0
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (!c.endsWith('npm test')) return undefined
+        runs += 1
+        return runs === 1 ? { exitCode: 1, stdout: 'timed out in 5000ms' } : undefined
+      }),
+    )
+
+    const result = await runTask(deps(sandbox, { harness: builder }), id)
+
+    expect(result).toMatchObject({ status: 'done', sha: 'abc123def' })
+    expect(builder.resumed).toEqual([])
+    expect(githubApi.checkRuns.map((c) => c.conclusion)).toEqual(['success'])
+    expect((await getDb().select().from(evidence)).map((e) => [e.sha, e.passed])).toEqual([
+      ['abc123def', false],
+      ['abc123def', true],
+    ])
   })
 
   it('fails at verify, with the attempts it took, when the checks never pass', async () => {

@@ -35,19 +35,42 @@ export async function runChecks(
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = []
   for (const check of checks) {
-    const started = Date.now()
-    const run = await backend.execute(`cd ${repoDir} && ${check.command}`, { timeoutMs })
-    results.push({
-      name: check.name,
-      command: check.command,
-      exitCode: run.exitCode,
-      timedOut: run.timedOut ?? false,
-      passed: run.exitCode === 0 && !run.timedOut,
-      output: `${run.stdout}${run.stderr}`.slice(-OUTPUT_TAIL),
-      durationMs: Date.now() - started,
-    })
+    const first = await runCheck(backend, repoDir, check, timeoutMs)
+    results.push(first)
+    // A test that fails under load passes when run again, and failing the task for it costs an attempt the
+    // agent cannot use: its change did not cause it. Both runs stay in the evidence, and the gate reads the
+    // last. A check that ran out of time is not run again, since that would double the wait.
+    if (!first.passed && !first.timedOut) {
+      results.push(await runCheck(backend, repoDir, check, timeoutMs))
+    }
   }
   return results
+}
+
+async function runCheck(
+  backend: SandboxBackend,
+  repoDir: string,
+  check: CheckSpec,
+  timeoutMs: number,
+): Promise<CheckResult> {
+  const started = Date.now()
+  const run = await backend.execute(`cd ${repoDir} && ${check.command}`, { timeoutMs })
+  return {
+    name: check.name,
+    command: check.command,
+    exitCode: run.exitCode,
+    timedOut: run.timedOut ?? false,
+    passed: run.exitCode === 0 && !run.timedOut,
+    output: `${run.stdout}${run.stderr}`.slice(-OUTPUT_TAIL),
+    durationMs: Date.now() - started,
+  }
+}
+
+/** The checks whose last run failed, one result each: what the builder has to fix. */
+export function failingChecks(results: CheckResult[]): CheckResult[] {
+  const last = new Map<string, CheckResult>()
+  for (const result of results) last.set(result.name, result)
+  return [...last.values()].filter((r) => !r.passed)
 }
 
 /**

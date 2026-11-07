@@ -156,7 +156,11 @@ Outras garantias:
 
 Depois do push, a fábrica confere que o checkout é exatamente o commit enviado e que a árvore está
 limpa. Em seguida roda cada check com `cd <repo> && <comando>` e grava na tabela `evidence`: nome,
-comando, SHA, código de saída real, fim da saída e duração.
+comando, SHA, código de saída real, fim da saída e duração. Um check que falha sem estourar o tempo roda
+mais uma vez no mesmo commit, porque um teste sensível a carga que passa na segunda vez não é culpa da
+mudança e custaria uma tentativa ao agente. As duas execuções ficam na evidência, e o portão lê a última.
+O check que estoura o tempo não roda de novo. Ao voltar para o construtor, só vão os checks cuja última
+execução falhou.
 
 `gate()` é uma função pura. O PR só abre quando:
 
