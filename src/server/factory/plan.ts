@@ -1,4 +1,3 @@
-import { provisionRepo } from '@theokit/agents/sandbox'
 import { eq } from 'drizzle-orm'
 
 import type { Database } from '../db'
@@ -9,6 +8,7 @@ import { KnowledgeFeed } from '../knowledge/feed'
 import { knowledgeRules } from '../knowledge/prompt'
 import type { KnowledgeSource } from '../knowledge/source'
 
+import { cloneRepository } from './clone'
 import type { CodingHarness } from './harness'
 import { jsonObjects } from './review'
 import { ensureBranches, integrationBranch } from './branches'
@@ -135,7 +135,7 @@ export async function runPlan(deps: PlanDeps, planId: number): Promise<void> {
       ],
     })
     stop = () => sandbox.stop().catch(() => {})
-    const { repoDir } = await provisionRepo(sandbox.backend, {
+    const { repoDir } = await cloneRepository(sandbox.backend, {
       repoUrl: `https://github.com/${row.repository}.git`,
       ref: integrationBranch(config),
       instanceId: 'plan',

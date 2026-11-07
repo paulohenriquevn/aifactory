@@ -1,4 +1,4 @@
-import { provisionRepo, type SandboxBackend } from '@theokit/agents/sandbox'
+import { type SandboxBackend } from '@theokit/agents/sandbox'
 import { asc, eq } from 'drizzle-orm'
 
 import {
@@ -14,6 +14,7 @@ import type { GithubApi } from '../github/pulls'
 import { KnowledgeFeed } from '../knowledge/feed'
 import { parseLearned, withoutLearned } from '../knowledge/format'
 
+import { cloneRepository } from './clone'
 import { ensureBranches, integrationBranch, PRE_RELEASE_BRANCH } from './branches'
 import { createPreRelease, release } from './deliver'
 import { DEFAULT_CHECKS, gate, runChecks, type CheckResult, type Verdict } from './evidence'
@@ -234,7 +235,7 @@ export class Run {
   private static async checkout(c: RunContext, backend: SandboxBackend) {
     const { resuming, continuation, branch, row } = c
     if (resuming) return { repoDir: resuming.repoDir, baseSha: resuming.baseSha }
-    const { repoDir } = await provisionRepo(backend, {
+    const { repoDir } = await cloneRepository(backend, {
       repoUrl: `https://github.com/${row.repository}.git`,
       ref: integrationBranch(c.repo),
       instanceId: INSTANCE,
