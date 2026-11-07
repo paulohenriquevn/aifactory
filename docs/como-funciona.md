@@ -218,8 +218,11 @@ construtor disse, com a instrução de conferir no código e nos testes, sem con
 confirmam, a fábrica comenta na issue o commit, os checks que passaram, a conclusão do revisor e o que o
 construtor encontrou, fecha a issue como concluída e marca a task `done`, sem PR (`resolved_sha` na
 task). No painel ela aparece em Delivered como "already resolved" e não entra na caixa de entrada. Se os
-checks falham ou o revisor aponta algo faltando, a issue fica aberta e a task vai para uma pessoa, com o
-motivo.
+checks falham, a issue fica aberta e a task vai para uma pessoa, com o motivo. Se o revisor aponta algo
+faltando e o construtor tem sessão para retomar, a revisão volta uma vez à sessão dele, com a instrução de
+fazer a mudança construindo sobre o que existe (e dizer o que assumiu) e de não mudar nada só quando faltar
+algo de fora do repositório. Uma mudança feita aí segue o caminho normal (push, checks, review, PR); nenhuma
+mudança leva a task para uma pessoa, com o que o agente disse depois da revisão.
 
 O retomar usa `claude -p --resume <id>` ou `codex exec resume <id>`, na mesma sessão e no mesmo
 sandbox. O retrabalho gera um novo commit (`<título>: address feedback (attempt n)`), e os checks

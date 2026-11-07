@@ -158,6 +158,21 @@ export function renderFindings(findings: Finding[]): string {
     .join('\n')
 }
 
+/**
+ * What the builder is told when it said the issue needs no change and the reviewer, reading the code,
+ * found it is not resolved. It may still be right that the work cannot be done here, so it may say so.
+ */
+export function notResolvedPrompt(input: { summary: string; findings: Finding[] }): string {
+  return [
+    'You changed nothing and said the issue needs no change. A reviewer read the code and found it is not resolved:',
+    input.summary,
+    ...(input.findings.length > 0 ? [renderFindings(input.findings)] : []),
+    'Make the change the issue asks for, with tests, and run them. Where the code differs from what the issue names (a file, a type or a function that is not there), build on what is there and say in your final message what you assumed.',
+    'Change nothing only when the work truly cannot be done in this repository, because it needs something outside it (another package, a release, an account, a person). Then say exactly what is missing.',
+    'Do not run git commit or git push: the factory commits and pushes. Finish with a short summary.',
+  ].join('\n\n')
+}
+
 /** What the builder is told when it has to go back to its work. */
 export function reworkPrompt(input: {
   findings: Finding[]

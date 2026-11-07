@@ -331,7 +331,6 @@ describe('resultLine', () => {
     })
   })
 
-
   it('takes the last result of a stream, and the whole output otherwise', () => {
     expect(resultLine('{"type":"x"}\n{"type":"result","n":1}\n{"type":"result","n":2}\n')).toBe(
       '{"type":"result","n":2}',

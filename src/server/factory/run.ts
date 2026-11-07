@@ -21,6 +21,7 @@ import { diffGuards, parseNameStatus, testScriptOf } from './guards'
 import { buildPrompt, type CodingHarness, type HarnessResult } from './harness'
 import {
   MAX_ATTEMPTS,
+  notResolvedPrompt,
   parseVerdict,
   renderFindings,
   resolvedPrompt,
@@ -544,11 +545,15 @@ export class Run {
       )
     }
     const outcome = await this.reviewClaim(first.summary)
-    if (outcome.verdict !== 'approve') {
+    const refuted = `the agent made no change to the repository, and the reviewer did not confirm the issue is resolved: ${outcome.summary}.`
+    if (outcome.verdict === 'changes' && this.builder.resume && this.sessionId) {
+      const after = await this.buildAfterRefutedClaim(outcome)
+      if (after.changed) return undefined
       throw new StageFailure(
-        `the agent made no change to the repository, and the reviewer did not confirm the issue is resolved: ${outcome.summary}. ${said}`,
+        `${refuted} Sent back with the review, the agent still changed nothing and said: ${oneLine(withoutLearned(after.summary)).slice(0, 700)}`,
       )
     }
+    if (outcome.verdict !== 'approve') throw new StageFailure(`${refuted} ${said}`)
     state.current = 'done'
     await api.commentOnIssue(
       row.repository,
@@ -577,6 +582,39 @@ export class Run {
       { headSha: this.baseSha, resolvedSha: this.baseSha },
     )
     return { status: 'resolved', sha: this.baseSha, summary: first.summary }
+  }
+
+  /**
+   * The builder said nothing needed changing and the reviewer found the issue is not resolved: the
+   * review goes back to the builder's own session, once. A change it then makes takes the normal way
+   * (push, checks, review); no change ends the run with what it said.
+   */
+  private async buildAfterRefutedClaim(
+    outcome: ReviewVerdict,
+  ): Promise<{ changed: boolean; summary: string }> {
+    const { deps, taskId, state } = this.c
+    state.current = 'build'
+    await enterStage(deps.db, taskId, 'build', {
+      harness: this.builder.name,
+      attempt: 1,
+      refuted: true,
+    })
+    const result = await this.settle(this.builder, 'builder', 1, (onEvent) =>
+      this.builder.resume!(this.backend, this.sessionId!, {
+        onEvent,
+        cwd: this.repoDir,
+        timeoutMs: this.timeouts.agentMs,
+        prompt: notResolvedPrompt({ summary: outcome.summary, findings: outcome.findings }),
+      }),
+    )
+    if (!result.ok) throw new StageFailure(`the agent did not finish: ${result.summary}`)
+    await this.keepLearned(result.summary)
+    this.sessionId = result.sessionId ?? this.sessionId
+    const asked = parseQuestion(withoutLearned(result.summary))
+    if (asked) await this.ask(asked, 1)
+    this.summary = result.summary
+    const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
+    return { changed: pending.stdout.trim() !== '', summary: result.summary }
   }
 
   /** Has the reviewer check, without changing anything, that the code already resolves the issue. */

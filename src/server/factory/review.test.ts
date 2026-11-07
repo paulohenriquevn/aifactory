@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
-import { parseVerdict, renderFindings, resolvedPrompt, reviewPrompt, reworkPrompt } from './review'
+import {
+  notResolvedPrompt,
+  parseVerdict,
+  renderFindings,
+  resolvedPrompt,
+  reviewPrompt,
+  reworkPrompt,
+} from './review'
 
 const answer = (verdict: unknown) => `I read the diff.\n\n${JSON.stringify(verdict)}`
 
@@ -310,5 +317,28 @@ describe('resolvedPrompt', () => {
 
   it('says when the issue has no description', () => {
     expect(resolvedPrompt({ ...input, body: '' })).toContain('(the issue has no description)')
+  })
+})
+
+describe('notResolvedPrompt', () => {
+  const finding = { severity: 'major' as const, file: 'src/a.ts', issue: 'no empty-string case' }
+
+  it('says what the reviewer found, asks for the change, and leaves room for a real blocker', () => {
+    const prompt = notResolvedPrompt({ summary: 'the tests do not cover it', findings: [finding] })
+    expect(prompt).toContain('A reviewer read the code and found it is not resolved')
+    expect(prompt).toContain('the tests do not cover it')
+    expect(prompt).toContain('**major** `src/a.ts`: no empty-string case')
+    expect(prompt).toContain(
+      'build on what is there and say in your final message what you assumed',
+    )
+    expect(prompt).toContain(
+      'Change nothing only when the work truly cannot be done in this repository',
+    )
+    expect(prompt).toContain('Do not run git commit or git push')
+  })
+
+  it('says nothing about findings when the reviewer listed none', () => {
+    const prompt = notResolvedPrompt({ summary: 'nothing of it is there', findings: [] })
+    expect(prompt.split('\n\n')).toHaveLength(5)
   })
 })

@@ -2268,6 +2268,100 @@ describe('runTask with a knowledge base', () => {
       expect(githubApi.closed).toEqual([])
     })
 
+    /** A builder that claims the issue is resolved, then does `then` when the reviewer disagrees. */
+    function claimsThen(then: 'builds' | 'insists'): CodingHarness & { told: string[] } {
+      const told: string[] = []
+      return {
+        name: 'claimer',
+        egress: agentEgress,
+        told,
+        run: async () => {
+          dirty = false
+          return {
+            ok: true,
+            summary: 'truncate already exists',
+            costUsd: 0.07,
+            sessionId: 'sess-9',
+          }
+        },
+        resume: async (_backend, sessionId, input) => {
+          told.push(`${sessionId}: ${input.prompt}`)
+          if (then === 'builds') dirty = true
+          return {
+            ok: true,
+            summary: then === 'builds' ? 'added the empty-string case' : 'it needs B-516 first',
+            costUsd: 0.05,
+            sessionId,
+          }
+        },
+      }
+    }
+
+    it('sends a claim the reviewer refutes back to the same session, and delivers the change it then makes', async () => {
+      const id = await seedTask()
+      const builder = claimsThen('builds')
+      const reviewer = reviewerSaying(
+        verdictJson('changes', [finding], 'no test for an empty string'),
+        verdictJson('approve'),
+      )
+
+      const result = await runTask(
+        deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+        id,
+      )
+
+      expect(result).toMatchObject({ status: 'done', pullRequestUrl: PR_URL })
+      expect(builder.told).toHaveLength(1)
+      expect(builder.told[0]).toMatch(/^sess-9: /)
+      expect(builder.told[0]).toContain('no test for an empty string')
+      expect(builder.told[0]).toContain(finding.issue)
+      expect(githubApi.closed).toEqual([])
+      expect(await stagesOf(id)).toEqual([
+        'sandbox',
+        'build',
+        'verify',
+        'review',
+        'build',
+        'push',
+        'verify',
+        'review',
+        'pr',
+        'done',
+      ])
+    })
+
+    it('fails with what the agent said after the review when it still changes nothing', async () => {
+      const id = await seedTask()
+      const builder = claimsThen('insists')
+      const reviewer = reviewerSaying(
+        verdictJson('changes', [finding], 'no test for an empty string'),
+      )
+      const sandbox = new FakeSandbox(changed())
+
+      const result = await runTask(deps(sandbox, { harness: builder, reviewer }), id)
+
+      expect(result).toMatchObject({ status: 'failed', stage: 'build' })
+      expect(result.status === 'failed' && result.error).toBe(
+        'the agent made no change to the repository, and the reviewer did not confirm the issue is resolved: no test for an empty string. Sent back with the review, the agent still changed nothing and said: it needs B-516 first',
+      )
+      expect(pushesOf(sandbox)).toEqual([])
+      expect(githubApi.closed).toEqual([])
+    })
+
+    it('does not send back a claim the reviewer could not judge', async () => {
+      const id = await seedTask()
+      const builder = claimsThen('builds')
+      const reviewer = reviewerSaying('no verdict here')
+
+      const result = await runTask(
+        deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+        id,
+      )
+
+      expect(result).toMatchObject({ status: 'failed', stage: 'review' })
+      expect(builder.told).toEqual([])
+    })
+
     it('does not close the issue when the comment with the evidence cannot be posted', async () => {
       const id = await seedTask()
       const broken = {
