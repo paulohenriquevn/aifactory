@@ -1,13 +1,16 @@
 import { knowledgeRules, LEARNED_RULE } from '../knowledge/prompt'
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 
-import type { EgressRule } from './sandbox'
+import { streams, type EgressRule, type ExecuteResult } from './sandbox'
+import type { AgentEvent } from './transcript'
 
 export type HarnessInput = {
   prompt: string
   /** Directory of the checked-out repository inside the sandbox. */
   cwd: string
   timeoutMs: number
+  /** Called with each step of the agent while it works, when the sandbox can stream its output. */
+  onEvent?: (event: AgentEvent) => void
 }
 
 /** The agent stopped because its account's quota ran out: a wait, not a flaw in the work. */
@@ -38,6 +41,28 @@ export interface CodingHarness {
   run(backend: SandboxBackend, input: HarnessInput): Promise<HarnessResult>
   /** Continues a conversation `run` started, in the same sandbox or one restored from a snapshot. */
   resume?(backend: SandboxBackend, sessionId: string, input: HarnessInput): Promise<HarnessResult>
+}
+
+/** Whether a run can be watched: someone listens, and the sandbox hands output over as it comes. */
+export const watched = (backend: SandboxBackend, input: HarnessInput): boolean =>
+  input.onEvent !== undefined && streams(backend)
+
+/**
+ * Runs the agent's command. When the run is watched, each line of output goes through `read` and the
+ * events it finds go to `onEvent` while the agent works; the result is the same either way.
+ */
+export function executeAgent(
+  backend: SandboxBackend,
+  command: string,
+  input: HarnessInput,
+  read: (line: string) => AgentEvent[],
+): Promise<ExecuteResult> {
+  const { onEvent, timeoutMs } = input
+  if (!onEvent || !streams(backend)) return backend.execute(command, { timeoutMs })
+  return backend.executeStreaming(command, {
+    timeoutMs,
+    onStdoutLine: (line) => read(line).forEach(onEvent),
+  })
 }
 
 /** The text an unattended agent sends back when the account's limit was reached. */

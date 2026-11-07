@@ -533,11 +533,26 @@ uma é mudar o código, no arquivo que ela indica.
 - A caixa de entrada: só o que espera uma pessoa, do mais antigo ao mais novo. É uma pergunta do
   agente, um PR que ninguém aprovou, um trabalho entregue depois de três tentativas ou uma execução
   que falhou (com "sem cota" dito como tal).
-- O detalhe da task: a linha do tempo de estágios, a evidência (comando, SHA, código de saída e a
-  saída), os reviews com os achados, as perguntas e respostas e as decisões tomadas.
+- O detalhe da task: a linha do tempo de estágios, o que os agentes fizeram, a evidência (comando, SHA,
+  código de saída e a saída), os reviews com os achados, as perguntas e respostas e as decisões tomadas.
 
-**Tempo real.** O servidor manda um evento (SSE, `/api/panel/stream`) a cada mudança de estágio, e a
-página recarrega só o que mudou. Um relógio lento cobre o que o evento não traz, como o custo que cresce
+**O que os agentes fizeram.** Enquanto o construtor e o revisor trabalham, cada passo deles aparece no
+detalhe da task: o que disseram, cada ferramenta que chamaram (com o que ela devolveu, dobrado dentro do
+cartão) e o custo no fim. O Claude Code roda com `--output-format stream-json --verbose` e o Codex com
+`exec --json`; a fábrica lê a saída linha a linha (`executeStreaming` no sandbox Docker), traduz cada linha
+para um passo (`factory/transcript.ts`) e grava na tabela `agent_event`, em ordem, contando através das
+rodadas da task. O resultado da execução continua saindo da última linha, então custo e estágio não mudam.
+Antes de gravar, cada passo passa por um filtro que troca os formatos de token conhecidos (`ghs_`, `ghp_`,
+`github_pat_`, `sk-ant-`, `sk-proj-`, `vcp_`) por `[redacted]` e é cortado em 8 KB. Os passos ficam 30
+dias; o cron `prune-transcripts` apaga os mais velhos, uma vez por dia. O `SandboxBackend` do TheoKit só
+devolve a saída no fim (usetheokit/theokit-sdk#883), por isso a leitura em fluxo é do provedor Docker; num
+provedor sem ela, a execução roda como antes e a task fica sem passos.
+
+**Tempo real.** O servidor manda um evento (SSE, `/api/panel/stream`) a cada mudança de estágio e a cada
+passo de um agente, e a página recarrega só o que mudou. Os passos vão pela mesma conexão, porque o
+navegador aceita só seis por endereço; o histórico vem de `/api/panel/tasks/<id>/transcript?after=<n>`,
+500 por vez, e a página escuta o stream antes de pedir a primeira página, para não perder um passo gravado
+entre as duas. Um relógio lento cobre o que o evento não traz, como o custo que cresce
 enquanto o agente trabalha, e uma conexão que caiu.
 
 **Ações.** Todas passam pelo servidor, que confere o estágio da task de novo, então uma página velha não

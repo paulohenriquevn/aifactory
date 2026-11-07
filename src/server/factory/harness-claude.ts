@@ -4,12 +4,15 @@ import type { SandboxBackend } from '@theokit/agents/sandbox'
 import {
   assertSessionId,
   detectQuota,
+  executeAgent,
   PROMPT_FILE,
   SUMMARY_MAX,
   type CodingHarness,
   type HarnessInput,
   type HarnessResult,
+  watched,
 } from './harness'
+import { claudeEvents } from './transcript'
 
 /**
  * The Claude Code the factory installs in every sandbox. Pinned, so a run never meets a CLI the factory was
@@ -79,18 +82,18 @@ export function claudeCodeHarness(
   const effort = options.effort ? ` --effort ${assertSafeName(options.effort, 'effort')}` : ''
   const variable = credential.kind === 'api-key' ? 'ANTHROPIC_API_KEY' : 'CLAUDE_CODE_OAUTH_TOKEN'
 
-  async function invoke(
-    backend: SandboxBackend,
-    { prompt, cwd, timeoutMs }: HarnessInput,
-    flags: string,
-  ) {
-    await backend.uploadFile(PROMPT_FILE, prompt)
+  async function invoke(backend: SandboxBackend, input: HarnessInput, flags: string) {
+    await backend.uploadFile(PROMPT_FILE, input.prompt)
+    // A watched run prints one event per line, and its last line is the same result `json` prints.
+    const format = watched(backend, input) ? 'stream-json --verbose' : 'json'
     // `cwd` is a path the factory built (see run-task), never text from the issue.
-    const result = await backend.execute(
-      `cd ${cwd} && ${variable}=placeholder-not-a-secret CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 ${CLAUDE} -p --output-format json --dangerously-skip-permissions${model}${effort}${flags} < ${PROMPT_FILE}`,
-      { timeoutMs },
+    const result = await executeAgent(
+      backend,
+      `cd ${input.cwd} && ${variable}=placeholder-not-a-secret CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1 ${CLAUDE} -p --output-format ${format} --dangerously-skip-permissions${model}${effort}${flags} < ${PROMPT_FILE}`,
+      input,
+      claudeEvents,
     )
-    return parseClaudeResult(result.exitCode, result.stdout, result.stderr)
+    return parseClaudeResult(result.exitCode, resultLine(result.stdout), result.stderr)
   }
 
   return {
@@ -113,6 +116,18 @@ export function claudeCodeHarness(
     resume: async (backend, sessionId, input) =>
       invoke(backend, input, ` --resume ${assertSessionId(sessionId)}`),
   }
+}
+
+/**
+ * The result in what Claude printed: the last `result` line of a stream, or all of it when it printed
+ * one JSON document (`--output-format json`) or something that is not JSON at all.
+ */
+export function resultLine(stdout: string): string {
+  const lines = stdout.trim().split('\n')
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (lines[i].startsWith('{"type":"result"')) return lines[i]
+  }
+  return stdout
 }
 
 export function parseClaudeResult(exitCode: number, stdout: string, stderr: string): HarnessResult {

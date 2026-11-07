@@ -249,6 +249,29 @@ export const agentRun = pgTable('agent_run', {
 })
 
 /**
+ * What an agent did while it worked, step by step: what it said, each tool it called and what came back.
+ * One row per step, in the order it happened (`seq` within the task). The content is redacted and cut to
+ * 8 KB before it is written (`factory/transcript.ts`), and rows older than 30 days are deleted.
+ */
+export const agentEvent = pgTable(
+  'agent_event',
+  {
+    id: serial('id').primaryKey(),
+    taskId: integer('task_id')
+      .notNull()
+      .references(() => task.id),
+    role: text('role', { enum: ['builder', 'reviewer'] }).notNull(),
+    attempt: integer('attempt').notNull(),
+    seq: integer('seq').notNull(),
+    kind: text('kind', { enum: ['message', 'tool_use', 'tool_result', 'cost', 'error'] }).notNull(),
+    tool: text('tool'),
+    content: text('content').notNull(),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('agent_event_task_seq').on(t.taskId, t.seq)],
+)
+
+/**
  * What the supervisor found wrong with the factory itself. `stalled` is work that stopped moving.
  * `orphaned` is something that waits for a thing that is gone: a job nobody queued, a resume that never
  * ran, a snapshot no question needs. A finding stays open while it is true and resolves when it is not.

@@ -90,6 +90,8 @@ export function useResource<T>(
     // A page that asks GitHub for its data does not reload on every stage change of every task.
     const unsubscribe = stream
       ? subscribe((event) => {
+          // An agent's steps come many a second; only a stage change is worth reading the page again.
+          if (event.type !== 'stage') return
           if (only !== undefined && event.taskId !== only) return
           clearTimeout(pending)
           pending = setTimeout(reload, 150)

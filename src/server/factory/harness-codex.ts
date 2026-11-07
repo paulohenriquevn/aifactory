@@ -12,12 +12,14 @@ import { codexHomeOf, freshCodexLogin, hasCodexLogin, type CodexLogin } from './
 import {
   assertSessionId,
   detectQuota,
+  executeAgent,
   PROMPT_FILE,
   SUMMARY_MAX,
   type CodingHarness,
   type HarnessInput,
   type HarnessResult,
 } from './harness'
+import { codexEvents } from './transcript'
 import type { EgressRule } from './sandbox'
 
 /** Pinned so a new release cannot change what a run does. */
@@ -107,17 +109,15 @@ export function codexHarness(
         }))
       : undefined
 
-  async function invoke(
-    backend: SandboxBackend,
-    { prompt, cwd, timeoutMs }: HarnessInput,
-    resume: string,
-  ) {
-    await backend.uploadFile(PROMPT_FILE, prompt)
+  async function invoke(backend: SandboxBackend, input: HarnessInput, resume: string) {
+    await backend.uploadFile(PROMPT_FILE, input.prompt)
     const env = credential.kind === 'api-key' ? 'OPENAI_API_KEY=placeholder-not-a-secret ' : ''
     // `cwd` is a path the factory built, and `resume` was checked to be a UUID.
-    const result = await backend.execute(
-      `cd ${cwd} && ${env}${CODEX} exec${resume ? ` resume ${resume}` : ''}${model}${effort} --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json - < ${PROMPT_FILE}`,
-      { timeoutMs },
+    const result = await executeAgent(
+      backend,
+      `cd ${input.cwd} && ${env}${CODEX} exec${resume ? ` resume ${resume}` : ''}${model}${effort} --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --json - < ${PROMPT_FILE}`,
+      input,
+      codexEvents,
     )
     return parseCodexResult(result.exitCode, result.stdout, result.stderr)
   }

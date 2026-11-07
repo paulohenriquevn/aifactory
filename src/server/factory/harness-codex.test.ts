@@ -289,3 +289,29 @@ describe('codexHarness model and effort', () => {
     ).toThrow(/not a plain name/)
   })
 })
+
+describe('a watched Codex run', () => {
+  it('hands each completed step over while it works, and reads the result as before', async () => {
+    const stdout = [
+      line({ type: 'thread.started', thread_id: '019a0000-0000-7000-8000-000000000001' }),
+      line({ type: 'item.completed', item: { type: 'agent_message', text: 'Added it.' } }),
+      line({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } }),
+    ].join('\n')
+    const sandbox = new FakeSandbox(() => ({ stdout }), { streaming: true })
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [] })
+    const seen: unknown[] = []
+
+    const result = await codexHarness({ kind: 'api-key', secret: 'sk-real' }).run(backend, {
+      prompt: 'P',
+      cwd: '/work',
+      timeoutMs: 5,
+      onEvent: (event) => seen.push(event),
+    })
+
+    expect(result).toMatchObject({ ok: true, summary: 'Added it.' })
+    expect(seen).toEqual([
+      { kind: 'message', content: 'Added it.' },
+      { kind: 'cost', content: '10 tokens in, 5 out' },
+    ])
+  })
+})

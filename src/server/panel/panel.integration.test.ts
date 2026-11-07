@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import {
+  agentEvent,
   agentRun,
   decision,
   delivery,
@@ -35,6 +36,7 @@ import {
 import { health, inbox, listTasks, taskDetail } from './queries'
 import { retryWaiting, runDueRetries } from './retry-waiting'
 import { stageStream } from './stream'
+import { eventsOf, pruneTranscripts } from '../factory/transcript-store'
 
 beforeAll(async () => {
   getStorageManager().configure(storageFromUrl(readDatabaseUrl()))
@@ -42,7 +44,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table finding, agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table agent_event, finding, agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -564,6 +566,30 @@ describe('stageStream', () => {
     expect(text).not.toContain('"stage":"sandbox"')
   })
 
+  it("sends each step an agent takes after it connects, with the task's id, and not the old ones", async () => {
+    const id = await seed('build')
+    const step = (seq: number, content: string) => ({
+      taskId: id,
+      role: 'builder' as const,
+      attempt: 1,
+      seq,
+      kind: 'message' as const,
+      content,
+    })
+    await getDb().insert(agentEvent).values(step(1, 'old step'))
+    const abort = new AbortController()
+    const response = stageStream(getDb(), abort.signal, { intervalMs: 40, pingMs: 10_000 })
+
+    const reading = readFrames(response, (t) => t.includes('new step'))
+    await new Promise((r) => setTimeout(r, 120))
+    await getDb().insert(agentEvent).values(step(2, 'new step'))
+    const text = await reading
+    abort.abort()
+
+    expect(text).toContain(`"type":"agent","taskId":${id},"event":{"seq":2,"role":"builder"`)
+    expect(text).not.toContain('old step')
+  })
+
   it('pings when nothing happens, and stops when the client leaves', async () => {
     const abort = new AbortController()
     const response = stageStream(getDb(), abort.signal, { intervalMs: 20, pingMs: 60 })
@@ -981,5 +1007,62 @@ describe('resolving a finding', () => {
     const id = await open({ taskId, kind: 'orphaned', subject: 'answer_resume', ref: String(q.id) })
     await expect(resolveFinding(deps(), id, 'resume')).rejects.toThrow(/nothing to resume/)
     expect(resumed).toEqual([])
+  })
+})
+
+describe('a long transcript', () => {
+  it('of more than 5 thousand steps is read from where the client is, a page at a time', async () => {
+    const id = await seed('build')
+    const rows = Array.from({ length: 5_200 }, (_, i) => ({
+      taskId: id,
+      role: 'builder' as const,
+      attempt: 1,
+      seq: i + 1,
+      kind: 'tool_result' as const,
+      content: `line ${i + 1}`,
+    }))
+    for (let i = 0; i < rows.length; i += 1_000) {
+      await getDb()
+        .insert(agentEvent)
+        .values(rows.slice(i, i + 1_000))
+    }
+
+    const after = await eventsOf(getDb(), id, { afterSeq: 5_190 })
+    expect(after.map((e) => e.seq)).toEqual([
+      5191, 5192, 5193, 5194, 5195, 5196, 5197, 5198, 5199, 5200,
+    ])
+    expect(await eventsOf(getDb(), id, { afterSeq: 0, limit: 3 })).toHaveLength(3)
+  })
+
+  it('keeps 30 days of steps and deletes the older ones', async () => {
+    const id = await seed('done')
+    const now = new Date('2026-11-07T12:00:00Z')
+    const day = 86_400_000
+    const at = (days: number) => new Date(now.getTime() - days * day)
+    await getDb()
+      .insert(agentEvent)
+      .values([
+        {
+          taskId: id,
+          role: 'builder',
+          attempt: 1,
+          seq: 1,
+          kind: 'message',
+          content: 'a',
+          at: at(31),
+        },
+        {
+          taskId: id,
+          role: 'builder',
+          attempt: 1,
+          seq: 2,
+          kind: 'message',
+          content: 'b',
+          at: at(29),
+        },
+      ])
+
+    expect(await pruneTranscripts(getDb(), now)).toBe(1)
+    expect((await eventsOf(getDb(), id)).map((e) => e.content)).toEqual(['b'])
   })
 })

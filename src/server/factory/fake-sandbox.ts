@@ -1,6 +1,11 @@
 import { SandboxBackend } from '@theokit/agents/sandbox'
 
-import type { IsolatedSandbox, IsolatedSandboxProvider, SandboxSpec } from './sandbox'
+import type {
+  IsolatedSandbox,
+  IsolatedSandboxProvider,
+  SandboxSpec,
+  StreamingOptions,
+} from './sandbox'
 
 export type Reply = { stdout?: string; stderr?: string; exitCode?: number }
 
@@ -24,6 +29,15 @@ export class FakeBackend extends SandboxBackend {
   }
 }
 
+/** A `FakeBackend` that can also stream: it hands over each line of the scripted stdout, then the result. */
+export class StreamingFakeBackend extends FakeBackend {
+  async executeStreaming(command: string, opts: StreamingOptions) {
+    const result = await this.execute(command)
+    for (const line of result.stdout.split('\n').filter(Boolean)) opts.onStdoutLine(line)
+    return result
+  }
+}
+
 export class FakeSandbox implements IsolatedSandboxProvider {
   readonly name = 'fake'
   specs: SandboxSpec[] = []
@@ -33,8 +47,11 @@ export class FakeSandbox implements IsolatedSandboxProvider {
   deleted: string[] = []
   readonly backend: FakeBackend
 
-  constructor(answer: (command: string) => Reply | undefined = () => ({})) {
-    this.backend = new FakeBackend(answer)
+  constructor(
+    answer: (command: string) => Reply | undefined = () => ({}),
+    { streaming = false } = {},
+  ) {
+    this.backend = streaming ? new StreamingFakeBackend(answer) : new FakeBackend(answer)
   }
 
   async create(spec: SandboxSpec): Promise<IsolatedSandbox> {

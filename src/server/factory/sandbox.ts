@@ -18,6 +18,22 @@ export type SandboxSpec = {
   cacheKey?: string
 }
 
+export type ExecuteResult = Awaited<ReturnType<SandboxBackend['execute']>>
+
+export type StreamingOptions = { timeoutMs?: number; onStdoutLine: (line: string) => void }
+
+/**
+ * A backend that can also hand over a command's output line by line while it runs. `SandboxBackend`
+ * only returns it at the end (usetheokit/theokit-sdk#883), so a provider that can adds this, and a
+ * caller asks `streams` before using it.
+ */
+export type StreamingBackend = SandboxBackend & {
+  executeStreaming(command: string, opts: StreamingOptions): Promise<ExecuteResult>
+}
+
+export const streams = (backend: SandboxBackend): backend is StreamingBackend =>
+  typeof (backend as Partial<StreamingBackend>).executeStreaming === 'function'
+
 /**
  * A running sandbox: the TheoKit `SandboxBackend` the agent tools and the factory talk to, plus the
  * way to stop it. `SandboxBackend` has no lifecycle and no network policy, so both live here.

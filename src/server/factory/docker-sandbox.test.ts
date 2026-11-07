@@ -7,6 +7,7 @@ import {
   cacheVolume,
   dockerSandboxProvider,
   egressRules,
+  lineSplitter,
   orphanNetworks,
   proxyArgs,
   removeStaleSandboxes,
@@ -16,6 +17,7 @@ import {
   type Docker,
   type DockerResult,
 } from './docker-sandbox'
+import { streams } from './sandbox'
 
 describe('egressRules', () => {
   it('lists each destination, with the headers the proxy attaches, and nothing else', () => {
@@ -408,5 +410,50 @@ describe('the test suites and the real Docker', () => {
     const run = spawnSync('docker', ['ps'], { encoding: 'utf8' })
     expect(run.status).toBe(97)
     expect(run.stderr).toMatch(/never run the real docker/)
+  })
+})
+
+describe('reading a command while it runs', () => {
+  it('hands each line over once it is whole, however the output was cut, and the last one at the end', () => {
+    const seen: string[] = []
+    const split = lineSplitter((line) => seen.push(line))
+    split.push('{"a":')
+    split.push('1}\n{"b"')
+    split.push(':2}\r\n\n{"c":3}')
+    expect(seen).toEqual(['{"a":1}', '{"b":2}'])
+    split.end()
+    expect(seen).toEqual(['{"a":1}', '{"b":2}', '{"c":3}'])
+  })
+
+  it('streams the output of a command through the same timeout, and still returns all of it', async () => {
+    const calls: string[][] = []
+    const docker: Docker = async (args, opts) => {
+      calls.push(args)
+      if (!args.includes('timeout'))
+        return args[0] === 'run' && args.includes('cat') ? ok(CERT) : ok()
+      opts?.onStdout?.('one\ntw')
+      opts?.onStdout?.('o\n')
+      return { stdout: 'one\ntwo\n', stderr: 'warn', code: 0 }
+    }
+    const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
+    const lines: string[] = []
+    if (!streams(sandbox.backend)) throw new Error('the docker backend must stream')
+    const result = await sandbox.backend.executeStreaming('claude -p', {
+      timeoutMs: 5_000,
+      onStdoutLine: (line) => lines.push(line),
+    })
+
+    expect(lines).toEqual(['one', 'two'])
+    expect(result).toEqual({ stdout: 'one\ntwo\n', stderr: 'warn', exitCode: 0, timedOut: false })
+    expect(calls.find((c) => c.includes('timeout'))!.slice(-7)).toEqual([
+      'timeout',
+      '-k',
+      '5',
+      '5',
+      'sh',
+      '-c',
+      'claude -p',
+    ])
+    await sandbox.stop()
   })
 })

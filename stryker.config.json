@@ -26,7 +26,9 @@
     "src/server/factory/docker-sandbox.ts",
     "src/server/factory/sandbox-provider.ts",
     "src/server/knowledge/format.ts",
-    "src/server/knowledge/okf.ts"
+    "src/server/knowledge/okf.ts",
+    "src/server/factory/transcript.ts",
+    "src/app/lib/transcript.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

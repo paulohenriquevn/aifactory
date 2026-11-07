@@ -56,6 +56,8 @@ import {
   type SandboxSpec,
 } from './sandbox'
 import { enterStage } from './stages'
+import type { AgentEvent } from './transcript'
+import { Transcript } from './transcript-store'
 import { answerPrompt, parseQuestion, questionComment } from './waiting'
 
 /** Where a run is, kept outside it so a failure before the run exists is still reported at a stage. */
@@ -132,6 +134,8 @@ export class Run {
    * when there was none), then each commit the run pushed. A push replaces exactly that and nothing else.
    */
   remoteHead = ''
+  /** What the agents of this task do, written while they work. Opened by the first agent run. */
+  private transcript: Transcript | undefined
 
   private constructor(
     private readonly c: RunContext,
@@ -260,15 +264,17 @@ export class Run {
     who: CodingHarness,
     role: 'builder' | 'reviewer',
     attempt: number,
-    call: () => Promise<HarnessResult>,
+    call: (onEvent: (event: AgentEvent) => void) => Promise<HarnessResult>,
   ): Promise<HarnessResult> {
     const { db } = this.c.deps
     const { taskId } = this.c
+    this.transcript ??= await Transcript.open(db, taskId)
     const started = Date.now()
     let result: HarnessResult
     try {
-      result = await call()
+      result = await call(this.transcript.sink(role, attempt))
     } catch (error) {
+      await this.transcript.drain()
       // The agent did not come back (the sandbox died, say). It still ran, and that is on record.
       await db.insert(agentRun).values({
         taskId,
@@ -280,6 +286,7 @@ export class Run {
       })
       throw error
     }
+    await this.transcript.flush()
     this.cost += result.costUsd ?? 0
     await db.update(task).set({ costUsd: this.cost }).where(eq(task.id, taskId))
     await db.insert(agentRun).values({
@@ -445,8 +452,9 @@ export class Run {
         resuming.answer ?? '',
         resuming.answeredBy ?? 'a person',
       )
-      return this.settle(builder, 'builder', resuming.attempt, () =>
+      return this.settle(builder, 'builder', resuming.attempt, (onEvent) =>
         builder.resume!(backend, resuming.sessionId, {
+          onEvent,
           cwd: repoDir,
           timeoutMs: this.timeouts.agentMs,
           prompt,
@@ -458,8 +466,9 @@ export class Run {
       attempt: 1,
       ...(this.feed?.delivered ? { knowledge: this.feed.delivered } : {}),
     })
-    return this.settle(builder, 'builder', 1, () =>
+    return this.settle(builder, 'builder', 1, (onEvent) =>
       builder.run(backend, {
+        onEvent,
         cwd: repoDir,
         timeoutMs: this.timeouts.agentMs,
         prompt: buildPrompt({
@@ -580,8 +589,9 @@ export class Run {
       reviewer: this.reviewer.name,
       resolved: true,
     })
-    const result = await this.settle(this.reviewer, 'reviewer', 1, () =>
+    const result = await this.settle(this.reviewer, 'reviewer', 1, (onEvent) =>
       this.reviewer.run(this.backend, {
+        onEvent,
         cwd: this.repoDir,
         timeoutMs: this.timeouts.reviewMs ?? 10 * 60_000,
         prompt: resolvedPrompt({
@@ -653,8 +663,9 @@ export class Run {
       attempt,
       rework: true,
     })
-    const result = await this.settle(this.builder, 'builder', attempt, () =>
+    const result = await this.settle(this.builder, 'builder', attempt, (onEvent) =>
       this.builder.resume!(this.backend, this.sessionId!, {
+        onEvent,
         cwd: this.repoDir,
         timeoutMs: this.timeouts.agentMs,
         prompt: reworkPrompt({ findings, failedChecks: failed }),
@@ -747,8 +758,9 @@ export class Run {
     state.current = 'review'
     await enterStage(deps.db, taskId, 'review', { sha, attempt, reviewer: this.reviewer.name })
     const guards = await this.diffFacts()
-    const result = await this.settle(this.reviewer, 'reviewer', attempt, () =>
+    const result = await this.settle(this.reviewer, 'reviewer', attempt, (onEvent) =>
       this.reviewer.run(this.backend, {
+        onEvent,
         cwd: this.repoDir,
         timeoutMs: this.timeouts.reviewMs ?? 10 * 60_000,
         prompt: reviewPrompt({

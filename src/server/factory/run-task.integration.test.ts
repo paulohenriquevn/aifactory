@@ -33,6 +33,7 @@ import type { KnowledgeSource } from '../knowledge/source'
 import type { NewNote } from '../knowledge/store'
 
 import { FakeSandbox, type Reply } from './fake-sandbox'
+import { eventsOf } from './transcript-store'
 import type { CodingHarness } from './harness'
 import { mergeEgress, resumeTask, runTask, type RunTaskDeps } from './run-task'
 import { release } from './deliver'
@@ -47,7 +48,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
+    'truncate table agent_event, agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -2320,5 +2321,65 @@ describe('runTask with a knowledge base', () => {
 
     expect(prompts[0]).not.toContain('/tmp/knowledge')
     expect(knowledge.kept).toEqual([])
+  })
+})
+
+describe('the transcript of a run', () => {
+  const PLANTED = 'ghs_plantedTokenThatMustNeverBeStored01'
+
+  it('stores what each agent did, in order across the builder and the reviewer, with no token in it', async () => {
+    const id = await seedTask()
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async (_backend, input) => {
+        input.onEvent?.({ kind: 'message', content: 'Reading AGENTS.md.' })
+        input.onEvent?.({ kind: 'tool_use', tool: 'Bash', content: 'command: env' })
+        input.onEvent?.({ kind: 'tool_result', content: `GH_TOKEN=${PLANTED}` })
+        dirty = true
+        return { ok: true, summary: 'added truncate', costUsd: 0.12 }
+      },
+    }
+    const reviewer: CodingHarness = {
+      name: 'fake-reviewer',
+      egress: async () => [],
+      run: async (_backend, input) => {
+        input.onEvent?.({ kind: 'message', content: 'Looks right.' })
+        return { ok: true, summary: verdictJson('approve'), costUsd: 0.01 }
+      },
+    }
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    const events = await eventsOf(getDb(), id)
+    expect(events.map((e) => [e.seq, e.role, e.kind])).toEqual([
+      [1, 'builder', 'message'],
+      [2, 'builder', 'tool_use'],
+      [3, 'builder', 'tool_result'],
+      [4, 'reviewer', 'message'],
+    ])
+    expect(events[2].content).toBe('GH_TOKEN=[redacted]')
+    expect(JSON.stringify(events)).not.toContain(PLANTED)
+  })
+
+  it('reads only the events after the last one a client has', async () => {
+    const id = await seedTask()
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async (_backend, input) => {
+        for (let i = 1; i <= 5; i += 1) input.onEvent?.({ kind: 'message', content: `step ${i}` })
+        dirty = true
+        return { ok: true, summary: 'done', costUsd: 0.1 }
+      },
+    }
+    await runTask(deps(new FakeSandbox(changed()), { harness: builder }), id)
+
+    const after = await eventsOf(getDb(), id, { afterSeq: 3 })
+    expect(after.map((e) => e.content)).toEqual(['step 4', 'step 5'])
   })
 })

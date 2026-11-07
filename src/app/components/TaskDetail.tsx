@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
 
-import type { TaskDetail } from '../../shared/panel'
+import { columnOf, type TaskDetail } from '../../shared/panel'
 import { Pass, StageBadge } from './Badges'
 import { WatchPanel } from './WatchPanel'
 import { TaskActions } from './TaskActions'
+import { Transcript } from './Transcript'
 import { ago, describeEvent, money, shortSha } from '../lib/format'
 import { useResource } from '../lib/live'
 
@@ -137,6 +138,11 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
             </li>
           ))}
         </ol>
+      </section>
+
+      <section aria-label="Transcript">
+        <h2 className="mb-2 text-sm font-semibold">What the agents did</h2>
+        <Transcript taskId={task.id} live={columnOf(task.stage) === 'working'} />
       </section>
 
       {detail.runs.length > 0 ? (

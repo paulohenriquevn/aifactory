@@ -250,8 +250,25 @@ export type InboxItem = {
   at: string
 }
 
-/** Sent over the event stream whenever a task enters a stage. */
-export type StreamEvent = { type: 'stage'; taskId: number; stage: Stage; at: string }
+/** One step of an agent at work: what it said, a tool it called, what came back. */
+export type TranscriptEvent = {
+  /** The order of the step within the task, across every run of its agents. */
+  seq: number
+  role: 'builder' | 'reviewer'
+  attempt: number
+  kind: 'message' | 'tool_use' | 'tool_result' | 'cost' | 'error'
+  tool: string | null
+  content: string
+  at: string
+}
+
+/** A page of a task's transcript, oldest first. `more` says there are steps after the last one. */
+export type TranscriptPage = { events: TranscriptEvent[]; more: boolean }
+
+/** Sent over the event stream: a task entered a stage, or one of its agents took a step. */
+export type StreamEvent =
+  | { type: 'stage'; taskId: number; stage: Stage; at: string }
+  | { type: 'agent'; taskId: number; event: TranscriptEvent }
 
 export type RepositoryView = {
   fullName: string

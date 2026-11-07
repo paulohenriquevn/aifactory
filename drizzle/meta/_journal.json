@@ -134,6 +134,13 @@
       "when": 1794062385168,
       "tag": "0018_task_resolved_sha",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794064279551,
+      "tag": "0019_agent_event",
+      "breakpoints": true
     }
   ]
 }

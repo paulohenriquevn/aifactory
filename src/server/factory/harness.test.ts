@@ -7,7 +7,9 @@ import {
   claudeCodeHarness,
   claudeCredentialFromEnv,
   parseClaudeResult,
+  resultLine,
 } from './harness-claude'
+import type { AgentEvent } from './transcript'
 import { FakeSandbox } from './fake-sandbox'
 
 describe('parseClaudeResult', () => {
@@ -267,5 +269,63 @@ describe('claudeCodeHarness model and effort', () => {
     expect(() => claudeCodeHarness({ kind: 'api-key', secret: 'k' }, { effort: '$(id)' })).toThrow(
       /not a plain name/,
     )
+  })
+})
+
+describe('a watched Claude run', () => {
+  const stream = [
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 's' }),
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Reading.' }] },
+    }),
+    JSON.stringify({ type: 'result', is_error: false, result: 'done', total_cost_usd: 0.2 }),
+  ].join('\n')
+
+  it('streams JSON events and hands each step over, with the same result as an unwatched run', async () => {
+    const sandbox = new FakeSandbox(() => ({ stdout: stream }), { streaming: true })
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [] })
+    const seen: AgentEvent[] = []
+
+    const result = await claudeCodeHarness({ kind: 'api-key', secret: 'k' }).run(backend, {
+      prompt: 'P',
+      cwd: '/work',
+      timeoutMs: 5,
+      onEvent: (event) => seen.push(event),
+    })
+
+    expect(result).toEqual({ ok: true, summary: 'done', costUsd: 0.2 })
+    expect(seen).toEqual([
+      { kind: 'message', content: 'Reading.' },
+      { kind: 'cost', content: '$0.2000' },
+    ])
+    expect(sandbox.backend.commands[0]).toContain('--output-format stream-json --verbose')
+  })
+
+  it('prints one JSON document when nobody listens, or the sandbox cannot stream', async () => {
+    for (const [streaming, onEvent] of [
+      [true, undefined],
+      [false, () => {}],
+    ] as const) {
+      const sandbox = new FakeSandbox(() => ({ stdout: '{"result":"x"}' }), { streaming })
+      const { backend } = await sandbox.create({ timeoutMs: 1, egress: [] })
+      await claudeCodeHarness({ kind: 'api-key', secret: 'k' }).run(backend, {
+        prompt: 'P',
+        cwd: '/work',
+        timeoutMs: 5,
+        ...(onEvent ? { onEvent } : {}),
+      })
+      expect(sandbox.backend.commands[0]).toContain('--output-format json ')
+    }
+  })
+})
+
+describe('resultLine', () => {
+  it('takes the last result of a stream, and the whole output otherwise', () => {
+    expect(resultLine('{"type":"x"}\n{"type":"result","n":1}\n{"type":"result","n":2}\n')).toBe(
+      '{"type":"result","n":2}',
+    )
+    expect(resultLine('{"result":"x"}')).toBe('{"result":"x"}')
+    expect(resultLine('boom')).toBe('boom')
   })
 })

@@ -3,10 +3,17 @@ import { randomBytes } from 'node:crypto'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 import { SandboxBackend } from '@theokit/agents/sandbox'
 
-import type { IsolatedSandbox, IsolatedSandboxProvider, SandboxSpec } from './sandbox'
+import type {
+  ExecuteResult,
+  IsolatedSandbox,
+  IsolatedSandboxProvider,
+  SandboxSpec,
+  StreamingOptions,
+} from './sandbox'
 
 /** The exit code the TheoKit backends report for a command that hit its timeout. */
 const TIMED_OUT = 124
@@ -53,15 +60,24 @@ export function sandboxEnv(proxy: string): Record<string, string> {
 }
 
 export type DockerResult = { stdout: string; stderr: string; code: number }
+export type DockerOptions = {
+  input?: Buffer
+  /** Called with each piece of stdout as it arrives, before the command ends. */
+  onStdout?: (chunk: string) => void
+}
 /** Runs `docker` with these arguments. The provider takes it as a parameter so tests can script it. */
-export type Docker = (args: string[], opts?: { input?: Buffer }) => Promise<DockerResult>
+export type Docker = (args: string[], opts?: DockerOptions) => Promise<DockerResult>
 
 const realDocker: Docker = (args, opts = {}) =>
   new Promise((done, fail) => {
     const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] })
     const out: Buffer[] = []
     const err: Buffer[] = []
-    child.stdout.on('data', (d: Buffer) => out.push(d))
+    const decoder = new StringDecoder('utf8')
+    child.stdout.on('data', (d: Buffer) => {
+      out.push(d)
+      opts.onStdout?.(decoder.write(d))
+    })
     child.stderr.on('data', (d: Buffer) => err.push(d))
     child.on('error', fail)
     child.on('close', (code) =>
@@ -74,7 +90,7 @@ const realDocker: Docker = (args, opts = {}) =>
     child.stdin.end(opts.input)
   })
 
-async function must(docker: Docker, args: string[], opts: { input?: Buffer } = {}) {
+async function must(docker: Docker, args: string[], opts: DockerOptions = {}) {
   const result = await docker(args, opts)
   if (result.code !== 0) {
     throw new Error(
@@ -103,10 +119,29 @@ class DockerBackend extends SandboxBackend {
     super({ timeoutMs: DEFAULT_COMMAND_MS })
   }
 
-  async execute(command: string, opts: { timeoutMs?: number } = {}) {
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_COMMAND_MS
+  async execute(command: string, opts: { timeoutMs?: number } = {}): Promise<ExecuteResult> {
+    return this.run(command, opts.timeoutMs ?? DEFAULT_COMMAND_MS)
+  }
+
+  /** `execute`, handing over each line of stdout as it arrives (usetheokit/theokit-sdk#883). */
+  async executeStreaming(command: string, opts: StreamingOptions): Promise<ExecuteResult> {
+    const split = lineSplitter(opts.onStdoutLine)
+    try {
+      return await this.run(command, opts.timeoutMs ?? DEFAULT_COMMAND_MS, (chunk) =>
+        split.push(chunk),
+      )
+    } finally {
+      split.end()
+    }
+  }
+
+  private async run(
+    command: string,
+    timeoutMs: number,
+    onStdout?: (chunk: string) => void,
+  ): Promise<ExecuteResult> {
     const seconds = Math.max(1, Math.ceil(timeoutMs / 1000))
-    const result = await this.docker([
+    const args = [
       'exec',
       '-u',
       USER,
@@ -120,7 +155,8 @@ class DockerBackend extends SandboxBackend {
       'sh',
       '-c',
       command,
-    ])
+    ]
+    const result = await this.docker(args, onStdout ? { onStdout } : {})
     // A command killed with SIGKILL (137) is either one that ignored the timeout or one the kernel killed
     // for the sandbox's memory limit. Docker remembers the second, and it is not a timeout: saying so
     // is the difference between "make it faster" and "give it more memory".
@@ -172,6 +208,29 @@ class DockerBackend extends SandboxBackend {
       ],
       { input: data },
     )
+  }
+}
+
+/**
+ * Turns pieces of output into whole lines: `push` hands over each line once its end arrived, and `end`
+ * the last one, which may have none. Blank lines and the `\r` of a Windows line end are dropped.
+ */
+export function lineSplitter(onLine: (line: string) => void) {
+  let pending = ''
+  const emit = (line: string) => {
+    const trimmed = line.replace(/\r$/, '')
+    if (trimmed) onLine(trimmed)
+  }
+  return {
+    push(chunk: string) {
+      const parts = (pending + chunk).split('\n')
+      pending = parts.pop() ?? ''
+      parts.forEach(emit)
+    },
+    end() {
+      emit(pending)
+      pending = ''
+    },
   }
 }
 
