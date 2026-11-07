@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-import { dumpName, latest, prune } from './backup.mjs'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import { dumpName, latest, prune, verifyDump } from './backup.mjs'
 
 const at = (iso) => new Date(iso)
 
@@ -37,5 +41,52 @@ describe('prune', () => {
     expect(
       prune(['notes.txt', 'factory-20200101-0000.dump.counts.json', 'x.dump'], now, 14),
     ).toEqual([])
+  })
+})
+
+describe('the check that a dump can be restored', () => {
+  // A `docker` that behaves as `docker exec -i <container> pg_restore` does on the archive it reads from stdin:
+  // `--list` reads only the table of contents and exits, and anything else reads the whole archive and fails
+  // on one that ends early. A real archive here would need a real container, which these suites never start.
+  const FAKE = `#!/bin/sh
+case " $* " in
+  *" --list "*) head -c 64 >/dev/null; echo "; toc"; exit 0 ;;
+esac
+size=$(wc -c)
+if [ "$size" -lt "$(cat "$WHOLE")" ]; then echo "pg_restore: error: could not read from input file: end of file" >&2; exit 1; fi
+exit 0
+`
+  let dir
+  let path
+  const saved = process.env.PATH
+  const c = { container: 'pg', user: 'factory' }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'backup-check-'))
+    writeFileSync(join(dir, 'docker'), FAKE)
+    chmodSync(join(dir, 'docker'), 0o755)
+    process.env.PATH = `${dir}:${saved}`
+    process.env.WHOLE = join(dir, 'whole')
+    path = join(dir, 'factory.dump')
+  })
+
+  afterEach(() => {
+    process.env.PATH = saved
+    delete process.env.WHOLE
+  })
+
+  const dump = (bytes, whole = bytes) => {
+    writeFileSync(path, Buffer.alloc(bytes, 7))
+    writeFileSync(process.env.WHOLE, String(whole))
+  }
+
+  it('accepts a dump larger than a pipe holds', () => {
+    dump(4 * 1024 * 1024)
+    expect(() => verifyDump(c, path)).not.toThrow()
+  })
+
+  it('refuses a dump that ends before the archive does, with what pg_restore said', () => {
+    dump(1000, 5000)
+    expect(() => verifyDump(c, path)).toThrow(/factory\.dump cannot be restored: .*end of file/)
   })
 })

@@ -1,6 +1,6 @@
 // Daily backup of the factory's database, and the check that a backup can be restored.
 //
-//   node scripts/backup.mjs              dump, verify it can be read, prune old ones
+//   node scripts/backup.mjs              dump, verify pg_restore reads all of it, prune old ones
 //   node scripts/backup.mjs --check      restore the latest dump into a scratch database and compare counts
 //
 // The dump is made inside the Postgres container (so the client always matches the server), written to
@@ -71,6 +71,22 @@ export function countsOf(c, db) {
   )
 }
 
+/**
+ * Throws unless pg_restore reads the whole dump. `--list` was not enough: it reads only the table of contents,
+ * so it took a truncated dump for a good one, and it exits before reading the rest of stdin, which broke the
+ * pipe once a dump outgrew it (paulohenriquevn/aifactory#3). Restoring to /dev/null reads every block.
+ */
+export function verifyDump(c, path) {
+  const read = spawnSync('docker', ['exec', '-i', c.container, 'pg_restore', '-f', '/dev/null'], {
+    input: readFileSync(path),
+    maxBuffer: 1 << 30,
+  })
+  if (read.error) throw new Error(`${path} could not be checked: ${read.error.message}`)
+  if (read.status !== 0) {
+    throw new Error(`${path} cannot be restored: ${read.stderr.toString().trim()}`)
+  }
+}
+
 export function backup(c = cfg(), now = new Date()) {
   mkdirSync(c.dir, { recursive: true, mode: 0o700 })
   const name = dumpName(now)
@@ -79,8 +95,7 @@ export function backup(c = cfg(), now = new Date()) {
   writeFileSync(path, docker(c, ['pg_dump', '-U', c.user, '-Fc', c.db]), { mode: 0o600 })
   chmodSync(path, 0o600)
   const after = countsOf(c, c.db)
-  // A dump that cannot be listed is not a backup.
-  docker(c, ['pg_restore', '--list'], readFileSync(path))
+  verifyDump(c, path)
   writeFileSync(`${path}.counts.json`, JSON.stringify({ before, after }), { mode: 0o600 })
   const gone = prune(readdirSync(c.dir), now, c.keepDays)
   for (const f of gone) {
