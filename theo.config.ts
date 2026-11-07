@@ -2,8 +2,9 @@ import { config } from 'theokit'
 
 import { storageFromEnv } from './src/server/db/config'
 import { JOB_SHUTDOWN_WAIT_MS } from './src/server/factory/drain'
-import { LOCK_SECONDS } from './src/server/factory/lease'
 import { jobBackend } from './src/server/factory/job-backend'
+import { LOCK_SECONDS } from './src/server/factory/lease'
+import { mainProcessCronLock } from './src/server/factory/worker-only'
 
 /**
  * The project has two surfaces, and one of them is the whole backend.
@@ -22,7 +23,7 @@ export default config()
   .appDir('src/app')
   .serverDir('src/server')
   .agentsDir('src/server/agents')
-  .set({ storage: storageFromEnv(), jobs: jobsFromEnv() })
+  .set({ storage: storageFromEnv(), jobs: jobsFromEnv(), cron: cronFromEnv() })
   .build()
 
 /**
@@ -50,4 +51,14 @@ function jobsFromEnv(): TheoConfigJobs | undefined {
     },
   }
 }
+/**
+ * Each cron tick runs once, in the main process. Without this, a worker-only process could take the tick
+ * from the shared lock and skip it (see mainProcessCronLock), and the crons ran in about half the minutes.
+ */
+function cronFromEnv() {
+  // Without the job backend, the framework has no lock to give; it was the same before this lock.
+  if (!jobsFromEnv()) return undefined
+  return { lock: mainProcessCronLock(jobBackend().cronLock()) }
+}
+
 type TheoConfigJobs = NonNullable<Parameters<ReturnType<typeof config>['set']>[0]['jobs']>

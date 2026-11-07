@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isWorkerOnly, mainProcessOnly } from './worker-only'
+import { isWorkerOnly, mainProcessCronLock, mainProcessOnly } from './worker-only'
 
 describe('isWorkerOnly', () => {
   it('is on only for FACTORY_WORKER_ONLY=1', () => {
@@ -36,5 +36,40 @@ describe('mainProcessOnly', () => {
       throw new Error('boom')
     }, {})
     await expect(run()).rejects.toThrow('boom')
+  })
+})
+
+describe('mainProcessCronLock', () => {
+  const tick = new Date('2026-11-07T13:50:00Z')
+  const shared = () => {
+    const asked: string[] = []
+    return {
+      asked,
+      lock: {
+        acquire: async (name: string, at: Date) => {
+          asked.push(`${name}@${at.toISOString()}`)
+          return true
+        },
+      },
+    }
+  }
+
+  it('never takes a tick in a worker-only process, so it cannot leave the main process without it', async () => {
+    const { asked, lock } = shared()
+    const ours = mainProcessCronLock(lock, { FACTORY_WORKER_ONLY: '1' })
+    expect(await ours.acquire('knowledge-sync', tick)).toBe(false)
+    expect(asked).toEqual([])
+  })
+
+  it('asks the shared lock in the main process, so two of them still fire a tick once', async () => {
+    const { asked, lock } = shared()
+    const ours = mainProcessCronLock(lock, {})
+    expect(await ours.acquire('knowledge-sync', tick)).toBe(true)
+    expect(asked).toEqual(['knowledge-sync@2026-11-07T13:50:00.000Z'])
+  })
+
+  it('says no when the shared lock says no', async () => {
+    const ours = mainProcessCronLock({ acquire: async () => false }, {})
+    expect(await ours.acquire('supervise', tick)).toBe(false)
   })
 })

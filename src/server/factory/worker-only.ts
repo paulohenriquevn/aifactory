@@ -14,3 +14,19 @@ export const mainProcessOnly =
   <T>(handler: () => Promise<T>, env: NodeJS.ProcessEnv = process.env) =>
   async (): Promise<T | undefined> =>
     isWorkerOnly(env) ? undefined : handler()
+
+/** The lock `theokit start` asks before each cron tick (`cron.lock` in `theo.config.ts`). */
+export type CronLock = { acquire(name: string, scheduledAt: Date): Promise<boolean> }
+
+/**
+ * The cron lock of the factory. Every process schedules the crons, and the shared lock gives each tick to
+ * one of them, so a worker-only process that took a tick and did nothing left that minute without its cron.
+ * A worker-only process never takes one; the main processes share the tick through the lock.
+ */
+export const mainProcessCronLock = (
+  shared: CronLock,
+  env: NodeJS.ProcessEnv = process.env,
+): CronLock => ({
+  acquire: async (name, scheduledAt) =>
+    isWorkerOnly(env) ? false : shared.acquire(name, scheduledAt),
+})
