@@ -216,6 +216,20 @@ describe('reading a verdict, at its edges', () => {
 
 describe('what the builder is told, at its edges', () => {
   it('mentions failing checks only when there are some, and findings only when there are some', () => {
+    const named = reworkPrompt({
+      findings: [],
+      failedChecks: [],
+      checks: [{ name: 'check', command: 'pnpm check' }],
+    })
+    expect(named).toContain('run what the factory runs on your commit')
+    expect(named).toContain('  - `pnpm check`')
+    expect(
+      notResolvedPrompt({
+        summary: 's',
+        findings: [],
+        checks: [{ name: 't', command: 'npm test' }],
+      }),
+    ).toContain('  - `npm test`')
     const none = reworkPrompt({ findings: [], failedChecks: [] })
     expect(none).toContain('Your change was not accepted.')
     expect(none).not.toContain('These checks failed')

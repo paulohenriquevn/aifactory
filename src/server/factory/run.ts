@@ -494,6 +494,7 @@ export class Run {
           feedback: continuation?.feedback,
           askQuestions: this.c.repo.askQuestions,
           knowledgeDir: this.feed?.dir,
+          checks: this.checks,
         }),
       }),
     )
@@ -617,7 +618,11 @@ export class Run {
         onEvent,
         cwd: this.repoDir,
         timeoutMs: this.timeouts.agentMs,
-        prompt: notResolvedPrompt({ summary: outcome.summary, findings: outcome.findings }),
+        prompt: notResolvedPrompt({
+          summary: outcome.summary,
+          findings: outcome.findings,
+          checks: this.checks,
+        }),
       }),
     )
     if (!result.ok) throw new StageFailure(`the agent did not finish: ${result.summary}`)
@@ -719,7 +724,7 @@ export class Run {
         onEvent,
         cwd: this.repoDir,
         timeoutMs: this.timeouts.agentMs,
-        prompt: reworkPrompt({ findings, failedChecks: failed }),
+        prompt: reworkPrompt({ findings, failedChecks: failed, checks: this.checks }),
       }),
     )
     if (!result.ok) throw new StageFailure(`the agent did not finish the rework: ${result.summary}`)

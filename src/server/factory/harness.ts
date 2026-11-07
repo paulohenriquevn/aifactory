@@ -2,6 +2,7 @@ import { knowledgeRules, LEARNED_RULE } from '../knowledge/prompt'
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 
 import { streams, type EgressRule, type ExecuteResult } from './sandbox'
+import type { CheckSpec } from './evidence'
 import type { AgentEvent } from './transcript'
 
 export type HarnessInput = {
@@ -92,6 +93,17 @@ export const SUMMARY_MAX = 20_000
 
 export const PROMPT_FILE = '/tmp/factory-prompt.md'
 
+/**
+ * The commands the factory runs on the agent's commit, as a rule of the prompt, or nothing when there are none.
+ * An agent that knows only "run the project's tests" fixes a test and leaves the lint red.
+ */
+export function checksRule(checks: CheckSpec[] | undefined): string {
+  if (!checks?.length) return ''
+  return `- Before you finish, run what the factory runs on your commit, in the repository root, and fix what fails:\n${checks
+    .map((c) => `  - \`${c.command}\``)
+    .join('\n')}\n`
+}
+
 export function buildPrompt(input: {
   repo: string
   issueNumber: number
@@ -104,6 +116,8 @@ export function buildPrompt(input: {
   askQuestions?: boolean
   /** Where the knowledge base is in the sandbox, when the factory delivered one. */
   knowledgeDir?: string
+  /** What the factory runs on the commit. */
+  checks?: CheckSpec[]
 }): string {
   return `You are working on the repository ${input.repo}, on the branch ${input.branch}.
 
@@ -119,11 +133,11 @@ Rules:
 - Keep the change small and limited to what the issue asks.
 - Do not run git commit, git push or any other git command that writes. The factory commits and pushes.
 - Do not edit anything under .github/.
-${
-  input.askQuestions === false
-    ? '- Nobody is there to answer a question, so do not ask one. When a decision is missing, choose the most reasonable option, say in your final message what you assumed, and go on.'
-    : '- If you cannot go on without a decision only a person can make, do not guess. Leave the repository as it is and end your final message with a line that starts with `QUESTION:`, followed by one specific question (offer the options you see).'
-}
+${checksRule(input.checks)}${
+    input.askQuestions === false
+      ? '- Nobody is there to answer a question, so do not ask one. When a decision is missing, choose the most reasonable option, say in your final message what you assumed, and go on.'
+      : '- If you cannot go on without a decision only a person can make, do not guess. Leave the repository as it is and end your final message with a line that starts with `QUESTION:`, followed by one specific question (offer the options you see).'
+  }
 ${input.knowledgeDir ? `${LEARNED_RULE}\n` : ''}- Finish with a short summary of what you changed.
 ${input.knowledgeDir ? `\n${knowledgeRules(input.knowledgeDir)}\n` : ''}${
     input.feedback

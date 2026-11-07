@@ -204,6 +204,28 @@ describe('buildPrompt', () => {
     expect(prompt).toMatch(/Do not run git commit, git push/)
   })
 
+  it('names the commands the factory runs on the commit, so the agent runs them before it finishes', () => {
+    const prompt = buildPrompt({
+      repo: 'o/r',
+      issueNumber: 1,
+      title: 't',
+      body: 'b',
+      branch: 'x',
+      checks: [
+        { name: 'tests', command: 'pnpm test' },
+        { name: 'check', command: 'pnpm check' },
+      ],
+    })
+    expect(prompt).toContain(
+      '- Before you finish, run what the factory runs on your commit, in the repository root, and fix what fails:\n  - `pnpm test`\n  - `pnpm check`',
+    )
+  })
+
+  it('names no commands when the factory has none to run', () => {
+    const prompt = buildPrompt({ repo: 'o/r', issueNumber: 1, title: 't', body: 'b', branch: 'x' })
+    expect(prompt).not.toContain('Before you finish, run what the factory runs')
+  })
+
   it('lets the agent ask by default, with a QUESTION: line', () => {
     const prompt = buildPrompt({ repo: 'o/r', issueNumber: 1, title: 't', body: 'b', branch: 'x' })
     expect(prompt).toContain('QUESTION:')

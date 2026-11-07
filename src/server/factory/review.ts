@@ -1,4 +1,6 @@
 import { knowledgeRules } from '../knowledge/prompt'
+import type { CheckSpec } from './evidence'
+import { checksRule } from './harness'
 
 export type Severity = 'blocker' | 'major' | 'minor'
 
@@ -162,13 +164,18 @@ export function renderFindings(findings: Finding[]): string {
  * What the builder is told when it said the issue needs no change and the reviewer, reading the code,
  * found it is not resolved. It may still be right that the work cannot be done here, so it may say so.
  */
-export function notResolvedPrompt(input: { summary: string; findings: Finding[] }): string {
+export function notResolvedPrompt(input: {
+  summary: string
+  findings: Finding[]
+  checks?: CheckSpec[]
+}): string {
   return [
     'You changed nothing and said the issue needs no change. A reviewer read the code and found it is not resolved:',
     input.summary,
     ...(input.findings.length > 0 ? [renderFindings(input.findings)] : []),
     'Make the change the issue asks for, with tests, and run them. Where the code differs from what the issue names (a file, a type or a function that is not there), build on what is there and say in your final message what you assumed.',
     'Change nothing only when the work truly cannot be done in this repository, because it needs something outside it (another package, a release, an account, a person). Then say exactly what is missing.',
+    ...(input.checks?.length ? [checksRule(input.checks).trimEnd()] : []),
     'Do not run git commit or git push: the factory commits and pushes. Finish with a short summary.',
   ].join('\n\n')
 }
@@ -177,6 +184,7 @@ export function notResolvedPrompt(input: { summary: string; findings: Finding[] 
 export function reworkPrompt(input: {
   findings: Finding[]
   failedChecks: { command: string; output: string }[]
+  checks?: CheckSpec[]
 }): string {
   const parts = [
     'Your change was not accepted. Fix what follows, then finish with a short summary.',
@@ -192,6 +200,7 @@ export function reworkPrompt(input: {
   if (input.findings.length > 0) {
     parts.push('A reviewer found:', renderFindings(input.findings))
   }
+  if (input.checks?.length) parts.push(checksRule(input.checks).trimEnd())
   parts.push(
     'Keep the change limited to what the issue asks. Do not run git commit or git push: the factory commits and pushes.',
   )
