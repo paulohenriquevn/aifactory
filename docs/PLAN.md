@@ -78,9 +78,9 @@ local inspecionado em 2026-11-03.
 | M7    | Saúde e qualidade                                              | Custo por execução, achados tipados do supervisor como `stalled` e `orphaned`, gates CRAP, duplicação e mutação                                                                                                         | Concluído    |
 | M8    | Operação contínua                                              | A fábrica volta sozinha depois de um reboot, recupera webhooks perdidos e tem backup restaurável do banco                                                                                                               | Concluído    |
 | M9    | Painel com os componentes do TheoKit UI                        | O painel usa `@usetheo/ui` e `@theokit/ui`, com quadro e lista, painel lateral e tela cheia                                                                                                                             | Concluído    |
-| M10   | Repositórios e configurações                                   | Só repositórios habilitados geram task; agentes, checks, domínios e release por repositório; primeiro projeto real                                                                                                      | Não iniciado |
-| M11   | Novo job pelo painel                                           | O painel abre a issue com a label e a task nasce pelo caminho normal do webhook                                                                                                                                         | Não iniciado |
-| M12   | Transcrição ao vivo                                            | O painel mostra o que o agente faz enquanto faz, e o transcript fica gravado                                                                                                                                            | Não iniciado |
+| M10   | Repositórios e configurações                                   | Só repositórios habilitados geram task; agentes, checks, domínios e release por repositório; primeiro projeto real                                                                                                      | Parcial      |
+| M11   | Novo job pelo painel                                           | O painel abre a issue com a label e a task nasce pelo caminho normal do webhook                                                                                                                                         | Concluído    |
+| M12   | Transcrição ao vivo                                            | O painel mostra o que o agente faz enquanto faz, e o transcript fica gravado                                                                                                                                            | Concluído    |
 | M13   | Conversa com os agentes                                        | O Paulo escreve para a instância que está implementando, ou para uma que parou, pelo painel                                                                                                                             | Não iniciado |
 | M14   | Painel acessível de fora                                       | O painel abre fora desta máquina, atrás de um acesso próprio, sem abrir o resto                                                                                                                                         | Não iniciado |
 | M15   | Painel como chat                                               | Menu lateral e abas Chat/Work no visual do ChatGPT, com um assistente conversacional (OpenRouter ou assinatura do ChatGPT) que lê a fábrica e só age com aprovação; conversas salvas no Postgres                        | Concluído    |
@@ -749,6 +749,25 @@ exceeded`, com reset em 2026-12-01, e nenhum sandbox novo pôde ser criado: o al
   assistente usa a chave `ANTHROPIC_API_KEY` da fábrica (uma assinatura não serve a isto), custa cerca de
   um centavo por ajuda, e a página Setup mostra se está ligado. Um teste falha se uma caixa de texto ficar
   sem assistente.
+- Transcrição ao vivo, M12 (2026-11-07). O construtor e o revisor gravam cada passo em `agent_event` enquanto
+  trabalham: o Claude Code roda com `stream-json --verbose` e o Codex com `exec --json`, o sandbox Docker lê a
+  saída linha a linha (`executeStreaming`; o `SandboxBackend` do TheoKit só devolve no fim,
+  usetheokit/theokit-sdk#883), e cada linha vira um passo redigido (formatos de token do GitHub, Anthropic,
+  OpenAI e Vercel) e cortado em 8 KB. O painel recebe os passos pela mesma conexão SSE que já usava e lê o
+  histórico de 500 em 500; um cron diário apaga o que passou de 30 dias. Observado ao vivo: a task 187 tinha
+  20 passos legíveis pelo painel com o agente ainda em `build` (primeiro às 15:41:59 UTC, fim às 15:43:53), e
+  o stream entregou os passos da task 177 enquanto ela trabalhava. O primeiro deploy mostrou um caso que os
+  testes não tinham: o Claude Code 2.1.319 imprime a linha de resultado com `duration_api_ms` antes de
+  `type`, e a busca pelo começo da linha a perdia, então duas tasks falharam com "without a JSON result"
+  até a correção (a linha agora é lida como JSON). Ficou de fora o adapter da Vercel, sem cota até
+  2026-12-01.
+- Novo job pelo painel, M11: os quatro critérios têm teste; o último a ganhar o seu foi o GitHub recusar a
+  issue, quando o formulário mostra o motivo e nenhuma task fica.
+- Receita do projeto, M10 (2026-11-07): `.factory/setup.json` lida da branch padrão pela API antes de existir
+  sandbox, precedência painel, receita, padrão, e os domínios só depois de aprovados na página Repositories,
+  que mostra o que a próxima execução passaria a alcançar. Falta do M10: o teste ao vivo contra um domínio de
+  teste, e remover o webhook do playground, que pede o escopo `admin:repo_hook` que o `gh` desta máquina não
+  tem.
 - Readiness sem `DATABASE_URL`: o servidor sobe e `/api/ready` responde 503 com o motivo. Com
   uma URL que não é `postgres://`, o `theokit` recusa iniciar.
 
