@@ -16,7 +16,7 @@ const none: KnowledgeStatus = {
   memoryBranch: 'factory-memory',
   knowledgeSha: null,
   memorySha: null,
-  formatProblem: null,
+  okfProblems: [],
   syncedAt: null,
   error: null,
   errorAt: null,
@@ -102,16 +102,39 @@ describe('choosing the knowledge base in the panel', () => {
     })
   })
 
-  it('offers to propose the structure when the agents do not read the repository yet', async () => {
-    serve({ ...chosen, formatProblem: 'MEMORY.md is missing' })
+  it('lists what does not conform to OKF, says the agents read it anyway, and offers the structure', async () => {
+    serve({
+      ...chosen,
+      okfProblems: [
+        'index.md is missing at the root',
+        'a.md has no front matter',
+        '3',
+        '4',
+        '5',
+        '6',
+      ],
+    })
     api.post.mockResolvedValueOnce({ url: 'https://github.com/me/kb/pull/3' })
     mount()
+
+    expect((await screen.findByText(/Os agentes já leem este repositório/)).textContent).toMatch(
+      /sem mudar nenhum texto que já existe/,
+    )
+    expect(screen.getByText('a.md has no front matter')).toBeTruthy()
+    expect(screen.queryByText('6')).toBeNull()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Propor a estrutura' }))
 
     const link = await screen.findByRole('link', { name: 'https://github.com/me/kb/pull/3' })
     expect(link.getAttribute('href')).toBe('https://github.com/me/kb/pull/3')
     expect(api.post).toHaveBeenCalledWith('/api/panel/knowledge/template')
+  })
+
+  it('offers nothing to propose when the repository conforms', async () => {
+    serve(chosen)
+    mount()
+    await screen.findByText(/me\/kb/)
+    expect(screen.queryByRole('button', { name: 'Propor a estrutura' })).toBeNull()
   })
 
   it('shows a failed sync and that the agents keep the last good commit', async () => {

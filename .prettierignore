@@ -14,3 +14,8 @@ yarn.lock
 drizzle/meta
 .stryker-tmp
 reports
+
+# The knowledge template is published into the owner's repository as an Open Knowledge Format bundle, and
+# its exact text is what the factory proposes: `okf_version: "0.2"` and `*` list items, as the specification
+# writes them.
+templates/knowledge

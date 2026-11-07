@@ -11,20 +11,23 @@ import type { GithubApi } from '../github/pulls'
 
 import {
   assertRepository,
-  checkIndex,
-  FORMAT,
-  frontMatter,
+  conformingCopy,
   indexedNote,
   KnowledgeFormatError,
+  logDay,
   MEMORY_BRANCH,
-  MEMORY_README,
+  noteLogEntry,
   notePath,
-  renderIndex,
+  notesFolder,
+  notesLogTitle,
+  renderMemoryRoot,
   renderNote,
+  renderNotesIndex,
   type IndexedNote,
   type Note,
 } from './format'
 import { Mirror, mirrorDir } from './mirror'
+import { conformance, isReserved, logWith, OKF_VERSION } from './okf'
 import {
   loadKnowledgeConfig,
   loadSyncState,
@@ -42,6 +45,10 @@ export const TEMPLATE_BRANCH = 'factory-knowledge-setup'
 
 /** The most notes one pass writes, so a backlog of notes cannot make one pass run for long. */
 const NOTES_PER_PASS = 100
+
+/** The most markdown files of the rules checked against OKF, and the most problems kept to show. */
+const MAX_CHECKED_FILES = 2_000
+const MAX_PROBLEMS = 50
 
 /** What the owner has to change before the factory accepts the setting. */
 export class KnowledgeRefused extends Error {}
@@ -89,13 +96,24 @@ async function context(deps: KnowledgeDeps, config: KnowledgeConfig): Promise<Co
   }
 }
 
-/** The notes of each project already on the memory branch, as its index lists them. */
+/** The projects that have notes on the memory branch. */
+async function projectsOn(c: Context, memorySha: string | undefined): Promise<string[]> {
+  if (!memorySha) return []
+  const projects = new Set<string>()
+  for (const file of await c.mirror.list(memorySha, ['memory/projects/'])) {
+    const match = /^memory\/projects\/([^/]+\/[^/]+)\//.exec(file.path)
+    if (match) projects.add(match[1])
+  }
+  return [...projects]
+}
+
+/** The notes of one project already on the memory branch, as its index lists them. */
 async function notesOn(c: Context, memorySha: string | undefined, repository: string) {
   if (!memorySha) return []
-  const folder = `memory/projects/${repository}/`
+  const folder = notesFolder(repository)
   const listed: IndexedNote[] = []
   for (const file of await c.mirror.list(memorySha, [folder])) {
-    if (file.path === `${folder}INDEX.md`) continue
+    if (isReserved(file.path)) continue
     const text = await c.mirror.read(memorySha, file.path)
     const note = text ? indexedNote(file.path, text.toString('utf8')) : undefined
     if (note) listed.push(note)
@@ -116,19 +134,28 @@ async function writeNotes(c: Context, memorySha: string | undefined): Promise<st
     byProject.set(note.repository, [...(byProject.get(note.repository) ?? []), note])
 
   const files: { path: string; content: string }[] = []
-  if (!memorySha) files.push({ path: 'README.md', content: MEMORY_README })
   for (const [project, kept] of byProject) {
+    const folder = notesFolder(project)
     const written = kept.map((note) => ({ path: notePath(note), content: renderNote(note) }))
     files.push(...written)
     const listed = [
       ...(await notesOn(c, memorySha, project)),
       ...written.flatMap((f) => indexedNote(f.path, f.content) ?? []),
     ]
+    files.push({ path: `${folder}index.md`, content: renderNotesIndex(project, listed, c.now) })
+    const log = memorySha ? await c.mirror.read(memorySha, `${folder}log.md`) : undefined
     files.push({
-      path: `memory/projects/${project}/INDEX.md`,
-      content: renderIndex(project, listed, c.now),
+      path: `${folder}log.md`,
+      content: logWith(
+        log?.toString('utf8'),
+        notesLogTitle(project),
+        logDay(c.now),
+        kept.map(noteLogEntry),
+      ),
     })
   }
+  const projects = new Set([...(await projectsOn(c, memorySha)), ...byProject.keys()])
+  files.push({ path: 'index.md', content: renderMemoryRoot([...projects]) })
   const commit = await c.mirror.commit({
     parent: memorySha,
     files,
@@ -147,8 +174,29 @@ async function writeNotes(c: Context, memorySha: string | undefined): Promise<st
   return commit
 }
 
+/** The markdown files of the rules at a commit, as text, up to the most a check reads. */
+async function markdownAt(c: Context, sha: string) {
+  const files: { path: string; text: string }[] = []
+  const listed = (await c.mirror.list(sha, ['.'])).filter((f) => /\.md$/i.test(f.path))
+  for (const file of listed.slice(0, MAX_CHECKED_FILES)) {
+    const content = await c.mirror.read(sha, file.path)
+    if (content) files.push({ path: file.path, text: content.toString('utf8') })
+  }
+  return files
+}
+
+/** What in the rules does not conform to OKF. */
+async function checkRules(c: Context, sha: string): Promise<string[]> {
+  const files = await markdownAt(c, sha)
+  const root = files.find((f) => f.path === 'index.md')?.text
+  const problems = conformance(root, files)
+  return problems.length > MAX_PROBLEMS
+    ? [...problems.slice(0, MAX_PROBLEMS), `and ${problems.length - MAX_PROBLEMS} more`]
+    : problems
+}
+
 /**
- * One pass: fetches the rules and the memory branch into the mirror, checks the index, writes the pending
+ * One pass: fetches the rules and the memory branch into the mirror, checks the rules against OKF, writes the pending
  * notes, and records where everything is. A pass that fails records why, keeps the last good commits (the
  * agents go on reading them) and throws.
  */
@@ -170,15 +218,17 @@ export async function syncKnowledge(deps: KnowledgeDeps): Promise<SyncState | un
       )
     }
     const fetchedMemory = await c.mirror.fetch(c.url, MEMORY_BRANCH, c.token)
-    const index = await c.mirror.read(knowledgeSha, 'MEMORY.md')
-    const format = checkIndex(index?.toString('utf8'))
+    const okf =
+      kept.okf?.knowledgeSha === knowledgeSha
+        ? kept.okf
+        : { knowledgeSha, problems: await checkRules(c, knowledgeSha) }
     const memorySha = await writeNotes(c, fetchedMemory)
     const state: SyncState = {
       repository: config.repository,
       branch,
       knowledgeSha,
       memorySha,
-      format,
+      okf,
       syncedAt: c.now.toISOString(),
     }
     await saveSyncState(deps.db, state)
@@ -292,26 +342,10 @@ export function templateFiles(dir: string): { path: string; content: string }[] 
 }
 
 /**
- * The MEMORY.md the pull request proposes: the template's when there is none, the owner's own with the
- * format added when it has no front matter. One in another format is refused, since rewriting it is not
- * the factory's call.
- */
-export function proposedIndex(existing: string | undefined, template: string): string | undefined {
-  if (existing === undefined) return template
-  if (checkIndex(existing).ok) return undefined
-  const format = frontMatter(existing).format
-  if (format) {
-    throw new KnowledgeRefused(`MEMORY.md says format ${format}; change it to ${FORMAT} by hand`)
-  }
-  if (/^---\r?\n/.test(existing)) {
-    return existing.replace(/^---\r?\n/, `---\nformat: ${FORMAT}\n`)
-  }
-  return `---\nformat: ${FORMAT}\n---\n\n${existing}`
-}
-
-/**
- * Opens a pull request that turns the knowledge repository into this format: the template's files that are
- * missing, and the format in MEMORY.md. Nothing reaches the owner's branch unless they merge it.
+ * Opens a pull request that makes the knowledge repository an OKF bundle the factory reads: the template's
+ * files that are missing, and front matter for each markdown file that has none or no type. A file whose
+ * front matter is not YAML is left for the owner and named in the pull request. Nothing reaches the
+ * owner's branch unless they merge it.
  */
 export async function proposeTemplate(
   deps: KnowledgeDeps,
@@ -323,21 +357,33 @@ export async function proposeTemplate(
   })
   if (!state?.knowledgeSha) throw new KnowledgeRefused(`${config.repository} could not be read`)
   const c = await context(deps, config)
-  const present = new Set((await c.mirror.list(state.knowledgeSha, ['.'])).map((f) => f.path))
-  const template = templateFiles(deps.templateDir ?? defaultTemplateDir())
-  const files = template.filter((f) => f.path !== 'MEMORY.md' && !present.has(f.path))
-  const index = proposedIndex(
-    (await c.mirror.read(state.knowledgeSha, 'MEMORY.md'))?.toString('utf8'),
-    template.find((f) => f.path === 'MEMORY.md')?.content ?? `---\nformat: ${FORMAT}\n---\n`,
+  const present = await markdownAt(c, state.knowledgeSha)
+  const presentPaths = new Set((await c.mirror.list(state.knowledgeSha, ['.'])).map((f) => f.path))
+  const added = templateFiles(deps.templateDir ?? defaultTemplateDir()).filter(
+    (f) => !presentPaths.has(f.path),
   )
-  if (index !== undefined) files.unshift({ path: 'MEMORY.md', content: index })
+  const changed: { path: string; content: string }[] = []
+  const byHand: string[] = []
+  for (const file of present) {
+    const copy = conformingCopy(file.path, file.text)
+    if (copy.content !== undefined) changed.push({ path: file.path, content: copy.content })
+    if (copy.byHand) byHand.push(`\`${file.path}\` ${copy.byHand}`)
+  }
+  const files = [...added, ...changed]
   if (files.length === 0) {
-    throw new KnowledgeRefused(`${config.repository} already has every file of the template`)
+    throw new KnowledgeRefused(
+      byHand.length > 0
+        ? `nothing the factory can fix: ${byHand.join('; ')}`
+        : `${config.repository} is already an OKF ${OKF_VERSION} bundle`,
+    )
   }
   const commit = await c.mirror.commit({
     parent: state.knowledgeSha,
     files,
-    message: `Set up the factory's knowledge base format\n\nAdds ${files.map((f) => f.path).join(', ')}.\n`,
+    message: `Make this repository an OKF ${OKF_VERSION} bundle for the factory\n\n${[
+      ...added.map((f) => `Adds ${f.path}.`),
+      ...changed.map((f) => `Adds front matter to ${f.path}.`),
+    ].join('\n')}\n`,
     author: deps.author,
     date: c.now,
   })
@@ -345,14 +391,23 @@ export async function proposeTemplate(
   const pull = await deps.api.openPullRequest(config.repository, c.token, {
     head: TEMPLATE_BRANCH,
     base: state.branch,
-    title: 'Set up this repository as the factory knowledge base',
+    title: 'Make this repository the factory knowledge base, in the Open Knowledge Format',
     body: [
-      `The aifactory reads this repository as its knowledge base, in the format \`${FORMAT}\`.`,
-      'This pull request adds what the format needs and changes nothing that is already here:',
+      `The aifactory reads this repository as its knowledge base, an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) ${OKF_VERSION} bundle.`,
+      'This pull request adds what is missing and changes no text that is already here:',
       '',
-      ...files.map((f) => `- \`${f.path}\``),
+      ...added.map((f) => `- adds \`${f.path}\``),
+      ...changed.map((f) => `- adds front matter to \`${f.path}\``),
+      ...(byHand.length > 0
+        ? [
+            '',
+            'These need a person, since their front matter is not YAML the factory can read:',
+            '',
+            ...byHand.map((p) => `- ${p}`),
+          ]
+        : []),
       '',
-      'README.md in this pull request says how the repository is organized. Rules go under `knowledge/`;',
+      'README.md says how the repository is organized. Rules go under `knowledge/`;',
       `the factory writes its own notes to the \`${MEMORY_BRANCH}\` branch and never to this one.`,
     ].join('\n'),
   })
@@ -374,7 +429,7 @@ export async function knowledgeStatus(db: Database): Promise<KnowledgeStatus> {
     memoryBranch: MEMORY_BRANCH,
     knowledgeSha: own?.knowledgeSha ?? null,
     memorySha: own?.memorySha ?? null,
-    formatProblem: own?.format && !own.format.ok ? own.format.reason : null,
+    okfProblems: own?.okf && own.okf.knowledgeSha === own.knowledgeSha ? own.okf.problems : [],
     syncedAt: own?.syncedAt ?? null,
     error: own?.error ?? null,
     errorAt: own?.errorAt ?? null,

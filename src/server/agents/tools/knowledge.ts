@@ -21,7 +21,7 @@ export const knowledgeSearchTool = tool('knowledge_search')
 
 export const knowledgeReadTool = tool('knowledge_read')
   .describe(
-    "Read one file of the owner's knowledge base, such as MEMORY.md, knowledge/global/<file>.md or memory/projects/<owner>/<repo>/INDEX.md.",
+    "Read one file of the owner's knowledge base, an Open Knowledge Format bundle: index.md, knowledge/global/<file>.md or memory/projects/<owner>/<repo>/index.md.",
   )
   .input(z.object({ path: z.string().min(1).max(400) }))
   .execute(async ({ path }) => reader().read(path))

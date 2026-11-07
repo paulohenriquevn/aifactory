@@ -4,6 +4,7 @@ import type { Database } from '../db'
 
 import { chooseSliceFiles, knowledgePaths, memoryPaths } from './format'
 import { Mirror, mirrorDir, type TreeFile } from './mirror'
+import { isReserved } from './okf'
 import {
   currentPin,
   recordDelivery,
@@ -39,21 +40,24 @@ export const knowledgeRoot = (env: NodeJS.ProcessEnv = process.env) =>
   env.FACTORY_KNOWLEDGE_DIR || resolve(process.cwd(), '.state/knowledge')
 
 /**
- * The order a slice is filled in, so what matters most survives a full budget: the index, the global rules,
- * the project's rules, the project's note index, its notes newest first, then the global notes.
+ * The order a slice is filled in, so what matters most survives a full budget: the owner's README, the
+ * global rules, the project's rules, the project's note index, its notes newest first, the global notes,
+ * and the logs last. The owner's root index.md is left out: the slice gets its own (see sliceIndex).
  */
 export function slicePriority(project: string, files: TreeFile[]): TreeFile[] {
-  const [index, readme, globalRules, projectRules] = knowledgePaths(project)
+  const [readme, log, globalRules, projectRules] = knowledgePaths(project)
   const [globalNotes, projectNotes] = memoryPaths(project)
   const under = (prefix: string) => files.filter((f) => f.path.startsWith(prefix))
-  const notes = under(projectNotes).filter((f) => f.path !== `${projectNotes}INDEX.md`)
+  const isLog = (f: TreeFile) => f.path === log || f.path === `${projectNotes}log.md`
+  const notes = under(projectNotes).filter((f) => !isReserved(f.path))
   return [
-    ...files.filter((f) => f.path === index || f.path === readme),
+    ...files.filter((f) => f.path === readme),
     ...under(globalRules),
     ...under(projectRules),
-    ...files.filter((f) => f.path === `${projectNotes}INDEX.md`),
+    ...files.filter((f) => f.path === `${projectNotes}index.md`),
     ...notes.sort((a, b) => b.path.localeCompare(a.path)),
     ...under(globalNotes),
+    ...files.filter(isLog),
   ]
 }
 

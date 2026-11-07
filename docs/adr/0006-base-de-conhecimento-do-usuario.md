@@ -1,6 +1,8 @@
 # ADR 0006: a base de conhecimento é um repositório do usuário, lido por todos os agentes
 
-Status: aceita (2026-11-06). Substitui a [ADR 0002](0002-base-de-conhecimento.md).
+Status: aceita (2026-11-06). Substitui a [ADR 0002](0002-base-de-conhecimento.md). O formato
+(`aifactory-knowledge/1`) foi substituído pelo Open Knowledge Format na
+[ADR 0007](0007-base-de-conhecimento-em-okf.md).
 
 ## Contexto
 

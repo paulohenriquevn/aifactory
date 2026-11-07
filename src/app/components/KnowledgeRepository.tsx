@@ -156,12 +156,20 @@ export function KnowledgeRepository({ onChanged }: { onChanged: () => void }) {
         </dl>
       ) : null}
 
-      {status?.formatProblem ? (
+      {status && status.okfProblems.length > 0 ? (
         <div className="flex flex-wrap items-center gap-3">
-          <p className="min-w-0 flex-1">
-            Os agentes ainda não leem este repositório: {status.formatProblem}. A fábrica pode abrir
-            um pull request com a estrutura, sem mexer no que já existe.
-          </p>
+          <div className="min-w-0 flex-1">
+            <p>
+              Os agentes já leem este repositório, mas ele não segue o Open Knowledge Format em
+              tudo. A fábrica pode abrir um pull request que acrescenta o que falta, sem mudar
+              nenhum texto que já existe.
+            </p>
+            <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+              {status.okfProblems.slice(0, 5).map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
+          </div>
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => void propose()}>
             Propor a estrutura
           </Button>
@@ -178,7 +186,7 @@ export function KnowledgeRepository({ onChanged }: { onChanged: () => void }) {
           >
             {proposed}
           </a>
-          . Depois do merge, a fábrica passa a ler o repositório em até um minuto.
+          . Depois do merge, a fábrica lê a estrutura nova em até um minuto.
         </p>
       ) : null}
     </section>

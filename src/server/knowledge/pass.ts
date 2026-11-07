@@ -7,16 +7,16 @@ const describeState = (state: NonNullable<Awaited<ReturnType<typeof syncKnowledg
   repository: state.repository,
   knowledgeSha: state.knowledgeSha,
   memorySha: state.memorySha ?? null,
-  format: state.format?.ok ? 'ok' : (state.format?.reason ?? null),
+  okfProblems: state.okf?.problems.length ?? 0,
 })
+
+let running = false
 
 /**
  * One pass of the `knowledge-sync` cron, with what it did on one log line. A factory that cannot build its
  * dependencies says so and waits for the next minute; a pass that failed already saved why in the sync
  * state, which the setup page shows, and is logged here.
  */
-let running = false
-
 export async function knowledgePass(
   makeDeps: () => KnowledgeDeps,
   log: { info: Log; error: Log } = { info: console.log, error: console.error },

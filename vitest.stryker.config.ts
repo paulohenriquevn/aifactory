@@ -29,6 +29,7 @@ export default defineConfig({
       'src/app/lib/format.test.ts',
       'src/shared/panel.test.ts',
       'src/server/knowledge/format.test.ts',
+      'src/server/knowledge/okf.test.ts',
       'src/app/panel.test.tsx',
       'src/app/page.test.tsx',
     ],

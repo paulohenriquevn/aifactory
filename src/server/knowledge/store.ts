@@ -19,7 +19,11 @@ export type SyncState = {
   branch: string
   knowledgeSha?: string
   memorySha?: string
-  format?: { ok: true } | { ok: false; reason: string }
+  /**
+   * What in the rules does not conform to OKF, checked once per commit of the rules. The agents read the
+   * rules anyway: a consumer of OKF must not reject a bundle for it (§11).
+   */
+  okf?: { knowledgeSha: string; problems: string[] }
   syncedAt?: string
   /** What the last pass could not do. The commits above are still the last good ones. */
   error?: string
@@ -70,11 +74,11 @@ export async function saveSyncState(db: Database, state: SyncState): Promise<voi
   await writeSetting(db, STATE_KEY, JSON.stringify(state))
 }
 
-/** The commits to give an agent now, or nothing while no base is set, synced and in the format. */
+/** The commits to give an agent now, or nothing while no base is set and synced. */
 export async function currentPin(db: Database): Promise<Pin | undefined> {
   const [config, state] = await Promise.all([loadKnowledgeConfig(db), loadSyncState(db)])
   if (!config || !state || state.repository !== config.repository) return undefined
-  if (!state.knowledgeSha || !state.format?.ok) return undefined
+  if (!state.knowledgeSha) return undefined
   return {
     repository: state.repository,
     knowledgeSha: state.knowledgeSha,

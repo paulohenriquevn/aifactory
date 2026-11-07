@@ -11,7 +11,7 @@ const MAX_FILES = 2_000
 const READ_MAX_CHARS = 60_000
 
 export const NO_KNOWLEDGE =
-  'No knowledge base is ready: the owner chooses a knowledge repository on the Setup page, and it is read once its MEMORY.md is in the format.'
+  'No knowledge base is ready: the owner chooses a knowledge repository on the Setup page, and it is read after its first sync.'
 
 /** A file of the base and the layer it belongs to: a rule (knowledge/) or a note (memory/). */
 const layer = (path: string) => (path.startsWith('memory/') ? 'note, a hint' : 'rule')

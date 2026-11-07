@@ -91,6 +91,10 @@ reads that file, not a convention.
   owner's branch. `src/server/knowledge/every-agent.test.ts` fails for an agent without it.
 - **The knowledge repository is never a project.** Its rules change only through a pull request the owner
   merges, so `saveRepository` refuses to enable it and `saveKnowledge` refuses a repository that is enabled.
+- **The knowledge base is an Open Knowledge Format 0.2 bundle.** `knowledge/okf.ts` holds the specification and
+  nothing of the factory; `knowledge/format.ts` is the factory's layout on top of it. What the factory writes
+  conforms (a test checks every file it writes), and what it reads may not: never refuse a bundle for missing
+  front matter, an unknown type or a broken link (§11 of the specification).
 - **Every text box in the panel has an `<Assist>`.** `src/app/every-box.test.ts` fails when a file with a
   textarea has none. The premise is that the owner never has to be a programmer.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;

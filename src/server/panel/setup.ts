@@ -57,11 +57,13 @@ export function knowledgeItem(status: KnowledgeStatus): SetupItem {
   if (!status.knowledgeSha) {
     return { ...base, status: 'warn', detail: `${status.repository}: waiting for the first sync.` }
   }
-  if (status.formatProblem) {
+  if (status.okfProblems.length > 0) {
+    const [first] = status.okfProblems
+    const more = status.okfProblems.length - 1
     return {
       ...base,
       status: 'warn',
-      detail: `${status.repository}: the agents do not read it yet, because ${status.formatProblem}.`,
+      detail: `${status.repository}: the agents read it, but it is not an OKF bundle in everything: ${first}${more > 0 ? ` (and ${more} more)` : ''}.`,
     }
   }
   return {

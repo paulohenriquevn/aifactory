@@ -845,19 +845,23 @@ O orquestrador (`runTask`) não conhece nenhum agente pelo nome.
 ## Base de conhecimento
 
 A base de conhecimento é um repositório git seu, escolhido na página Setup (o repositório e, se quiser, a
-branch das regras). A decisão está na [ADR 0006](adr/0006-base-de-conhecimento-do-usuario.md), e o formato
-(`aifactory-knowledge/1`) está em `templates/knowledge/README.md`. Sem repositório escolhido, os agentes
-trabalham só com o código e a issue, como antes.
+branch das regras). A decisão está na [ADR 0006](adr/0006-base-de-conhecimento-do-usuario.md). As duas
+branches são bundles do [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format)
+0.2 ([ADR 0007](adr/0007-base-de-conhecimento-em-okf.md)), descritos em `templates/knowledge/README.md`.
+Sem repositório escolhido, os agentes trabalham só com o código e a issue, como antes.
 
 ```text
-branch sua (padrão ou a escolhida)       branch factory-memory (só a fábrica escreve)
-  MEMORY.md         índice e formato       README.md
-  knowledge/global/ regras de todos        memory/projects/<owner>/<repo>/INDEX.md
-  knowledge/projects/<owner>/<repo>/       memory/projects/<owner>/<repo>/<nota>.md
+branch sua (padrão ou a escolhida)          branch factory-memory (só a fábrica escreve)
+  index.md          okf_version e conteúdo    index.md   um item por projeto
+  knowledge/global/ regras (type: Rule)       memory/projects/<owner>/<repo>/index.md
+  knowledge/projects/<owner>/<repo>/          memory/projects/<owner>/<repo>/log.md
+                                              memory/projects/<owner>/<repo>/<nota>.md
 ```
 
 - `knowledge/` são regras: os agentes as seguem como seguem o `AGENTS.md`, e elas só mudam por PR que você
-  aprova. `memory/` são notas que a fábrica observou: dicas para conferir, nunca instruções.
+  aprova. `memory/` são notas que a fábrica observou, `type: Observation` sem `verified` (nível de
+  confiança "não verificado" no OKF), com a issue e o commit de origem em `sources`: dicas para conferir,
+  nunca instruções.
 - O repositório da base nunca é um projeto da fábrica. O painel recusa habilitá-lo em Repositórios e
   recusa escolher como base um repositório habilitado. Como projeto, uma issue nele faria um agente
   reescrever as regras que ele mesmo segue, e a fábrica integraria essa mudança sem que você aprovasse
@@ -867,19 +871,21 @@ branch sua (padrão ou a escolhida)       branch factory-memory (só a fábrica 
   pendentes como um commit em `factory-memory`, sempre por fast-forward. É o único lugar que busca ou
   envia algo.
 - Todo agente lê a base do mesmo jeito. No sandbox (construtor, revisor e planejador), a fábrica copia
-  para `/tmp/knowledge` o índice, as regras globais e as do projeto e as notas do projeto, mais um
-  `GUIDE.md` que diz os commits e o peso de cada parte. Ela faz isso antes do agente começar e de novo a
+  para `/tmp/knowledge` o README, as regras globais e as do projeto e as notas do projeto, mais um
+  `index.md` na raiz que lista tudo e diz nos títulos os commits e o peso de cada parte. Ela faz isso antes do agente começar e de novo a
   cada minuto em que a base muda. O sandbox nunca busca nada e não tem credencial da base, e um projeto
   não vê a pasta de outro. Cada cópia fica em `knowledge_delivery`, e o estágio `build` guarda os commits
   da primeira. No painel, todo assistente tem `knowledge_search` e `knowledge_read`, que leem o espelho.
 - As notas vêm de duas fontes: as linhas `LEARNED:` que o construtor deixa no resumo final (até cinco) e
   o veredito de um run que não encontrou nada a mudar numa issue. A mesma nota num projeto é guardada uma
-  vez, e o índice deixa de listar uma nota 180 dias depois de escrita. Para que uma nota vire regra,
+  vez, e o índice deixa de listar uma nota quando passa o `stale_after` dela, 180 dias depois de escrita. Para que uma nota vire regra,
   copie o texto dela para `knowledge/` por PR.
 - Uma fatia leva só texto (`.md`, `.txt`, `.json`, `.yaml`), até 128 KiB por arquivo e 1 MiB no total, e o
-  `GUIDE.md` diz o que ficou de fora.
-- Se o repositório escolhido não estiver no formato, o Setup mostra o motivo e oferece "Propor a
-  estrutura", que abre um PR da branch `factory-knowledge-setup` sem mexer no que já existe. Se uma busca
+  `index.md` da raiz diz o que ficou de fora.
+- Um repositório fora do OKF continua sendo lido: o OKF manda o leitor tolerar front matter ausente. O
+  Setup lista o que não conforma, conferido uma vez por commit das regras, e oferece "Propor a
+  estrutura", que abre um PR da branch `factory-knowledge-setup` acrescentando o que falta sem mudar
+  nenhuma linha já escrita. Se uma busca
   falhar, o Setup mostra o erro e os agentes continuam lendo o último commit bom.
 
 ## Configuração

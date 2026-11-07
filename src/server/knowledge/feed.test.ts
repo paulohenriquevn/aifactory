@@ -36,8 +36,11 @@ describe('the knowledge base in an agent sandbox', () => {
     const backend = new FakeBackend(() => ({}))
     const { fake, delivered } = source([pin('a', 'b')], {
       files: [
-        { path: 'MEMORY.md', content: Buffer.from('index') },
-        { path: 'knowledge/global/tests.md', content: Buffer.from('write tests first') },
+        { path: 'README.md', content: Buffer.from('readme') },
+        {
+          path: 'knowledge/global/tests.md',
+          content: Buffer.from('---\ntype: Rule\ntitle: Tests first\n---\nwrite tests first'),
+        },
       ],
       left: ['big.md'],
     })
@@ -47,13 +50,14 @@ describe('the knowledge base in an agent sandbox', () => {
 
     expect(feed.dir).toBe('/tmp/knowledge')
     expect(feed.delivered).toEqual(pin('a', 'b'))
-    expect(backend.files.get('/tmp/knowledge.next/MEMORY.md')).toBe('index')
-    expect(backend.files.get('/tmp/knowledge.next/knowledge/global/tests.md')).toBe(
+    expect(backend.files.get('/tmp/knowledge.next/README.md')).toBe('readme')
+    expect(backend.files.get('/tmp/knowledge.next/knowledge/global/tests.md')).toContain(
       'write tests first',
     )
-    expect(backend.files.get('/tmp/knowledge.next/GUIDE.md')).toContain(
-      'Left out because the slice is full: big.md.',
-    )
+    const index = backend.files.get('/tmp/knowledge.next/index.md')
+    expect(index).toContain('okf_version: "0.2"')
+    expect(index).toContain('* [Tests first](knowledge/global/tests.md)')
+    expect(index).toContain('# Left out because the slice is full\n\n* [big.md](big.md)')
     expect(backend.commands).toEqual([
       'rm -rf /tmp/knowledge.next',
       'rm -rf /tmp/knowledge && mv /tmp/knowledge.next /tmp/knowledge',

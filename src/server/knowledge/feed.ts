@@ -2,7 +2,7 @@ import type { SandboxBackend } from '@theokit/agents/sandbox'
 
 import type { IsolatedSandbox } from '../factory/sandbox'
 
-import { SANDBOX_KNOWLEDGE_DIR, sliceGuide } from './format'
+import { SANDBOX_KNOWLEDGE_DIR, sliceIndex } from './format'
 import type { KnowledgeSource } from './source'
 import type { Pin, Recipient } from './store'
 
@@ -98,12 +98,12 @@ export class KnowledgeFeed {
     const { files, left } = await source.slice(pin, this.project)
     await this.must(`rm -rf ${NEXT}`)
     await this.backend.uploadFile(
-      `${NEXT}/GUIDE.md`,
-      sliceGuide({
-        repository: this.project,
+      `${NEXT}/index.md`,
+      sliceIndex({
         knowledgeRepository: pin.repository,
         knowledgeSha: pin.knowledgeSha,
         memorySha: pin.memorySha,
+        files,
         left,
       }),
     )

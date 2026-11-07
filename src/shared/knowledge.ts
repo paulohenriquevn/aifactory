@@ -10,8 +10,11 @@ export type KnowledgeStatus = {
   memoryBranch: string
   knowledgeSha: string | null
   memorySha: string | null
-  /** Why the rules are not read yet (MEMORY.md missing or in another format); null when they are. */
-  formatProblem: string | null
+  /**
+   * What in the rules does not conform to the Open Knowledge Format, at the last commit read. The agents read
+   * the rules anyway; the setup page offers a pull request that adds what is missing.
+   */
+  okfProblems: string[]
   syncedAt: string | null
   /** What the last pass could not do; the agents go on reading the last good commits. */
   error: string | null

@@ -378,7 +378,7 @@ describe('the knowledge base line', () => {
     memoryBranch: 'factory-memory',
     knowledgeSha: 'a'.repeat(40),
     memorySha: null,
-    formatProblem: null,
+    okfProblems: [],
     syncedAt: '2026-11-06T12:00:00.000Z',
     error: null,
     errorAt: null,
@@ -421,9 +421,17 @@ describe('the knowledge base line', () => {
     )
   })
 
-  it('says why the agents do not read it yet', () => {
-    expect(knowledgeItem(status({ formatProblem: 'MEMORY.md is missing' })).detail).toBe(
-      'me/kb: the agents do not read it yet, because MEMORY.md is missing.',
+  it('says the agents read it, and the first thing that does not conform to OKF', () => {
+    const item = knowledgeItem(status({ okfProblems: ['index.md is missing at the root'] }))
+    expect(item.status).toBe('warn')
+    expect(item.detail).toBe(
+      'me/kb: the agents read it, but it is not an OKF bundle in everything: index.md is missing at the root.',
+    )
+  })
+
+  it('says how many more things do not conform', () => {
+    expect(knowledgeItem(status({ okfProblems: ['a', 'b', 'c'] })).detail).toBe(
+      'me/kb: the agents read it, but it is not an OKF bundle in everything: a (and 2 more).',
     )
   })
 })
