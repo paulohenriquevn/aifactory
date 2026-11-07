@@ -301,6 +301,12 @@ const changed = (extra?: (command: string) => Reply | undefined) => {
   }
 }
 
+/** The push commands a run sent, from `push` on. */
+const pushesOf = (sandbox: FakeSandbox) =>
+  sandbox.backend.commands.flatMap((c) =>
+    c.includes('push origin') ? [c.slice(c.indexOf('push origin'))] : [],
+  )
+
 const stagesOf = async (taskId: number) =>
   (
     await getDb()
@@ -334,7 +340,7 @@ describe('runTask', () => {
     ])
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
     expect(row.stage).toBe('done')
-    expect(sandbox.backend.commands.some((c) => c.endsWith('push origin factory/7'))).toBe(true)
+    expect(sandbox.backend.commands.some((c) => c.includes('push origin factory/7 '))).toBe(true)
     expect(github.asked).toContain('paulo/app')
     expect(sandbox.stopped).toBe(1)
   })
@@ -646,6 +652,69 @@ describe('runTask', () => {
       costUsd: 0.12,
       agentSummary: 'added truncate',
     })
+  })
+
+  it('replaces what a run whose process died left on factory/<issue>, and only that', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) =>
+        c.includes('ls-remote origin refs/heads/factory/7')
+          ? { stdout: 'dead0001\trefs/heads/factory/7\n' }
+          : undefined,
+      ),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'done', branch: 'factory/7' })
+    const pushes = pushesOf(sandbox)
+    expect(pushes).toEqual([
+      'push origin factory/7 --force-with-lease=refs/heads/factory/7:dead0001',
+    ])
+  })
+
+  it('pushes a new branch only while it does not exist', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    await runTask(deps(sandbox), id)
+
+    expect(pushesOf(sandbox)).toEqual([
+      'push origin factory/7 --force-with-lease=refs/heads/factory/7:',
+    ])
+  })
+
+  it('leases each later push of the run on the commit it pushed before', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const reviewer = reviewerSaying(verdictJson('changes', [finding]), verdictJson('approve'))
+
+    await runTask(deps(sandbox, { harness: resumableBuilder(), reviewer }), id)
+
+    expect(pushesOf(sandbox)).toEqual([
+      'push origin factory/7 --force-with-lease=refs/heads/factory/7:',
+      'push origin factory/7 --force-with-lease=refs/heads/factory/7:abc123def',
+    ])
+  })
+
+  it('says a push lost its lease when someone else pushed to the branch during the run', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) =>
+        c.includes('push origin')
+          ? {
+              exitCode: 1,
+              stderr:
+                ' ! [rejected]        factory/7 -> factory/7 (stale info)\nerror: failed to push some refs',
+            }
+          : undefined,
+      ),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
+    expect(result.status === 'failed' && result.error).toContain('stale info')
   })
 
   it('pushes again when GitHub answers the first push with a transient error', async () => {

@@ -125,6 +125,11 @@ export class Run {
   sessionId: string | undefined
   /** The knowledge base in the sandbox, kept current while the run goes; the same for every agent. */
   feed?: KnowledgeFeed
+  /**
+   * What the run expects `factory/<issue>` to hold on GitHub: the commit there when the run started (empty
+   * when there was none), then each commit the run pushed. A push replaces exactly that and nothing else.
+   */
+  remoteHead = ''
 
   private constructor(
     private readonly c: RunContext,
@@ -210,6 +215,7 @@ export class Run {
     c.state.sandbox = feed.attachTo(sandbox)
     const run = new Run(c, builder, reviewer, sandbox, repoDir, baseSha)
     run.feed = feed
+    run.remoteHead = await Run.remoteHeadOf(sandbox.backend, repoDir, c.branch)
     return run
   }
 
@@ -235,6 +241,16 @@ export class Run {
       await must(backend, `git -C ${repoDir} checkout -b ${branch}`)
     }
     return { repoDir, baseSha }
+  }
+
+  /**
+   * The commit on GitHub's `branch`, or empty when the branch does not exist. A run started again after its
+   * process died finds the dead run's commits there; it replaces them, as a Retry does, but keeps the pull
+   * request open (paulohenriquevn/aifactory#2).
+   */
+  private static async remoteHeadOf(backend: SandboxBackend, repoDir: string, branch: string) {
+    const listed = await must(backend, `git -C ${repoDir} ls-remote origin refs/heads/${branch}`)
+    return listed.stdout.trim().split(/\s/)[0] ?? ''
   }
 
   /** Runs the agent, books its cost and session, and turns a quota stop into its own error. */
@@ -396,12 +412,19 @@ export class Run {
     // What is about to leave the sandbox, kept so a refused push can be explained.
     const files = (await must(backend, `${git} diff --name-status HEAD~1 HEAD`)).stdout.trim()
     try {
-      await pushWithRetry(backend, `${git} push origin ${branch}`, deps.pushRetryDelayMs ?? 5_000)
+      // The lease makes the push fail, instead of overwriting, when someone else pushed during the run.
+      const lease = `--force-with-lease=refs/heads/${branch}:${this.remoteHead}`
+      await pushWithRetry(
+        backend,
+        `${git} push origin ${branch} ${lease}`,
+        deps.pushRetryDelayMs ?? 5_000,
+      )
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       throw new StageFailure(`${reason}\ncommit being pushed:\n${files.slice(0, 1500)}`)
     }
-    return (await must(backend, `${git} rev-parse HEAD`)).stdout.trim()
+    this.remoteHead = (await must(backend, `${git} rev-parse HEAD`)).stdout.trim()
+    return this.remoteHead
   }
 
   /** The first pass of the builder: a new one, or the session resumed with the answer it was waiting for. */
