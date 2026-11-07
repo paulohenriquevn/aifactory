@@ -125,9 +125,21 @@ export function claudeCodeHarness(
 export function resultLine(stdout: string): string {
   const lines = stdout.trim().split('\n')
   for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (lines[i].startsWith('{"type":"result"')) return lines[i]
+    // The keys come in no fixed order, so the line is read, not matched by its first characters.
+    if (isResult(lines[i])) return lines[i]
   }
   return stdout
+}
+
+function isResult(line: string): boolean {
+  try {
+    const value: unknown = JSON.parse(line)
+    return (
+      typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'result'
+    )
+  } catch {
+    return false
+  }
 }
 
 export function parseClaudeResult(exitCode: number, stdout: string, stderr: string): HarnessResult {

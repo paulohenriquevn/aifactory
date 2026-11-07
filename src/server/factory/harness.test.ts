@@ -321,6 +321,17 @@ describe('a watched Claude run', () => {
 })
 
 describe('resultLine', () => {
+  it('finds the result whatever order its keys come in, as Claude Code 2.1.319 prints them', () => {
+    const result =
+      '{"duration_api_ms":1995,"stop_reason":"end_turn","session_id":"s","total_cost_usd":0.1,"type":"result","is_error":false,"result":"ok"}'
+    expect(resultLine(`{"type":"system"}\n${result}\n`)).toBe(result)
+    expect(parseClaudeResult(0, resultLine(`{"type":"system"}\n${result}`), '')).toMatchObject({
+      ok: true,
+      summary: 'ok',
+    })
+  })
+
+
   it('takes the last result of a stream, and the whole output otherwise', () => {
     expect(resultLine('{"type":"x"}\n{"type":"result","n":1}\n{"type":"result","n":2}\n')).toBe(
       '{"type":"result","n":2}',
