@@ -9,7 +9,7 @@ export default tseslint.config(
   // ESLint flat config does NOT read `.gitignore`, so the one file that already knows what is
   // generated is not the file ESLint consults. `@eslint/compat`'s `includeIgnoreFile` would close
   // that permanently and is worth considering; this is the one-line version that works today.
-  { ignores: ['dist/', 'node_modules/', '.theokit/'] },
+  { ignores: ['dist/', 'node_modules/', '.theokit/', 'coverage/', '.stryker-tmp/', 'reports/'] },
   ...tseslint.configs.recommended,
   prettierConfig,
   {

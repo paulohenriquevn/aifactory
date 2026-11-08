@@ -17,6 +17,12 @@ node_modules/
 !.theokit/hooks.json
 dist/
 
+# credentials written by scripts/github-app-setup.mjs
+.secrets/
+
+# vercel (project link written by `vercel link`)
+.vercel/
+
 # env files
 .env
 .env.local
@@ -46,3 +52,14 @@ pnpm-debug.log*
 .idea/
 *.swp
 *.swo
+.vercel
+.env*
+coverage/
+.stryker-tmp/
+reports/
+
+# What the backlog feeder records about its run
+.backlog-feed/
+
+# the mirror of the knowledge repository the factory keeps on this host
+.state/

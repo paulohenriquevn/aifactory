@@ -1,6 +1,10 @@
 import { config } from 'theokit'
 
 import { storageFromEnv } from './src/server/db/config'
+import { JOB_SHUTDOWN_WAIT_MS } from './src/server/factory/drain'
+import { jobBackend } from './src/server/factory/job-backend'
+import { LOCK_SECONDS } from './src/server/factory/lease'
+import { mainProcessCronLock } from './src/server/factory/worker-only'
 
 /**
  * The project has two surfaces, and one of them is the whole backend.
@@ -19,5 +23,42 @@ export default config()
   .appDir('src/app')
   .serverDir('src/server')
   .agentsDir('src/server/agents')
-  .set({ storage: storageFromEnv() })
+  .set({ storage: storageFromEnv(), jobs: jobsFromEnv(), cron: cronFromEnv() })
   .build()
+
+/**
+ * Persistent jobs on the same Postgres pool. `theokit start` creates the table, leases jobs and
+ * runs them in this process. The worker runs the leases of a tick one after another, so one job per
+ * tick. The lock is short (two minutes) and the `run-task` job extends it while a run is alive
+ * (`ctx.extendLease`), so a worker that crashes frees its job in minutes, not after the longest
+ * possible run (usetheokit/theokit#1132).
+ *
+ * Without `DATABASE_URL` there is no backend, and the server still starts and reports not ready.
+ */
+function jobsFromEnv(): TheoConfigJobs | undefined {
+  if (!storageFromEnv()) return undefined
+  // A preview of the panel must not take jobs from the queue the factory is working through.
+  if (process.env.FACTORY_JOBS === 'off') return undefined
+  return {
+    backend: jobBackend(),
+    worker: {
+      enabled: true,
+      pollIntervalMs: 2_000,
+      batchSize: 1,
+      lockSeconds: LOCK_SECONDS,
+      // A restart lets the run in progress finish instead of cutting it (see drain.ts).
+      shutdownTimeoutMs: JOB_SHUTDOWN_WAIT_MS,
+    },
+  }
+}
+/**
+ * Each cron tick runs once, in the main process. Without this, a worker-only process could take the tick
+ * from the shared lock and skip it (see mainProcessCronLock), and the crons ran in about half the minutes.
+ */
+function cronFromEnv() {
+  // Without the job backend, the framework has no lock to give; it was the same before this lock.
+  if (!jobsFromEnv()) return undefined
+  return { lock: mainProcessCronLock(jobBackend().cronLock()) }
+}
+
+type TheoConfigJobs = NonNullable<Parameters<ReturnType<typeof config>['set']>[0]['jobs']>

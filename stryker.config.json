@@ -1,0 +1,48 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.stryker.config.ts"
+  },
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/server/factory/evidence.ts",
+    "src/server/factory/release.ts",
+    "src/server/factory/review.ts:60-140",
+    "src/server/factory/guards.ts",
+    "src/server/factory/watch.ts:1-40",
+    "src/server/factory/waiting.ts:1-90",
+    "src/shared/panel.ts",
+    "src/app/lib/format.ts",
+    "src/server/factory/plan.ts:1-76",
+    "src/server/factory/repo-config.ts:27-38",
+    "src/server/factory/repo-config.ts:58-80",
+    "src/server/panel/work.ts:46-86",
+    "src/app/lib/assist.ts",
+    "src/server/agents/hooks/only-tools.ts",
+    "src/server/factory/repo-reader.ts:1-50",
+    "src/app/lib/repo-form.ts",
+    "src/server/factory/branches.ts",
+    "src/server/factory/docker-sandbox.ts",
+    "src/server/factory/sandbox-provider.ts",
+    "src/server/knowledge/format.ts",
+    "src/server/knowledge/okf.ts",
+    "src/server/factory/transcript.ts",
+    "src/server/factory/clone.ts",
+    "src/app/lib/transcript.ts",
+    "src/server/factory/recipe.ts"
+  ],
+  "mutator": {
+    "excludedMutations": ["StringLiteral", "TemplateLiteral"]
+  },
+  "reporters": ["clear-text", "progress"],
+  "tempDirName": ".stryker-tmp",
+  "thresholds": {
+    "high": 95,
+    "low": 90,
+    "break": 90
+  },
+  "timeoutMS": 20000,
+  "concurrency": 4,
+  "plugins": ["@stryker-mutator/vitest-runner"]
+}

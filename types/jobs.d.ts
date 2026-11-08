@@ -1,23 +1,25 @@
 /**
- * JobRegistry augmentation — REQUIRED for typed `ctx.queue.enqueue` calls.
+ * JobRegistry augmentation: typed `ctx.queue.enqueue`. The registry lives in `theokit/server/jobs`,
+ * the module `QueueClient` comes from (usetheokit/theokit#1074).
  *
- * Without this augmentation, `ctx.queue.enqueue('foo', ...)` errors with:
- *   "Type 'foo' is not assignable to type 'never'"
- *
- * This is the canonical TheoKit jobs onboarding bug (EC-110). To add a
- * job:
- *
- * 1. Create `server/jobs/<name>.ts` exporting `defineJob('<name>', ...)`
- * 2. Add `'<name>': { ...inputShape }` below
- * 3. Use `ctx.queue.enqueue('<name>', { ...input })` from any route handler
- *
+ * Each job is a file `src/server/jobs/<name>.ts` exporting `defineJob('<name>', ...)`, with its
+ * input listed here.
  */
-declare module 'theokit/server' {
+declare module 'theokit/server/jobs' {
   interface JobRegistry {
-    // Add your jobs here. Examples (uncomment and customize):
-    //
-    // 'process-document': { documentId: string }
-    // 'send-email': { to: string; subject: string; body: string }
+    /** Runs one task end to end: sandbox, agent, push of `factory/<issue>`. */
+    'run-task': { taskId: number; decisionId?: number }
+    /** Continues a task whose question was answered, from the snapshot taken when it was asked. */
+    'resume-task': { taskId: number; questionId: number }
+    /** Has an agent read a repository and split a goal into issues. */
+    'plan-run': { planId: number }
+  }
+}
+
+// `ctx.queue` exists on every route because `theo.config.ts` sets `jobs.backend`.
+declare module 'theokit/server/define' {
+  interface RouteContext {
+    queue: import('theokit/server/jobs').QueueClient
   }
 }
 

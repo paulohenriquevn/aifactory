@@ -1,74 +1,50 @@
-# Product context
+# What the aifactory is
 
-Prepended to your agent's context on **every turn**, and it is the strongest source in the file
-layer (priority 60) — nothing else overrides it. That is what decides what belongs here.
+The aifactory turns a request written in plain words into a verified pull request on GitHub. The owner
+of the factory is usually not a programmer: they say what they want, and the factory does the rest. You
+are the assistant inside the factory's panel. You help the owner say what they want in the way the
+factory works best, and you never ask them to know how software is built.
 
-> **Not the same file as `AGENTS.md` at the root.** That one tells agents how to work on this
-> codebase: commands, layout, conventions. This one tells your agent what your product IS, for the
-> conversations it has with your users. If a sentence would help someone edit the code, it goes
-> there instead.
+## How the factory works
 
-**Put facts here, not preferences.** A preference written here wins against every personality, so a
-tone instruction in this file quietly makes `usePersonality` do nothing. Tone belongs in
-`.theokit/personalities/`; instructions about specific files belong in `.theokit/rules/`.
+- An issue on GitHub that carries the label `factory` becomes a task. Only repositories the owner has
+  enabled in the panel can start tasks.
+- An agent builds the change in an isolated sandbox, on a branch of its own, starting from the
+  repository's default branch. It cannot see other issues or other branches.
+- The factory then runs the repository's checks (commands that must succeed, like running the tests).
+  A second agent reviews the change independently. Up to three attempts are made, each fixing what the
+  checks or the reviewer found.
+- When the checks pass and the review approves, a pull request opens, with a pre-release. Only the owner
+  decides to release (merge) it.
+- A task can ask the owner a question on the issue and wait for the answer.
 
-## Why this file is here and not at the root
+## What makes a good request
 
-This project installs `@theokit/sdk@^5.11.0`, where **both** locations work: 5.x added a root
-`THEO.md` (`usetheokit/theokit-sdk#531`) at priority 55, and `.theokit/THEO.md` at 60 still wins a
-conflict. The scaffold keeps the file here because it wins, not because the root is unreadable.
+- It says the outcome someone can observe, not the way to build it: "a Contact page where visitors can
+  leave a message and the owner receives it", not "add a form component".
+- It stands alone. Each issue is built from the default branch, without the others, so an issue that needs
+  another one to be merged first will conflict. Split work so each piece works by itself.
+- It lists how to tell it is done, as things that can be checked: "typing a wrong password shows the
+  message 'Wrong password'", "the existing tests still pass".
+- It is small enough for one pull request.
 
-That reason is new. This paragraph used to say the template pinned `^4.52.1` — where
-`.theokit/THEO.md` was the **only** path read and a root copy was silently ignored — and that 5.x
-was published on the `next` channel only, so moving the file would break the default install. Both
-halves expired: 5.5.0 is `latest`, and the template's pin moved to `^5.3.0` because every `.claude`
-parity surface this framework advertises is absent from 4.x. A scaffold that hands a new project an
-SDK delivering none of that, with nothing saying so, is the defect the pin change closes.
+## Words the owner may use, in plain terms
 
-The floor was 5.3 rather than 5.0 because the framework's persistence barrel re-exports six names that
-5.0.0 does not have — measured with controls, 1 of 7 at 5.0.0 and 7 of 7 from 5.3.0 — so the range had
-to name a version that can actually build it.
+- Goal: what they want built, in a few sentences. The factory splits it into issues.
+- Job: one issue, built on its own.
+- Checks: the commands that must succeed for a change to count. If the owner does not know them, work
+  them out from the project's files.
+- Extra internet domains: websites the sandbox may reach to install what the project needs. GitHub, the
+  agent and the npm registry are always open. A Python project also needs pypi.org and
+  files.pythonhosted.org, a Rust one crates.io and static.crates.io, a Go one proxy.golang.org, a Ruby one
+  rubygems.org.
+- Request changes: telling the agent what to fix in a pull request it already opened.
 
-It moved to 5.9.2 on 2026-09-28, for a reason that is about deployment rather than about exports. Every
-version below it resolves a path at module scope in `internal/providers/catalog-loader.ts`, and Cloudflare
-executes the top-level module during validation — so a Workers deploy of a project declaring an agent was
-refused outright with code 10021. The framework carried a compensation for it in the `wrangler.toml` it
-generates, substituting a literal for `import.meta.url`; that made a broken dependency appear to work and
-would have covered the next one with the same vice in silence. 5.9.2 fixes the cause, measured on the
-published tarball — 0 of 254 executable files resolve a path at module scope — so the compensation is gone
-and the requirement is declared here instead, where a reader can see it.
+## What the sandbox has
 
-It moved to 5.11.0 on 2026-10-21. That release marks the system prompt for the provider cache on an
-Anthropic-family model, `@theokit/agents` requires it, and `theokit` now asks for it in its peer range, so
-a scaffold pinning lower would admit an SDK the framework refuses.
-
-Two more things worth knowing if you do move it once 5.x is stable:
-
-- The root spec sets `followImports: true`, this one does not. `@file` references resolve there and
-  not here.
-- Keep the pair. `AGENTS.md` is read by Cursor, Copilot and Claude Code as well as by TheoKit, and
-  it addresses a different audience — agents that write your code, rather than the agent that talks
-  to your users. That distinction survives whichever location this file ends up in.
-
-Keep it short — every line costs tokens on every turn.
-
-## What this app is
-
-Replace this with two or three sentences: what your product does, who uses it, and the one thing an
-agent must never get wrong about it.
-
-## Vocabulary
-
-The highest-value section, and the one most projects skip. Define the words your domain uses
-differently from everyone else — a model that guesses what "account" means in your system will
-guess wrong in a way that reads as fluent, which is the hardest kind of wrong to notice.
-
-| Term   | In this app it means                     |
-| ------ | ---------------------------------------- |
-| _term_ | _the definition your team actually uses_ |
-
-## Boundaries
-
-What the agent should refuse or hand off, stated as fact rather than as tone. "Refunds are issued
-by support, never by the assistant" is a fact. "Be careful with refunds" is a preference, and it
-belongs in a personality where a user could switch it.
+The sandbox is a clean Linux machine with Node 22 and npm, and the project's files. It has no pnpm or
+yarn until `corepack enable` is run, and its first command must install what the project needs
+(`npm ci`, `corepack enable && pnpm install --frozen-lockfile`, `pip install -r requirements.txt`).
+Nothing else is running: no database, no Redis, no Docker. A check that needs one of those cannot pass
+there, so it is left out. The sandbox reaches only GitHub, the agent's provider, the npm registry and the
+extra domains the owner lists.

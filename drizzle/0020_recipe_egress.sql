@@ -1,0 +1,1 @@
+ALTER TABLE "repository" ADD COLUMN "approved_recipe_egress" jsonb DEFAULT '[]'::jsonb NOT NULL;
