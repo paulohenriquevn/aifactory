@@ -2064,6 +2064,20 @@ describe('what the owner set for the repository', () => {
     dirty = true
   })
 
+  it('runs the checks on a clean tree, without what the agent left in ignored files', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+
+    await runTask(deps(sandbox), id)
+
+    const commands = sandbox.backend.commands
+    const clean = commands.findIndex((c) => c.endsWith('clean -fdxq'))
+    const firstCheck = commands.findIndex((c) => c.endsWith('&& npm test'))
+    expect(clean).toBeGreaterThan(-1)
+    expect(clean).toBeLessThan(firstCheck)
+    expect(commands[clean]).toMatch(/^git -C \S+ clean -fdxq$/)
+  })
+
   it('runs the checks the owner chose, in place of npm test', async () => {
     await setRepo(
       `checks|'[{"name":"unit","command":"pnpm test"},{"name":"types","command":"pnpm typecheck"}]'`,

@@ -765,6 +765,9 @@ export class Run {
     if (head !== sha || dirty !== '') {
       throw new StageFailure(`the checkout is not the pushed commit ${sha.slice(0, 7)}`)
     }
+    // The checks judge the commit, not what the agent left in ignored files: a builder that installed with
+    // --ignore-scripts left a node_modules without its native binaries, and the install check took it as done.
+    await must(this.backend, `git -C ${this.repoDir} clean -fdxq`)
     const results = await runChecks(
       this.backend,
       this.repoDir,
