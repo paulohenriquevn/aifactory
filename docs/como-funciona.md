@@ -150,6 +150,10 @@ Outras garantias:
   cada parada, e 20 execuções esgotam o armazenamento do plano Hobby (erro 402).
 - Prazos: sandbox 50 minutos, agente 25 minutos, cada check 10 minutos. O job renova o lock a cada
   40 segundos (`extendLease`), então um worker que morre libera a task em minutos.
+- Um agente que já entregou o resultado do turno e foi morto pelo prazo conta como terminado. Um comando
+  que ele deixou em segundo plano mantém o Claude Code vivo depois da última palavra, e antes a fábrica
+  descartava esse trabalho pronto (a task 287 terminou às 11:25 e foi morta às 11:32). Os checks e o
+  revisor continuam julgando o que ele fez.
 - O sandbox sempre é parado, inclusive quando o run falha ou o lock expira.
 
 ## Evidência e portão

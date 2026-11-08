@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A Claude Code run that printed its result before a background command kept it alive past the timeout no longer fails the task (#8)
+
 ## [0.1.0] - 2026-11-08
 
 ### Added
