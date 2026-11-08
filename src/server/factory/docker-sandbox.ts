@@ -169,7 +169,7 @@ class DockerBackend extends SandboxBackend {
     if (this.stoppedAtLimitMs !== undefined && result.code !== 0) {
       return {
         stdout: '',
-        stderr: `the sandbox reached its ${Math.round(this.stoppedAtLimitMs / 60_000)}-minute limit and was stopped; the run took longer than a run may last`,
+        stderr: this.limitMessage(),
         exitCode: result.code,
         timedOut: false,
       }
@@ -224,7 +224,16 @@ class DockerBackend extends SandboxBackend {
         path,
       ],
       { input: data },
-    )
+    ).catch((error: unknown) => {
+      if (this.stoppedAtLimitMs !== undefined)
+        throw new Error(this.limitMessage(), { cause: error })
+      throw error
+    })
+  }
+
+  private limitMessage(): string {
+    const minutes = Math.round((this.stoppedAtLimitMs ?? 0) / 60_000)
+    return `the sandbox reached its ${minutes}-minute limit and was stopped; the run took longer than a run may last`
   }
 }
 

@@ -488,6 +488,46 @@ describe('a docker sandbox that reaches its time limit', () => {
     }
   })
 
+  it('says that it reached its limit when a file is written after it was stopped', async () => {
+    vi.useFakeTimers()
+    try {
+      const { docker } = fakeDocker((args) =>
+        args[0] === 'exec' && args.includes('/tmp/msg')
+          ? { stdout: '', stderr: 'Error response from daemon: No such container: x', code: 1 }
+          : undefined,
+      )
+      const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create({
+        ...spec,
+        timeoutMs: 3_000_000,
+      })
+      await vi.advanceTimersByTimeAsync(3_000_000)
+
+      const error = await sandbox.backend.uploadFile('/tmp/msg', 'x').catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toBe(
+        'the sandbox reached its 50-minute limit and was stopped; the run took longer than a run may last',
+      )
+      expect(String((error as Error).cause)).toContain('No such container')
+      await sandbox.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the error of a file write that fails before the limit', async () => {
+    const { docker } = fakeDocker((args) =>
+      args[0] === 'exec' && args.includes('/tmp/msg')
+        ? { stdout: '', stderr: 'no space left on device', code: 1 }
+        : undefined,
+    )
+    const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
+
+    await expect(sandbox.backend.uploadFile('/tmp/msg', 'x')).rejects.toThrow(
+      /docker exec -i failed: no space left on device/,
+    )
+    await sandbox.stop()
+  })
+
   it('keeps what a command that still succeeds after the limit printed', async () => {
     vi.useFakeTimers()
     try {
