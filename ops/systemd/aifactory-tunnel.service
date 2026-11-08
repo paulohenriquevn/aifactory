@@ -1,0 +1,11 @@
+[Unit]
+Description=aifactory Cloudflare Tunnel (webhook and health check only)
+After=network-online.target
+
+[Service]
+ExecStart=@CLOUDFLARED@ tunnel --config @HOME@/.cloudflared/aifactory.yml run aifactory
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

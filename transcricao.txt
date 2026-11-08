@@ -1,0 +1,834 @@
+Intro
+0:00
+This here is my software factory. I give it something to build and it turns that request into working software.
+0:06
+Everything starts with a single prompt. In this case, a linear ticket. From there, the agents investigate the
+0:12
+problem, implement the change, run the checks, and fix what fails. If something needs my decision, the factory asks me
+0:19
+and continues once I answer. The work can happen locally on my machine or inside isolated cloud sandboxes. The
+0:26
+factory stores its progress, checks what's happening, and brings everything back into this panel. I can step in when
+0:33
+needed and review all of the results. Nevertheless, most of the work gets handled autonomously by the factory
+0:38
+itself. Which means I finally get to retire from being the continue button.
+0:43
+And that's why in this video, I will show you what software factories actually are and how I built my own by
+0:50
+bringing together cloud code, T3 code, and cloud sandboxes. And of course, we
+0:55
+will give the factory a real task and follow the entire process from the initial prompt to the finished result.
+1:02
+So, with that out of the way, let's get into it. Now, as a first step, let's answer the question, what even is a
+What is a software factory?
+1:09
+software factory? What does it do? And why should you probably create your own one or use the one I already created for
+1:16
+you? So at a high level, a software factory is an automated development environment where AI agents, coding
+1:23
+agents use standardized tools, workflows, and project knowledge to build, test, and maintain software. And
+1:30
+here's the thing, most people usually get this wrong. They think that the software factory is something that they
+1:35
+build once, it runs forever, and you never touch it again. And this is just not true. It does not work like that.
+1:42
+It's not the hands of machine that works autonomously. You still need human supervision. You need a human layer that
+1:48
+stays in control. Let me give you an example. A house. What does a house have? It has a roof. It has walls. And
+1:55
+it has some sort of foundation, a concrete foundation. What happens if you remove all of the walls? Well, the house
+2:01
+just falls apart. And that's the same thing we have with software factories. But now you might say, Jan, I'm still
+2:08
+kind of confused. So a software factory is an automated development environment but we still need a human supervision
+2:15
+layer. How does that exactly work? Like what does the software factory do and what should I do? Great question. So
+2:22
+recently I watched an interview between Loentan and Matt. And if you didn't know Loentan is a software engineer working
+2:29
+at SpaceX AI previously Kursa and she also created Pstack. It's also a very
+2:35
+essential you could say piece of my whole factory. But that's something we will dive into a bit later on. And she
+2:41
+used a very interesting analogy. Instead of talking about software factories, she
+The kitchen analogy: why humans stay in control
+2:46
+likes to think about kitchens. So how does a kitchen work? Well, you have a chef, I guess in theory, also a sue chef
+2:53
+and petisserie chef and then also cooks. But let's keep it simple. Let's take a 1:10 ratio. One chef and 10 cooks. What
+3:00
+does the chef do? Or in other words, what doesn't the chef do? Well, does the chef cook noodles in a pot himself? No,
+3:07
+not really. Does a chef taste every single component in a dish? No, of course not. The chef is there to
+3:13
+orchestrate, delegate, do quality control, QC, and at the same time also
+3:18
+steer all of the cooks. Add more salt, add more pepper, add a bit of wine, maybe add a bit more. What did I eat
+3:25
+today? A bit of cheese, for example. That's the role of a chef. A chef shouldn't do every little step. And
+3:30
+that's the same thing we have right here with software factories. You are the chef and the agents are your cooks. You
+3:37
+are the central factor. You are there to do quality control to steer your agents and also to decide, hey, is this good or
+3:44
+is this trash? But now you might say, okay, Jan, this already makes a bit more sense. I'm the chef. I'm the one who's
+3:51
+in control. Nevertheless, my agents, my cooks have the freedom to also do everything by themselves. I'm just the
+3:57
+deciding factor essentially. But what extreme should I pick? Should I micromanage or should I do nothing?
+4:04
+Well, you don't want to micromanage. You don't want to watch every little step or check every little line of code, but at
+4:10
+the same time, you don't want to do nothing. You don't want to let your factory run in the blind. The goal is to
+4:16
+kind of be in between just like a really good restaurant. You as the chef should be there. You have to be present and
+4:22
+nothing should go out without you, but you shouldn't be the deciding factor for every little step. For that, you have
+4:29
+cooks. In other words, coding agents and that's also what you will see here. Before using software factories, I had a
+4:37
+very, could you say manual workflow, meaning I would start by first of all opening my agent, cursor, cloth code, T3
+How a software factory works: the factory playbook
+4:44
+code, codeex, whatever. And then I would start talking to it. So for example, hey, investigate this issue. Now write
+4:51
+the code. Oh, now test everything. Let's open the PR. The PR is opened. Great. Let's merge it. How is this called right
+4:58
+here? Well, let's again go back to our kitchen analogy. Micromanaging.
+5:03
+Essentially, in the past, what I did is that I micromanaged every little step. Writing the code, let me micromanage it.
+5:10
+Testing the code, let me micromanage it. Opening the PR, let me micromanage it.
+5:15
+Is that what we want to do? No. So, with the factory, everything is way more autonomous. The first step is to write
+5:21
+the ticket. So, in my case, I use something called linear. I will come to that in a second. In linear I create a
+5:28
+ticket which essentially is just a prompt. So hey this is my issue. This is the success criteria. This is what you
+5:34
+should do. You don't have to necessarily use linear for that. You just need some sort of source linear GitHub issues
+5:40
+Slack I don't know Grock bot everything works. And then we already have our autonomous pipeline our factory. So the
+5:47
+factory starts investigating everything writing the code testing the code and finally opening the PR. And this is
+5:55
+where things now get interesting because the last step, the merging step kind of depends on your factory and how
+6:01
+autonomous you want it to be. So in my case, I have two outcomes. Either the factory merges everything itself or it
+6:08
+hands over the work to me and I review the PR, review the code, review I guess whatever got generated and then either
+6:15
+merge it myself or tell the agent, hey, you know what, you made a mistake. Let's fix this or the code is incorrect, the
+6:21
+architecture is incorrect. whatever makes the most sense. So essentially you could say I have like a confidence
+6:28
+criteria if the agent is very confident and if CI is green and if I don't have any cursor buckbot comments then I let
+6:35
+the factory merge everything by itself. But if the agent is not confident or if it's unsure then it hands over to me. I
+6:43
+review everything and then do whatever is needed because I'm the chef. Now, what I want you to realize here is that
+6:49
+the only reason why my factory is able to merge PRs automatically without needing any input from me, at least in
+6:56
+certain scenarios, is because I set a very big focus on making it as easy as possible for my agents to review their
+Testing and verification: how AI proves its code works
+7:03
+work and with that also tested very thoroughly. And I'm not sure if I already mentioned it, but I'm a very big
+7:10
+fan and also user of Pestak. And with PT stack, you create a project specific
+7:15
+verification skill which allows your agents to run real checks, meaning drive
+7:21
+the actual application, use the feature map, use the browser, use the C. Yeah, I
+7:26
+mean if you have CLIs, use the CLI, use the terminal, use the console, literally
+7:31
+use everything available to you and at the same time use also XYZ playbook, use XYZ skills, stuff like that. And by the
+7:38
+way, if you don't know what Pstack is, that's absolutely fine. I will explain it a bit later on, but I also recently
+7:45
+created this video right here on Pstack. I have no clue why this is in German, but yeah, it is what it is. It's a great
+7:51
+library. I will talk about it a bit later on. So, Pstack is the first tool I use, but there's a second tool called
+7:57
+Test Sprite. And with that, here's a quick note from today's video sponsor, Test Sprite. Test Sprite is an AI
+8:04
+testing agent that checks your running application and sends the results back to your coding agent. But now you might
+8:11
+say, Chan, can't my existing coding agent already do that for me? Yeah, kind of, but not really. Sure, you can ask
+8:18
+cloud code or codeex to run your existing tests or use a browser to check a flow. But testing goes way deeper than
+8:25
+that. It means deciding what you cover, checking edge cases, investigating failures, and repeating those checks
+8:32
+after each code change and with that iteration. Test sprite gives that work a dedicated testing workflow. It builds a
+8:39
+test plan from your requirements and a running application. And with that, multiple testing agents can then explore
+8:45
+different flows in parallel, speeding everything up exponentially. Your coding agent can then hand over that work and
+8:53
+get structured results back without having to manage every browser interaction itself. And this also
+8:59
+massively reduces the tokens spent on browser testing. In my own testing, I've seen around a 50% reduction in token
+9:06
+consumption, which depending on how much you're coding can translate to $20 or more in savings per day alone. But what
+9:14
+I really love is how easily everything fits into my existing coding workflow. With the open-source test sprite CLI, I
+9:21
+don't even have to leave my coding environment. After making a change, my coding agent can simply trigger test
+9:27
+sprite to create new tests or rerun existing ones against my application.
+9:32
+Test sprite then opens a real browser and interacts with the application just like an actual user would. When
+9:39
+something breaks, I get the step where it went wrong, supporting evidence, a likely explanation, and guidance for the
+9:45
+fix. Inside the web portal, I can replay the session and see exactly what happened. The coding agent can then
+9:52
+update the code and rerun the same test. And since everything is saved in a reusable suite, it can also check the
+9:59
+behavior against future changes. That's loop engineering in practice. Generate,
+10:05
+execute, inspect, improve, and verify. Again, test sprite 3.5 also makes that
+10:10
+process easier to follow. Parallel agent work is visible. Agent actions show what
+10:16
+happened in each session and the AI co-pilot lets me ask questions about failures or request another test case.
+10:23
+There are also environment settings, GitHub actions support and shared workspaces for teams. For me, the
+10:30
+biggest value is the complete feedback loop, a test plan, evidence the coding agent can act on and a reusable suite
+10:37
+for the next change and with that iteration. So, if you want to try test sprite on your own application and let
+10:44
+it find all of the bugs your coding agent generated, then you will find it linked down below in the YouTube
+10:50
+description. But with that out of the way, let's continue with the video. So, now you might say, "Okay, Jen, enough
+10:56
+with all of the theoretical stuff. Let's dive into the action. Show me your software factory. How does it work? How
+11:03
+does it look like? And at the same time, how do you use it?" Well, this here is Marshall Factory. This is what I built.
+11:10
+This is fully deployed on Versel by the way. Meaning I can access it anywhere on my phone, on my desktop, it does not
+My software factory: Marshal Factory
+11:17
+matter. And this here is the inbox route. The inbox route is like the management observability panel. I can
+11:23
+see all of my agents and what they are doing right now. Currently, we don't see anything. And that's because no tasks,
+11:30
+no agents are running. And one thing you should realize also right away is that this here is completely real time.
+11:36
+Meaning I added real-time functionality live as you see here. And this means whenever the state changes when an agent
+11:43
+goes over from investigating to implementing code, it updates in real time without me needing to do a hard
+11:50
+refresh. Then in the sidebar, I also have a drops button. And look at this beautiful animation. Oh my god, it looks
+11:57
+so good. And here we now have the playbook. So if I go back to my little diagram I created, I created this one.
+12:04
+Then you will see here that we have a playbook inside of the factory. It's not that I just create a prompt and then
+12:09
+say, "Hey agent, do whatever is needed." No, the agent has to follow a specific like order. Do a triage, then
+12:16
+investigate, then implement, then verify, then create the PR, ask me for help if needed, stuff like that. And
+12:23
+that's what you will see here. Step one, cute, then triage, then investigating, implementing, verifying. What else do we
+12:30
+have here? PRCI waiting on you and finally merged. These are all of the
+12:35
+states and I will explain this further in a second. Here we also have the other activity section. This does not really
+12:42
+matter. This is if a can't really be like grouped into a certain section. I can also right here see all of my
+12:48
+machines. I currently only have one machine connected to this factory which is my MacBook and it's currently offline
+12:55
+because it's closed. But I can see when it was last seen 11 minutes ago, the CPU, memory, disk free. And then also
+13:02
+[clears throat] all of my projects from the T3 state. I will explain T3 code in a second and how it connects to my
+13:09
+factory. But yeah, I can also add more machines right here. My Mac Studio, some sort of like Linux server, it does not
+13:15
+matter. I can add multiple machines and then also use them whenever needed. What else do we have here? Repositories.
+13:21
+Inside of here, I can add repositories which I want my factory to work on. Oh,
+13:26
+and by the way, if I go back to the machines quickly, then you will see here that my MacBook is now connected online.
+13:33
+Let's also quickly check out the settings inside of here. I can set the default harness and model. In this case,
+13:39
+I already selected cloud code and also Opus 5.5, the best model ever created.
+13:45
+And this option is super interesting. Inside of here I can select where each task each job should run. If I select
+13:52
+this Mac then this means every job will run locally on my MacBook. So every job will get a work tree and with that we
+13:59
+can just work on multiple things in parallel without breaking anything. But I can also select cloud and this means
+14:05
+every job every task gets an individual cloud sandbox. And this allows us to
+14:10
+essentially scale infinitely. I'm not constrained by my local resources. Everything just works. Everything just
+14:16
+runs. And for the sandboxes, I use a service called Modal. Not sponsored or anything like that. It's quite cool. It
+14:23
+works quite well and yeah, they provide sandboxes which are very scalable. But I will explain that a bit more thoroughly
+14:29
+later on. Nevertheless, I want to now already get started on board a new repository and then just kick off a few
+14:36
+jobs, a few tasks. So inside of here in the repositories section, I can add a
+14:41
+new repository. Here I already installed the GitHub application, meaning I have access to all of the following
+14:47
+repositories. I also set them right here. I want to on board this repository, YouTube factory demo test.
+14:54
+Let me click on it. And now it will essentially just pull all of the data and analyze everything. And now you
+15:00
+might say, "Hey Jan, right here it says analyzing. What does that mean? What is currently happening?" Well, our factory,
+15:06
+Marshall factory, currently reads the repository by itself in a modal sandbox.
+15:11
+It works out the setup, how to do checks and then it will also open a recipe PR.
+15:16
+And if I go to the model dashboard, you will also see it right here once sandbox is currently live. And you can also see
+15:22
+it right here. So on boarding building, here we have our recipe. We can also view the setup, right? So bun install
+15:29
+frozen lock file. This here has all passed. That's great. And here we can now also update a few settings. The
+15:36
+display name is fine. This repository takes new jobs. For the default harness,
+15:41
+we want to use cloud code. Here we can also select where the jobs should run. We want to say cloud, in other words,
+15:47
+model. And then for merging, I will select merge when confident. So if the agent is confident, it will merge the PR
+15:54
+automatically. If I would now select off, then this means I would have to do everything manually. But this is
+15:59
+something I don't personally do. I always have it set to merge when confident and it's safe. It works well.
+16:05
+And that's already it. Here I also set require buckbot review to true because I want to make sure that my agent actually
+16:12
+waits for buckbot and also make sure that buckbot does not throw any errors. So this all looks good to me. We are now
+16:19
+ready. The sandbox has been built. The image has been built meaning I can save everything right here. One thing I can
+16:25
+also now do is open the GitHub repository and you will instantly see that we now have a new PR add the
+16:32
+factory setup recipe. I can quickly check it out. Let me open it. Bum bum bum. Here it is. And this essentially is
+16:38
+just our setup.json file. This is how to set everything up. Bun install. This is
+16:43
+how to run the checks. And this here is our warm key. So let's merge the PR. I will do it right here. Bum merge PR. And
+16:50
+now everything is finished. And since our sandbox is now built and with that also set up, we can finally now create a
+16:58
+few tasks. So I have now created three linear to-dos in total. As you see here,
+Running AI coding agents in parallel in cloud sandboxes
+17:04
+mark recipes as favorites, show the total cooking time of the visible recipes. And finally, make the recipe
+17:11
+book nicer. And as mentioned, yes, in this factory, I'm using linear, but it's not a requirement. You just need some
+17:18
+sort of source. So, if I go back to my software factory, you need some sort of source which allows you to create a
+17:24
+ticket. Linear, GitHub issues, Grockbot, you could also use, I guess, chat GPT
+17:30
+with an MCP server. It all works. It does not really matter. But the reason why I use Linear is because it's a
+17:36
+product development system. You can see how the issue or how the to-do moves from, I don't know, assigned to progress
+17:43
+to investigation to PR. So that's why I use linear, but it's not a requirement.
+17:49
+And here's what will now happen in a second. I will create a ticket. Then we should first of all have a triage step.
+17:56
+Meaning our agent will analyze the to-do and say either uh-huh, this looks good to me. let's start investigation or the
+18:03
+agent will say you know what this is kind of unclear what does the user mean what does the user want me to do and if
+18:09
+that's the case then the agent will stop everything and say hey user please explain the issue further what do you
+18:16
+want me to do if not as mentioned we will go over to the investigation step then to the implementation step then to
+18:23
+the verification step and if the verification step fails then we will go back to the implementation steps
+18:29
+essentially we have a loop. Implement, verify, implement, verify. And finally,
+18:34
+once everything looks good, the agent will create a PR. And as you already know, I added or yeah, in the settings,
+18:41
+I set the option to merge when confident. If the factory and with that all of the agents are confident, then
+18:48
+everything will be merged automatically. If not, I will get a hand over and I will review everything myself and then
+18:54
+either merge it myself or say this is incorrect, this looks ugly, whatever it might be. So let's go back to linear.
+19:01
+Here's one thing I want to quickly show you guys. I added a few labels. So first of all, this here is not an issue, but
+19:08
+rather a to-do. And here I selected four labels. The first one is the harness. I
+19:13
+want to use cloth code for this to-do. Then the repository is this one right here. And the repository was added
+19:20
+automatically once we created our repo. So not only did we create like the setup
+19:25
+script, we also synced everything with linear. Then this will run in the cloud, not locally on my machine. And I also
+19:32
+added the factory label. This will create a web hook event and tell the factory, hey, we have a new to-do get
+19:38
+started working. And now you might say, but Jan, didn't we add like default settings? Yes, correct. So if I wouldn't
+19:45
+add the harness and runs on right here, then we would just use whatever I set in the settings. So cloud, opus 5.5, and
+19:53
+cloud code. And also I want to quickly show you this to-do because it's quite interesting because one thing you should
+19:59
+realize right away is that it's kind of vague, right? Like make the recipe book nicer. What does nicer even mean? And
+20:07
+here I also changed the harness. Instead of using claw code, we will use codecs.
+20:12
+And with that out of the way, I guess it's time to test everything out. Is anything running right here? Nope. Zero
+20:19
+drops. So let me close the sidebar. Let's go back to linear and I will click on create issue. Create issue and again
+20:26
+create issue. Let's go back to our factory. And what do we have inside of here? Currently we only have one ticket
+20:34
+cute. Uh-huh. Interesting. Is there anything else running? Nope. Is this an
+20:39
+issue? No. Because now we have them right here. It takes a second. Again, web hooks are asynchronous. They are not
+20:45
+instant. And that's why we got the first issue, then the second issue, and then finally the third issue. And here we
+20:52
+instantly already have something running. Triage mark recipes as favorite. Oh my god, it's already in the
+20:59
+implementing stage. Isn't that cool? And I can even open this task. And now look at the sidebar. What do we have right
+21:06
+here? Triage. Uh-huh. Finished. Investigating. Finished. Implementing. It's doing it right now. Adding
+21:13
+favorites.ts. A star button per card. And here you will also see that we are currently in a sandbox. This is the
+21:19
+sandbox ID code login slot not held. And that's because we are using Opus 5.5.
+21:25
+And I can even see all of the live events inside of here. What else do we have here? Oh, both tasks are now in the
+21:32
+verifying stage. Interesting. And we even have one which is now waiting on us. And if I now open this YTF9 task,
+21:40
+then you will see the same thing. I can even make this full screen. We now see again this here is using Opus 5.5 cloud
+21:47
+sandbox managed by my MacBook my machine. This here is the cost 35 cents.
+21:53
+And we also have evidence verified four out of four checks meaning tests lint
+21:59
+type check and also build. And by the way I see all of the commands. This means again we have a fullon management
+22:06
+observability panel. I see everything. I see what the agent did. the timeline, triage, investigating, implementing,
+22:13
+verifying, and now we are in the PRCI. And we can even see all of the live events, the exact time, and what the
+22:20
+agent did in that specific moment, on that specific event. We also currently
+22:25
+have a ticket that's waiting on me. Why is that? Well, this here was super vague. Make the recipe book look nicer.
+22:33
+What does that even mean? And that's also what the agent realized right away. Which scope should YTF10 implement?
+22:40
+Visual polish or B or C? What should I do? You were not very specific. So if I
+22:45
+go back to my inbox, you will see it right here. This task is waiting on you. I can now open it. And I can also
+22:52
+instantly respond inside of here. So what should we do? Visual polish only with clear typography. Yeah, I will say
+23:00
+let's go with A. It will now send the answer to my agent and you will see it right here. Answer sent, the job
+23:06
+resumes. It's now again cute because it got a new event, a new prompt essentially. And our agent will now then
+23:13
+get started with the triage step, investigating, implementing, and then everything will already be finished. And
+23:19
+you know what's quite cool? If I go back to this task which is now again running, I see the message I sent. Let's go with
+23:26
+a. And again, if we look at the timeline, triage waiting on you. Answer received. Triage investigating. But now
+23:33
+you might say, "Hey Jan, this looks quite cool, but are we also able to like view everything in a coding environment?
+23:40
+Am I able to take over?" Well, yes. So if I scroll to the top, I can right here
+23:45
+open this in T3. So let me click on that. We are now asking the runner for a pairing link. This takes a few seconds.
+23:52
+I will now copy this URL and open it in a new tab. This will again take a few seconds. This is not super fast, but
+23:59
+that's absolutely fine. This is currently running in model in our sandbox and it will now open the T3 AD.
+24:07
+And what do we have here? This is our threat. So we had two sub agents running implement polish. And now our agent is
+24:14
+almost already finished. And in theory, if needed, I could now go inside of here and say, "Hey, this is incorrect. Do
+24:20
+this. Do that." I can essentially step in and merge or steer the agent. Isn't
+24:26
+that cool? And look, I hope you guys now understand why I'm so excited about this factory. It's essentially everything I
+24:33
+ever wanted. Most of the factories I saw on the web that other people created were kind of vibe coding slot machines
+24:41
+if I'm honest. It was like essentially input output. That's it. But that does not work. Your agent has to or your
+24:48
+factory has to follow a specific recipe. I mean again let's take our kitchen analogy. First of all, boil the water.
+24:55
+Then I don't know add some salt. add the noodles, create the sauce, then let's I don't know start with the meat, let's
+Why your AI agents need playbooks
+25:00
+season it, whatever. You have to follow a recipe. And that's exactly what our factory is doing. Everything starts with
+25:07
+our ticket. Then triage, investigate, implement, verify. Oh, something failed.
+25:12
+Don't worry. Let's just go back to step three and let's continue in the loop until everything works. Create a PR. You
+25:20
+are confident, then go ahead and merge. Is there something you are not sure about? Then hand over to me. And since
+25:25
+we are already talking about handovers, I want you to look at our tickets. Did we merge anything or did our factory
+25:32
+merge anything? No. And why is that? Well, it's relatively simple. Right here, it says confident. But there was
+25:39
+an issue. I couldn't check the page in a browser because the host lacks the browser libraries. And this is the
+25:46
+mistake I created or I made. I did not add the needed browser utilities. And
+25:51
+that's why the agent wasn't able to verify its own changes. So if I go back to my factory, a very important step was
+25:58
+the verify step. And the verify step has very important instructions like let's
+26:03
+run lint tests, let's run the build, but at the same time also use the built-in browser and create a screenshot. Check
+26:10
+out the result. In this case, it did not work and that's why we essentially failed if that makes sense or that's why
+26:16
+our factory failed. It did not merge anything but the code was written. Everything is good. Meaning what I can
+26:22
+now do is open the PR right here using the pull request button and I could now for example review the code. I won't do
+26:29
+that because I know it's clean. So if I now click on merge pull request and go back, you will see that it will also
+26:35
+automatically update. So let's go back. And now it's updated. It's not in the PRCI stage anymore, but rather in the
+26:43
+merged stage. Now, personally, I'm not the biggest fan of this board view. So I
+26:48
+also integrated a list view and now I can view all of the tickets in a beautiful list and they are also grouped
+26:54
+by the stages PRCI and also merged. Let's merge another PR. I want to show
+27:01
+you the realtime functionality. I will open the PR in GitHub. So YTF8
+27:07
+and inside of here let's scroll to the bottom and I will click on merge pull request and then confirm merge. And if
+27:13
+we go back to our admin management panel, then it should automatically update. Let's see. Bum. Did you just see
+27:21
+that? What exactly happened? Well, essentially, GitHub sent a web hook event. Our application got the event,
+27:28
+updated the database, and with that, the UI also updated automatically. This
+27:33
+looks beautiful. Oh, and I didn't mention it yet, but Marshall Factory is completely open source. You will find
+27:39
+the link down below in the YouTube description underneath the like and subscribe buttons. Please don't forget
+27:45
+to start it. It took quite some time to create everything and quite a few tokens around $3,000 worth of tokens. So yeah,
+27:53
+a like, a subscribe, and also a star would mean a lot to me and my heart. But now you might say, Jan, we now looked at
+The tech stack behind my software factory
+28:00
+what factories are, how they work. We looked at your factory, which is super fancy. Nevertheless, you did not really
+28:08
+explain how you built it. What technologies did you use? How are you able to open T3 code in the browser? How
+28:15
+are you using modal? And what about your local machine? How is everything connected? Great question. So, let's go
+28:22
+back to Excal. Inside of here, I created a few beautiful diagrams. And let's
+28:27
+first of all start with the stack. So, the first you could say, let's call it primitive is the harness itself. That's
+28:34
+our agent. And we have access to clot code, codeex, cursor, and I think also
+28:40
+anti-gravity. And in this case, the harness is the program that reads the code, edits the files, and also runs all
+28:47
+of the needed commands. And our factory decides which harness each ticket gets.
+28:53
+So, as you already know in linear, we added this label. Where is it? Bum bum. It's right here. And I can choose
+28:59
+between codeex, anti-gravity, and claw code. Also, we have default settings.
+T3 Code: orchestrating multiple AI agents
+29:04
+This means if I forget to add the label then we will just use the default which is cloth code with opus 5.5. Then as a
+29:11
+next step we have T3 code. This is our multi- aent orchestrator. It runs many
+29:17
+harness sessions side by side each in its own thread and each thread gets its
+29:22
+own copy of the repo. So the jobs never get in each other's sway which is super important. And the most important reason
+29:29
+why we use T3 code right here is yes because it's a multi- aent orchestrator,
+29:34
+but also because you can control T3 code from the outside using the provided CLI.
+29:40
+So the factory starts, messages, and stops threats without you clicking anything. And the factory also never
+29:47
+talks to Claude code or codeex directly. It always goes through T3 code. It's our
+29:52
+multi- aent orchestrator. And what do I mean by multi- aent orchestrator? Well, T3 Code allows us to use multiple models
+30:00
+from different harnesses in one thread. So, if you want to learn more about T3 code, then please head over to the best
+30:06
+YouTube channel out on the market, Jan Marshall, because inside of here you will find this video. T3 Code has
+30:13
+completely won me over. Let's now again go back. The next step is Pstack. And
+PStack: the coding agent framework
+30:18
+Pstack is like our coding agent framework. It tells our agents how to
+30:24
+work, in what order, what to do, stuff like that. So, it's a plug-in for claw code, cursor, codecs, anti-gravity, it
+30:32
+does not really matter. And it provides playbooks for bug fixes and also features, skills, and then helper
+30:38
+agents. As you already know, I created a full-on video on Pstack. Check it out.
+30:44
+It's quite big. But as a TLDDR, you get playbooks, functional skills, principal
+30:49
+skills, agent definitions, and then also supporting scripts. And what you do is that you provide a prompt like I want to
+30:56
+implement authentication. This here is the definition of done. These are my constraints. Get started. You then
+31:02
+invoke the potato mode skill. It acts as an internal router. So it interprets
+31:07
+your request and then routes this prompt, this request to a playbook. So if you want to implement a feature, it
+31:13
+will route the request to a feature playbook. This feature playbook has then a set of steps with specific skills the
+31:20
+agent should invoke and then the agent will already get started. It will invoke the needed skills also use the needed
+31:26
+sub agents, the needed supporting scripts and then we already have our verify step. This again is the loop. So
+31:32
+if something fails, go back update the code verify. Bum, bum, bum. And finally, we then get the verified result with
+31:39
+also all of the evidence which comes from our verify and review step. As mentioned, please check out this video
+31:45
+right here. It explains Pstack on a way deeper level. But without Pstack, the agent would just improvise. With Pstack,
+31:53
+every job follows the same disciplined process. Investigate, build, test, review. It never skips anything because
+Inside the factory: runner, reporter and panel
+32:00
+the playbook has a specific order. And our factory, Marshall factory, actually
+32:05
+also builds on top of Pstack. I added a few more playbooks and skills. So for example, when you ask instead of guess,
+32:13
+how to report each stage and how to judge whether the agent is confident and with that if the agent should merge
+32:19
+everything or rather hand over to me. Then we also have the factory and this is what I built, right? This is what
+32:25
+essentially runs in the background. And we have three core primitives. Runner,
+32:30
+reporter, and finally panel. What is the runner? Well, the runner is the foreman. So, it runs permanently on my Mac, on my
+32:38
+Mac Studio, on my Linux machine. It does not really matter. It takes the tickets, starts the jobs, watches them, merges,
+32:44
+and then cleans up afterwards. It never writes any code itself. It's essentially just like a manager, if that makes
+32:51
+sense. Then, we also have our reporter, and it's like the jobs radio. It writes
+32:57
+along inside every agent session and reports every stage, every sub agent and
+Where jobs run: locally or in cloud sandboxes
+33:02
+every token used. With that, we are able to create our management observability panel. I'm instantly able to see, hey,
+33:09
+four active runs, tokens today, 10 million spent today, $10. Then what else
+33:15
+do we have here? Our panel. And this is our management panel which is deployed to Versell. I can watch everything
+33:22
+inside of there and step in when needed. Open T3 code, stuff like that. As the next step, we have the where jobs drops
+33:29
+run section. And as you already know, jobs can either run locally on my machine or in the cloud using a sandbox.
+33:36
+If we would now pick local, then this means everything would run on my Mac in AT3 thread with its own work tree. So a
+33:43
+separate folder with a copy of the repository so that nothing kind of merges or that nothing conflicts if we
+33:49
+have parallel sessions. And then we also have our cloud environment. And this means every job gets its own small
+33:56
+machine with T3 code inside already installed. And it's also completely separated. Every sandbox is an
+34:03
+individual sandbox. So we can run as many as needed in parallel side by side and nothing will ever conflict. They
+34:10
+they are not in one machine. With a local machine, we have to create work trees because every job runs in one
+34:16
+machine. But using our cloud sandboxes, every job gets an individual sandbox. So
+34:21
+we don't even have to create a work tree. And finally, we also have our sources. And this is where the work
+34:27
+comes in from. Currently, we offer Lineia and Slack. But the next step would be to also integrate GitHub
+34:33
+issues, Claude Duo, Grockbot. What else is there? I guess I don't know, iMessage. That would also be quite cool.
+34:40
+Essentially, you just need some sort of like text input which can send events to our factory. So now you might say,
+34:47
+"Okay, Chant, this is quite interesting. We have a harness or multiple harnesses. T3 code wraps the harnesses. Then we
+34:55
+have Pstack the factory with a runner reporter and the panel. Then we can
+35:00
+either run the job locally on our machine or using cloud sandboxes. In other words, model. Then we also have
+35:07
+our sources. Nevertheless, I'm still a bit confused like how does everything connect to each other? From my
+35:13
+understanding, we start with the sources. We open linear. We create a ticket. But what's the next step? Do we
+35:19
+send a web hook event? And where do we send a web hook event to? To our application, to our database. How does
+35:25
+everything work? Great question. Here I created a diagram for the whole factory
+35:31
+and how everything connects to each other. As already mentioned, everything starts with our sources. And what did we
+35:38
+do? Well, we created a ticket in linear. And what did we do in the ticket? We added labels. Let me quickly show it to
+35:45
+you here. We added four labels. Codeex for the harness. Then the repository if
+35:50
+we want to run it on our machine or in the cloud. And I also added the factory label. And the factory label tells our
+35:57
+software factory that it should attack the ticket. No, I'm joking. That it should work on the ticket, fix the bug,
+36:03
+implement the feature, whatever it might be. And linear then sends a web hook event with an automatic message. It then
+36:10
+goes into our ingest function as you see here. And the ingest function is a small
+36:15
+program hosted on Neon. And since I already mentioned Neon, let's also talk about Neon. Neon is the back end as a
+36:22
+service I use for this whole software factory. If you didn't know, Neon provides the database, authentication,
+36:28
+compute, storage, and AI gateway. And also recently they added realtime functionality. And I use neon pretty
+36:35
+much for everything. So first of all, once we then get the web hook event, it then gets interesting interested into
+36:41
+our web hook inbox. So every incoming web hook from linear, github, grock bot,
+36:46
+claw duo, whatever is stored inside of here. And from there on, a small request is created. For example, take ticket,
+36:54
+ytf8 or what did we have inside of here? YTF10, whatever it might be. Then we
+36:59
+also have our events. And in this case, events is just a database table. Let me quickly show it to you. This here's the
+37:06
+table with all of the individual events. Kind, stage, usage, then stage, agent
+37:11
+launched, session start. Essentially, this table is our log book. Every stage,
+37:17
+sub agent, and token is stored inside of here, which also then allows me to showcase everything in our management
+37:23
+observability panel. I can instantly see the amount of tokens used and also the total spent for today. Finally, I also
+37:30
+have live updates as already mentioned, Neon has a new primitive called real time. So when something changes in our
+37:37
+database, for example, an event inside of here, maybe we added a few more tokens or we used a few more tokens,
+37:43
+then Neon will automatically push this information to whoever is listening. And this then means the runner and also the
+37:49
+panel. As a next step, we then have my local machine, my MacBook, my Mac Studio, my Linux machine, whatever it
+37:56
+might be. And the runner here is super important. So the runner on my MacBook hears about the request and then within
+38:02
+seconds, maybe even milliseconds, takes the ticket. So we essentially claim the ticket. Neon gets all of the tickets
+38:08
+from linear. 1 2 3 4 5. It then sends all of the tickets to my MacBook. And
+38:14
+then my MacBook or my machine, whatever it might be, claims the tickets. Once the runner claimed all of the tickets,
+38:20
+it then decides where the job should run, either locally on my machine or in the cloud. So if it happens locally then
+38:27
+we will just use my MacBook as an example and use the T3 code and create a
+38:32
+new work tree. And if we want to use a cloud sandbox then the runner will start a cloud sandbox for every job. So if we
+38:39
+have five jobs then we will spin up five individual cloud sandboxes and our local
+38:44
+machine still stays in control. So the runner on our Mac will still start everything. It will watch everything and
+38:50
+it will also be the one which will shut everything down, our sandboxes and stuff like that. For the cloud sandboxes, I
+38:58
+use a third-party service called modal. It's quite cool, but there are also a lot of other alternatives out on the
+39:04
+market which are also cheaper and faster. But modal has a quite cool free tier and that's why I used it. And here
+39:11
+we also have like three core primitives. The worker image, the sandboxes and then also hibernate. So the worker image is a
+39:18
+template machine with every tool at a fixed version. T3 code, claude code, codeax, pstack, the reporter, the
+39:26
+playbooks and then for every repository we have a warm version with the code already cloned and also installed. So if
+39:33
+I go back to my factory and with that to my repositories, then you will see right here warm cloud sandbox image ready.
+39:41
+That's what I meant. In terms of sandboxes, every job gets an individual sandbox with the template and everything
+39:48
+is of course completely separated. And finally, we also have our hibernation. This means if a job only waits for a
+39:55
+review or an answer, then it will be frozen and after 5 minutes, it shuts down so that we don't incur any cost.
+40:01
+And once we then answer, it wakes up automatically and carries on. Then we also again have stage four and stage
+40:08
+four goes back to neon. So while the agent works, the reporter sends every step back to Neon so that we can update
+40:15
+our events. Hey, we used the following amount of tokens. This is now the new stage. We went from verifying to PR or
+40:22
+we went from triage to implementing whatever it might be. And at the same time, as you already know, let me
+40:27
+quickly go back. Our reporter right here also reports back if something is unclear. So if the ticket is way too
+40:34
+vague or if I did not provide enough information, then the agent will say, "Stop. Wait a second. be more specific,
+40:40
+whatever it might be. I mean, I showed you everything and then again we will just send the message. Neon will then go
+40:46
+back to our Mac. Our runner will get the new message and then hand it over back to model if we use cloud sandboxes. Step
+40:53
+five is then our panel itself. As you already know, my panel runs on Versell. It's deployed on Versel and it reads
+41:00
+everything from Neon in real time. As mentioned, Neon has now real-time functionality and my panel is then
+41:06
+connected to Neon. Whenever something updates in my database, like for example, in event, it automatically gets
+41:12
+updated in Versel without me having to do any hard refreshes or as already mentioned without having me to subscribe
+41:19
+to something or create weird websockets, manage them, scale them, stuff like that. Step six is then already to push
+41:26
+the PR. So, the agent just creates a branch and then opens a PR. It also reports how confident it is and what it
+41:33
+built. And then finally, the agent or our factory either merges everything by itself or it hands over to me and says,
+41:39
+"Hey, I'm not super confident or something is missing. I'm not able to verify everything. Please review the
+41:45
+code and merge it yourself." As the next step, we then create a web hook event. For that, we use our injust function. It
+41:52
+updates our database, our events table, and we again update versel, our panel. So if I go back to my factory,
+41:59
+essentially we move our Let me quickly show it to you. We move our ticket from the PRCI stage into the merged state. So
+42:07
+if I merge this PR, let me quickly open GitHub. Ba bum, it's loading. Let me merge it inside of here. Confirm merge.
+42:13
+And if I now again go back, then you will see that it will now automatically update. We sent a web hook event. Neon
+42:19
+then used the ingest function. It updated our database. And since we used neon realtime the real time primitive,
+42:26
+it also instantly updated this panel which was deployed on Versel. And yeah, that's already it. As you see here,
+42:32
+seven steps in total. And it's actually not that complicated. Again, step one is to essentially create a ticket in linear
+42:39
+or create a message in Slack. Neon then gets this new request using the ingest function. It updates the database and
+42:45
+then essentially just routes this event to our Mac. My machine then claims these
+42:50
+tickets and then hands over the work either to our local machine or to the cloud. Model then manages everything,
+42:57
+creates the needed sandboxes and hibernates if needed. While everything runs, our machine also reports
+43:03
+everything to Neon, meaning the stage, the agents, the cost, and everything also updates automatically in my panel.
+43:10
+Once our agents are finished, we then create a PR or our factory then creates the PR and either merges it
+43:16
+automatically or hands over to me. Once everything is merged, we again create a web hook event. Our ingest function is
+43:23
+used. Our events table updates and everything updates in real time, meaning also our panel which is deployed on
+43:30
+Versel. It's as simple as that. And yeah, that's already it. Please don't forget to like and subscribe. It would
+43:37
+mean a lot to me and my heart. So, please do it. As already mentioned, this factory is completely open source. The
+43:43
+link is down below in the YouTube description. Thank you, Test Sprite, for making this video possible. And yeah,
+43:49
+one thing I want to just quickly mention is that this year is still work in progress. There are still bugs. I'm
+43:54
+working on everything. I'm still trying to make it better. If you want to help me create a few PRs, I would love your
+44:00
+support. And with that out of the way, enjoy your day and see you in the next video. Over and out. Bye-bye.
+

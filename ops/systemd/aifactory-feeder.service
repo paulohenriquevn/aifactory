@@ -1,0 +1,13 @@
+[Unit]
+Description=aifactory backlog feeder (opens an issue per backlog item and records what became of it)
+After=aifactory.service
+
+[Service]
+WorkingDirectory=@ROOT@
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@NODE_BIN@/node scripts/backlog-feed.mjs --concurrency 3 --retry-failed
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
