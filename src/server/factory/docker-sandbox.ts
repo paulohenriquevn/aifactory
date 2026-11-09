@@ -417,6 +417,9 @@ export function sandboxArgs(
   return [
     'run',
     '-d',
+    // An init reaps what the work leaves behind. Without it an orphan that exits stays a zombie, which
+    // `kill(pid, 0)` still finds, so a repository's test that a subprocess is gone fails here and nowhere else.
+    '--init',
     '--name',
     name,
     '--label',

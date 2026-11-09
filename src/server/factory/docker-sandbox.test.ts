@@ -241,6 +241,14 @@ describe('creating a docker sandbox', () => {
     expect(sandboxArgs('n', 'net', {}).join(' ')).toMatch(/--memory 5g --memory-swap 5g --cpus 3/)
   })
 
+  it('runs an init as the first process of the sandbox, so an orphan that exits is reaped, not left a zombie', () => {
+    // Without it a grandchild whose parent exited stays a zombie under the container's first process, and
+    // `kill(pid, 0)` still finds it: a test that checks a subprocess is gone fails for the sandbox's sake.
+    const args = sandboxArgs('n', 'net', {})
+    expect(args).toContain('--init')
+    expect(args.indexOf('--init')).toBeLessThan(args.indexOf('aifactory-sandbox:3'))
+  })
+
   it('gives the proxy no capabilities and a memory limit, and the sandbox no volume at all', () => {
     const proxy = proxyArgs('px', '/rules-dir').join(' ')
     expect(proxy).toContain('--cap-drop ALL')
