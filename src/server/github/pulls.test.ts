@@ -297,6 +297,70 @@ describe('pull request state and merge', () => {
       createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
     ).rejects.toThrow(/409.*Head branch was modified/)
   })
+
+  // Each answer in turn, the last one repeated: a merge that GitHub refuses for a moment, then takes.
+  function answering(...answers: { status: number; body: unknown }[]) {
+    let merges = 0
+    const fetch = async () => {
+      const answer = answers[Math.min(merges, answers.length - 1)]
+      merges += 1
+      return new Response(JSON.stringify(answer.body), { status: answer.status })
+    }
+    return { fetch, merges: () => merges }
+  }
+  const noWait = async () => {}
+
+  it('merges on a second try when another merge moved the base branch a moment before', async () => {
+    const github = answering(
+      {
+        status: 405,
+        body: { message: 'Base branch was modified. Review and try the merge again.' },
+      },
+      { status: 200, body: { sha: 'merge1' } },
+    )
+
+    const merged = await createGithubApi(github.fetch, noWait).mergePullRequest(
+      'o/r',
+      't',
+      9,
+      'abc',
+      'squash',
+    )
+
+    expect(merged).toEqual({ sha: 'merge1' })
+    expect(github.merges()).toBe(2)
+  })
+
+  it('merges on a later try when GitHub answers a server error', async () => {
+    const github = answering(
+      { status: 502, body: { message: 'Bad Gateway' } },
+      { status: 500, body: { message: 'Server Error' } },
+      { status: 200, body: { sha: 'merge1' } },
+    )
+
+    expect(
+      await createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
+    ).toEqual({ sha: 'merge1' })
+    expect(github.merges()).toBe(3)
+  })
+
+  it('gives up after a few tries and says what GitHub answered last', async () => {
+    const github = answering({ status: 405, body: { message: 'Base branch was modified.' } })
+
+    await expect(
+      createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
+    ).rejects.toThrow(/405.*Base branch was modified/)
+    expect(github.merges()).toBe(4)
+  })
+
+  it('does not try again when the pull request has conflicts, which only new work can fix', async () => {
+    const github = answering({ status: 405, body: { message: 'Pull Request has merge conflicts' } })
+
+    await expect(
+      createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
+    ).rejects.toThrow(/405.*merge conflicts/)
+    expect(github.merges()).toBe(1)
+  })
 })
 
 describe('commitChecks', () => {
