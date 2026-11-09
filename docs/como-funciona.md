@@ -570,11 +570,12 @@ enquanto o agente trabalha, e uma conexão que caiu.
 **Ações.** Todas passam pelo servidor, que confere o estágio da task de novo, então uma página velha não
 consegue fazer o que a task já não permite.
 
-| Ação           | Quando                          | O que faz                                                                                                             |
-| -------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Aprovar        | task com PR (`done`, `handoff`) | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.       |
-| Pedir mudanças | task com PR, com um texto       | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review. |
-| Tentar de novo | task `failed` ou `handoff`      | Apaga a branch (o que fecha o PR) e recomeça do zero.                                                                 |
+| Ação                  | Quando                                   | O que faz                                                                                                                                                                                                                |
+| --------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Aprovar               | task com PR (`done`, `handoff`)          | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.                                                                                                          |
+| Pedir mudanças        | task com PR, com um texto                | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review.                                                                                                    |
+| Tentar de novo        | task `failed` ou `handoff`               | Apaga a branch (o que fecha o PR) e recomeça do zero.                                                                                                                                                                    |
+| Marcar como resolvida | task `failed` ou `handoff`, com um texto | Para o que uma pessoa resolveu por outro caminho (à mão, ou dividindo a issue em outras já entregues). O texto diz onde. A task vai para Delivered, marcada como resolvida no commit em que a branch de integração está. |
 
 Se o agente, ao receber um pedido de mudança, concluir que não há o que mudar (o teste já existia, por
 exemplo), a task volta a `done` e a resposta dele vira um comentário na issue, em vez de falhar.

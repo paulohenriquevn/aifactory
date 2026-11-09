@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A failed or handed-over task that a person resolved another way can be marked resolved from its page, with a note saying where; it moves to Delivered (#10)
+
 ### Fixed
 
 - A Claude Code run that printed its result before a background command kept it alive past the timeout no longer fails the task (#8)

@@ -30,6 +30,7 @@ import {
   type FindingAction,
   releaseTask,
   requestChanges,
+  resolveElsewhere,
   retry,
   type ActionDeps,
 } from './actions'
@@ -426,6 +427,45 @@ describe('actions', () => {
     expect((await getDb().select().from(task).where(eq(task.id, failed)))[0].stage).toBe('intake')
     const decisions = await getDb().select().from(decision)
     expect(decisions.map((d) => d.kind)).toEqual(['retry', 'retry'])
+  })
+
+  it('delivers a failed or handed-over task a person resolved another way, at the integration head', async () => {
+    const heads: string[] = []
+    const withHead = (): ActionDeps => ({
+      ...deps(),
+      api: {
+        branchHead: async (_repo: string, _token: string, branch: string) => {
+          heads.push(branch)
+          return 'head1'
+        },
+      } as unknown as GithubApi,
+    })
+    const failed = await seed('failed')
+    const handed = await seed('handoff')
+
+    await resolveElsewhere(withHead(), failed, '  Fixed by hand in #1389.  ')
+    await resolveElsewhere(withHead(), handed, 'Split into #12 and #13, both delivered.')
+
+    expect(heads).toEqual(['workspace', 'workspace'])
+    const [row] = await getDb().select().from(task).where(eq(task.id, failed))
+    expect(row).toMatchObject({ stage: 'done', resolvedSha: 'head1' })
+    expect(await getDb().select().from(decision)).toMatchObject([
+      { taskId: failed, kind: 'resolve', sha: 'head1', note: 'Fixed by hand in #1389.' },
+      { taskId: handed, kind: 'resolve', sha: 'head1' },
+    ])
+    const [card] = (await listTasks(getDb())).filter((c) => c.id === failed)
+    expect(card).toMatchObject({ column: 'review', resolved: true })
+    expect(queued).toEqual([])
+  })
+
+  it('refuses to resolve without saying where, or a task that is not failed or handed over', async () => {
+    const failed = await seed('failed')
+    await expect(resolveElsewhere(deps(), failed, '  ')).rejects.toThrow(/say where/)
+    for (const stage of ['build', 'done']) {
+      const id = await seed(stage)
+      await expect(resolveElsewhere(deps(), id, 'Fixed in #1.')).rejects.toThrow(ActionRefused)
+    }
+    expect(await getDb().select().from(decision)).toEqual([])
   })
 
   it('does not retry a task that is running, waiting or done', async () => {
