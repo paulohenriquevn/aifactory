@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- The factory's squash merges no longer gain a `Co-authored-by` trailer for its own bot: commits are signed with the bot user's own email, which needs the new `GITHUB_APP_BOT_USER_ID` (#13)
 - A repository's test that starts a server on localhost and fetches it no longer fails in the docker sandbox: localhost is named on 127.0.0.1 alone, as on a hosted runner (#12)
 - A repository's test that a subprocess is gone no longer fails in the docker sandbox: the sandbox now runs an init that reaps exited orphans (#11)
 - A Claude Code run that printed its result before a background command kept it alive past the timeout no longer fails the task (#8)

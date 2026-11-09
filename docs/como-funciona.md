@@ -957,21 +957,22 @@ branch sua (padrão ou a escolhida)          branch factory-memory (só a fábri
 Tudo vem do ambiente, lido quando um job começa, não na subida do servidor. O servidor sobe e
 responde `/api/health` mesmo sem as credenciais.
 
-| Variável                                              | Para quê                                                |
-| ----------------------------------------------------- | ------------------------------------------------------- |
-| `DATABASE_URL`                                        | Postgres do estado e da fila de jobs                    |
-| `GITHUB_WEBHOOK_SECRET`                               | verifica a assinatura do webhook                        |
-| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`                    | identidade do GitHub App                                |
-| `GITHUB_APP_PRIVATE_KEY_PATH`                         | chave privada do App (arquivo em `.secrets/`)           |
-| `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`      | credencial do Claude Code                               |
-| `FACTORY_CLAUDE_AUTH`                                 | `api-key` ou `subscription`, quando as duas existem     |
-| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Vercel Sandbox, sem a validade de 12 horas do OIDC      |
-| `VERCEL_OIDC_TOKEN`                                   | alternativa de desenvolvimento, de `vercel env pull`    |
-| `OPENROUTER_API_KEY`, `FACTORY_CHAT_MODEL`            | o assistente do chat no OpenRouter                      |
-| `FACTORY_CHAT_CODEX_MODEL`                            | o modelo do assistente na assinatura do ChatGPT         |
-| `FACTORY_GUIDE_MODEL`                                 | o modelo dos guias de página (padrão gpt-4.1-mini)      |
-| `FACTORY_JOBS=off`                                    | sobe uma prévia do painel sem pegar jobs da fila        |
-| `FACTORY_KNOWLEDGE_DIR`                               | onde fica o espelho da base (padrão `.state/knowledge`) |
+| Variável                                              | Para quê                                                   |
+| ----------------------------------------------------- | ---------------------------------------------------------- |
+| `DATABASE_URL`                                        | Postgres do estado e da fila de jobs                       |
+| `GITHUB_WEBHOOK_SECRET`                               | verifica a assinatura do webhook                           |
+| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`                    | identidade do GitHub App                                   |
+| `GITHUB_APP_BOT_USER_ID`                              | id do usuário `<slug>[bot]`, que vai no e-mail dos commits |
+| `GITHUB_APP_PRIVATE_KEY_PATH`                         | chave privada do App (arquivo em `.secrets/`)              |
+| `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`      | credencial do Claude Code                                  |
+| `FACTORY_CLAUDE_AUTH`                                 | `api-key` ou `subscription`, quando as duas existem        |
+| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Vercel Sandbox, sem a validade de 12 horas do OIDC         |
+| `VERCEL_OIDC_TOKEN`                                   | alternativa de desenvolvimento, de `vercel env pull`       |
+| `OPENROUTER_API_KEY`, `FACTORY_CHAT_MODEL`            | o assistente do chat no OpenRouter                         |
+| `FACTORY_CHAT_CODEX_MODEL`                            | o modelo do assistente na assinatura do ChatGPT            |
+| `FACTORY_GUIDE_MODEL`                                 | o modelo dos guias de página (padrão gpt-4.1-mini)         |
+| `FACTORY_JOBS=off`                                    | sobe uma prévia do painel sem pegar jobs da fila           |
+| `FACTORY_KNOWLEDGE_DIR`                               | onde fica o espelho da base (padrão `.state/knowledge`)    |
 
 `.env.local` e `.secrets/` ficam fora do git, com modo 600.
 

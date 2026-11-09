@@ -4,6 +4,7 @@ import { knowledgeRoot, knowledgeSource } from '../knowledge/source'
 import { readRecipe } from './recipe'
 import { getDb } from '../db'
 import { createGithubApp } from '../github/app'
+import { botAuthor } from '../github/bot-author'
 
 import type { ReleaseMode } from './deliver'
 import { optionsFor } from './engine-models'
@@ -47,7 +48,7 @@ export function githubAppFromEnv(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
-  const slug = required(env, 'GITHUB_APP_SLUG')
+  const author = botAuthor(env)
   const registry = harnessRegistry(env)
   const fallback = env.FACTORY_HARNESS || DEFAULT_HARNESS
   const pick = (labels: string[]) =>
@@ -70,7 +71,7 @@ export function factoryDeps(env: NodeJS.ProcessEnv = process.env): RunTaskDeps {
     harness: pick,
     releaseMode: releaseModeFromEnv(env),
     reviewer: pickReviewer,
-    author: { name: `${slug}[bot]`, email: `${slug}[bot]@users.noreply.github.com` },
+    author,
     knowledge: knowledgeSource(getDb(), knowledgeRoot(env)),
     fetchRecipe: (repo, token) => readRecipe(repo, token),
   }
