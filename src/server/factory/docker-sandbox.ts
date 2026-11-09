@@ -461,6 +461,38 @@ async function waitForProxy(docker: Docker, name: string, sleep: (ms: number) =>
   throw new Error('the egress proxy did not start')
 }
 
+/**
+ * The hosts file with localhost on 127.0.0.1 alone, as on a hosted runner. Docker also names it on ::1, and
+ * in a container with no IPv6 address but loopback a server told to listen on localhost binds ::1 while a
+ * client's lookup leaves ::1 out (address configuration), so a test that starts a dev server and fetches it
+ * is refused here and nowhere else.
+ */
+export function localhostOnIpv4(hosts: string): string {
+  const lines: string[] = []
+  for (const line of hosts.split('\n')) {
+    const fields = line.trim().split(/\s+/)
+    if (fields[0] !== '::1' || !fields.includes('localhost')) {
+      lines.push(line)
+      continue
+    }
+    const others = fields.slice(1).filter((name) => name !== 'localhost')
+    if (others.length > 0) lines.push(`::1\t${others.join(' ')}`)
+  }
+  const named = lines.some((line) => {
+    const fields = line.trim().split(/\s+/)
+    return fields[0] === '127.0.0.1' && fields.includes('localhost')
+  })
+  return named ? lines.join('\n') : ['127.0.0.1\tlocalhost', ...lines].join('\n')
+}
+
+/** Rewrites the sandbox's hosts file as root, once, before any work runs in it. */
+async function pinLocalhost(docker: Docker, name: string) {
+  const hosts = await must(docker, ['exec', name, 'cat', '/etc/hosts'])
+  await must(docker, ['exec', '-i', '-u', 'root', name, 'sh', '-c', 'cat > /etc/hosts'], {
+    input: Buffer.from(localhostOnIpv4(hosts)),
+  })
+}
+
 /** Makes every tool in the sandbox trust the proxy's CA next to the system's. */
 async function trustProxy(docker: Docker, backend: DockerBackend, name: string, ca: string) {
   await backend.uploadFile('/tmp/factory-ca.pem', ca)
@@ -530,6 +562,7 @@ export function dockerSandboxProvider(deps: DockerProviderDeps = {}): IsolatedSa
         await must(docker, proxyArgs(proxy, rulesDir))
         await must(docker, ['network', 'connect', '--alias', 'proxy', net, proxy])
         await must(docker, sandboxArgs(name, net, env, spec.cacheKey))
+        await pinLocalhost(docker, name)
         const backend = new DockerBackend(docker, name)
         await trustProxy(docker, backend, name, cert)
         await waitForProxy(docker, name, sleep)

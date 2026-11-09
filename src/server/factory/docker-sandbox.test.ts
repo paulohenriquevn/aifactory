@@ -12,6 +12,7 @@ import {
   proxyArgs,
   removeStaleSandboxes,
   sandboxArgs,
+  localhostOnIpv4,
   sandboxEnv,
   staleNames,
   type Docker,
@@ -139,6 +140,19 @@ describe('creating a docker sandbox', () => {
     expect(
       all().some((c) => c.includes('cat /etc/ssl/certs/ca-certificates.crt /tmp/factory-ca.pem >')),
     ).toBe(true)
+    await sandbox.stop()
+  })
+
+  it('names localhost on 127.0.0.1 alone before the run starts, as a hosted runner does', async () => {
+    const hosts = '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n'
+    const { docker, calls } = fakeDocker((args) =>
+      args.at(-1) === '/etc/hosts' && args.includes('cat') ? ok(hosts) : undefined,
+    )
+    const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
+
+    const write = calls.find((c) => c.args.join(' ').includes('cat > /etc/hosts'))
+    expect(write?.args.slice(0, 4)).toEqual(['exec', '-i', '-u', 'root'])
+    expect(write?.input).toBe('127.0.0.1\tlocalhost\n::1\tip6-localhost ip6-loopback\n')
     await sandbox.stop()
   })
 
@@ -566,5 +580,31 @@ describe('a docker sandbox that reaches its time limit', () => {
 
     expect(result.stderr).toBe('npm ERR! missing script')
     await sandbox.stop()
+  })
+})
+
+describe('localhostOnIpv4', () => {
+  // Docker names localhost on ::1 too, and a server told to listen on localhost binds ::1 first while a
+  // client's lookup drops ::1 in a container with no other IPv6 address: the two never meet.
+  it('takes localhost off the ::1 line and keeps its other names', () => {
+    expect(
+      localhostOnIpv4('127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n'),
+    ).toBe('127.0.0.1\tlocalhost\n::1\tip6-localhost ip6-loopback\n')
+  })
+
+  it('drops a ::1 line that named only localhost, and leaves every other line as it was', () => {
+    const hosts = '127.0.0.1 localhost\n::1 localhost\nff02::1\tip6-allnodes\n172.20.0.3\tabc\n'
+    expect(localhostOnIpv4(hosts)).toBe(
+      '127.0.0.1 localhost\nff02::1\tip6-allnodes\n172.20.0.3\tabc\n',
+    )
+  })
+
+  it('adds localhost on 127.0.0.1 when no line names it there', () => {
+    expect(localhostOnIpv4('::1\tlocalhost\n')).toBe('127.0.0.1\tlocalhost\n')
+  })
+
+  it('changes nothing in a file that already names localhost on 127.0.0.1 alone', () => {
+    const hosts = '127.0.0.1\tlocalhost\n::1\tip6-localhost ip6-loopback\n'
+    expect(localhostOnIpv4(hosts)).toBe(hosts)
   })
 })
