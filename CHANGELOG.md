@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - A Claude Code run that printed its result before a background command kept it alive past the timeout no longer fails the task (#8)
+- The factory can push a change to `.github/workflows`: its installation token now asks for the `workflows` permission (#9)
 
 ## [0.1.0] - 2026-11-08
 

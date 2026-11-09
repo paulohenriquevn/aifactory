@@ -603,7 +603,11 @@ ele abre. Nenhum comando.
 2. **Instalar a App e dar acesso aos repositórios.** O botão "Install on GitHub" (em Repositories e no
    Setup) abre a página de instalação da App no GitHub, numa aba nova. Lá o dono escolhe a conta ou a
    organização e os repositórios, e o painel, que passa a perguntar ao GitHub a cada poucos segundos,
-   percebe sozinho quando a instalação aparece e avisa. A permissão é do GitHub, não nossa. A App precisa
+   percebe sozinho quando a instalação aparece e avisa. A permissão é do GitHub, não nossa. Em
+   "Repository permissions", a App precisa de leitura e escrita em Contents, Pull requests, Issues,
+   Checks e Workflows. O token de cada execução pede exatamente essas cinco, e sem Workflows o GitHub
+   recusa o push de qualquer mudança em `.github/workflows`. Ao ganhar uma permissão, a App pede
+   aprovação em cada instalação, e enquanto alguma não aceitar, o token daquela conta não é emitido. A App precisa
    ser pública para ser instalada fora da conta que a criou (uma organização, por exemplo). Para o GitHub
    devolver o dono ao painel ao terminar, preencha o "Setup URL" da App com
    `http://localhost:3000/repositories` e marque "Redirect on update"; sem isso o dono volta ao painel por conta própria, e a página percebe o mesmo.
