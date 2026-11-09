@@ -468,13 +468,29 @@ describe('actions', () => {
     expect(await getDb().select().from(decision)).toEqual([])
   })
 
-  it('does not retry a task that is running, waiting or done', async () => {
-    for (const stage of ['build', 'waiting', 'done']) {
-      const id = await seed(stage)
+  it('does not retry a task that is running, waiting, integrated or resolved another way', async () => {
+    const tasks = [
+      await seed('build'),
+      await seed('waiting'),
+      await seed('done', { mergedSha: 'merge1' }),
+      await seed('done', { resolvedSha: 'head1' }),
+    ]
+    for (const id of tasks) {
       await expect(retry(deps(), id)).rejects.toThrow(ActionRefused)
     }
     expect(deleted).toEqual([])
     expect(queued).toEqual([])
+  })
+
+  it('retries a done task whose pull request was never merged, as when it conflicts with the base', async () => {
+    const id = await seed('done', { issueNumber: 61, headSha: 'abc' })
+
+    await retry(deps(), id)
+
+    expect(deleted).toEqual(['factory/61'])
+    expect(queued).toHaveLength(1)
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('intake')
+    expect((await getDb().select().from(decision)).map((d) => d.kind)).toEqual(['retry'])
   })
 
   it('starts again every task that failed for a reason that passes, and no other', async () => {

@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format follows
 
 - A failed or handed-over task that a person resolved another way can be marked resolved from its page, with a note saying where; it moves to Delivered (#10)
 
+### Changed
+
+- A done task whose pull request was never merged, as when GitHub refuses it for a conflict with the base, can be started again from the panel (#14)
+
 ### Fixed
 
 - A merge GitHub refuses for a moment no longer leaves a task done with its pull request open: a 5xx or a 405 that says the base branch was modified is asked again, up to four times (#14)

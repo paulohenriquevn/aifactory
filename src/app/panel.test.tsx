@@ -315,6 +315,20 @@ describe('releasing from the panel', () => {
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Released.'))
   })
 
+  it('offers to start again a done task whose pull request was never merged, and only that one', () => {
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeDefined()
+    expect(screen.queryByText('Resolved another way')).toBeNull()
+    for (const task of [
+      { ...base, integrated: true },
+      { ...base, resolved: true },
+    ]) {
+      cleanup()
+      render(<TaskActions detail={detail({ task })} onDone={noop} />)
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    }
+  })
+
   it('does not offer to ask for changes on work that is already integrated', () => {
     const integrated = detail({ task: { ...base, integrated: true } })
     render(<TaskActions detail={integrated} onDone={noop} />)

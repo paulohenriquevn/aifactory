@@ -135,7 +135,9 @@ export async function requestChanges(deps: ActionDeps, taskId: number, note: str
 
 /**
  * Starts a failed or handed-over task again from the beginning. Its branch is deleted first (which
- * also closes its pull request), so the new run does not collide with the old one.
+ * also closes its pull request), so the new run does not collide with the old one. A done task whose
+ * pull request was never merged (GitHub refused it, as for a conflict with the base) is not delivered
+ * either, so it may start again too.
  */
 export async function retry(
   deps: ActionDeps,
@@ -144,11 +146,17 @@ export async function retry(
 ) {
   const row = await load(deps.db, taskId)
   // A run the supervisor found stalled or lost is in a working stage, which retry otherwise refuses.
-  const allowed = options.fromFinding
-    ? [...STUCK_STAGES, 'failed', 'handoff']
-    : ['failed', 'handoff']
+  const notIntegrated = row.stage === 'done' && !row.mergedSha && !row.resolvedSha
+  const allowed = [
+    ...(options.fromFinding ? STUCK_STAGES : []),
+    'failed',
+    'handoff',
+    ...(notIntegrated ? ['done'] : []),
+  ]
   if (!allowed.includes(row.stage)) {
-    throw new ActionRefused('only a failed or handed-over task can be retried')
+    throw new ActionRefused(
+      'only a failed or handed-over task, or one whose pull request was never merged, can be retried',
+    )
   }
   const { token } = await deps.github.installationToken(row.repository)
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)

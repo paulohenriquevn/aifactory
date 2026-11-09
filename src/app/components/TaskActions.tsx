@@ -20,7 +20,9 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
   const [bump, setBump] = useState<'patch' | 'minor' | 'major'>('patch')
 
   const hasPullRequest = (task.stage === 'done' || task.stage === 'handoff') && !!task.headSha
-  const canRetry = task.stage === 'failed' || task.stage === 'handoff'
+  const canResolve = task.stage === 'failed' || task.stage === 'handoff'
+  // Done but never merged (GitHub refused the pull request): the work is not delivered.
+  const canRetry = canResolve || (task.stage === 'done' && !task.integrated && !task.resolved)
   const canRelease = task.stage === 'done' && task.preRelease !== null
 
   async function run(path: string, body?: unknown, done?: string) {
@@ -132,7 +134,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
           </Button>
         </div>
       ) : null}
-      {canRetry ? (
+      {canResolve ? (
         <div className="mt-4">
           <label className="block text-sm">
             <span className="text-foreground">Resolved another way</span>
