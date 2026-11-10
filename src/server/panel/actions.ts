@@ -210,10 +210,16 @@ export async function resolveElsewhere(deps: ActionDeps, taskId: number, note: s
  */
 export async function retryAutomatically(deps: ActionDeps, taskId: number) {
   const row = await load(deps.db, taskId)
-  if (row.stage !== 'failed') throw new ActionRefused('only a failed task runs again on its own')
+  // A done task whose pull request GitHub refused to merge is not delivered, so it may run again too.
+  const notIntegrated = row.stage === 'done' && !row.mergedSha && !row.resolvedSha
+  if (row.stage !== 'failed' && !notIntegrated) {
+    throw new ActionRefused(
+      'only a failed task, or one whose pull request was never merged, runs again on its own',
+    )
+  }
   const { token } = await deps.github.installationToken(row.repository)
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
-  await requeue(deps, taskId, ['failed'], 'automatic_retry', '', row.headSha)
+  await requeue(deps, taskId, [row.stage], 'automatic_retry', '', row.headSha)
 }
 
 /**

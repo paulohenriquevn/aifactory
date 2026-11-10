@@ -91,6 +91,12 @@ passada, a que espera há mais tempo primeiro:
   "Needs a person", que divide a issue ou dá mais tempo. O timeout de um comando do ambiente (clone,
   instalação) continua sendo falha de ambiente.
 
+- PR que o GitHub recusou por conflito com a base (`Pull Request has merge conflicts`): outra task mexeu
+  nos mesmos arquivos e entrou antes. A task fica `done` sem commit integrado, e a mesma passada a
+  recomeça sobre a base nova, como faria o "Retry", com o mesmo limite de 3 vezes e até 3 tasks por
+  passada. Merge recusado por outro motivo (branch protegida, check obrigatório) continua esperando uma
+  pessoa.
+
 O reinício automático não grava uma decisão em nome de ninguém: o evento `intake` leva
 `automatic: true`, e um "Retry" de uma pessoa zera a contagem. O cartão diz quando a task roda de novo, e
 as tentativas contam só a execução atual.
@@ -295,8 +301,9 @@ padrão da fábrica, para qualquer repositório:
 review aprova, **a fábrica mesmo faz o merge** (squash), sem pedir a ninguém: os checks e o review são a
 decisão. O merge é fixado ao SHA que foi verificado e revisado, então um push que caia entre olhar e
 mergear faz o GitHub recusar em vez de juntar o que ninguém viu. Se o GitHub recusar o merge (um conflito,
-uma branch protegida), a task não falha: o PR fica aberto para uma pessoa e o motivo fica no estágio
-`done` (`integrationError`). Trabalho entregue a uma pessoa (`handoff`) nunca é mergeado pela fábrica.
+uma branch protegida), a task não falha: o motivo fica no estágio `done` (`integrationError`). Um conflito com a base volta a
+rodar sozinho (veja o reinício automático acima); qualquer outra recusa deixa o PR aberto para uma
+pessoa. Trabalho entregue a uma pessoa (`handoff`) nunca é mergeado pela fábrica.
 
 **Pré-release.** Logo depois de integrar, a fábrica avança `develop` até o commit integrado e cria uma tag
 `pre/<issue>-<sha7>` sobre ele, marcada como pré-release no GitHub. Nas notas vão os checks, o veredito do

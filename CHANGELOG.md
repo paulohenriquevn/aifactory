@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- A done task whose pull request GitHub refused for a conflict with its base now runs again on its own from the new base, up to three times, instead of waiting for a person to press Retry; a merge refused for any other reason still waits for a person (#16)
 - A done task whose pull request was never merged, as when GitHub refuses it for a conflict with the base, can be started again from the panel (#14)
 
 ### Fixed

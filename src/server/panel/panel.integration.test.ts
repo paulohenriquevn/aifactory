@@ -35,7 +35,7 @@ import {
   type ActionDeps,
 } from './actions'
 import { health, inbox, listTasks, taskDetail } from './queries'
-import { retryWaiting, runDueRetries } from './retry-waiting'
+import { retryWaiting, runConflictRetries, runDueRetries } from './retry-waiting'
 import { stageStream } from './stream'
 import { eventsOf, pruneTranscripts } from '../factory/transcript-store'
 
@@ -550,6 +550,77 @@ describe('actions', () => {
     const intake = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, oldest))
     expect(intake.at(-1)?.detail).toMatchObject({ decision: 'retry', automatic: true })
     expect(queued.map((q) => q.input)).toEqual([{ taskId: oldest }, { taskId: middle }])
+  })
+
+  it('runs again on its own a finished task whose pull request GitHub refused for a conflict with its base', async () => {
+    const conflict = (issueNumber: number) =>
+      seed(
+        'done',
+        { issueNumber, pullRequestUrl: `https://github.com/paulo/app/pull/${issueNumber}` },
+        [
+          {
+            stage: 'done',
+            detail: {
+              integrationError: `GitHub answered 405 merging paulo/app#${issueNumber}: {"message":"Pull Request has merge conflicts"}`,
+            },
+          },
+        ],
+      )
+    const conflicted = await conflict(81)
+    const integrated = await seed('done', { issueNumber: 82, mergedSha: 'abc' }, [
+      { stage: 'done', detail: {} },
+    ])
+    const refusedOtherwise = await seed('done', { issueNumber: 83 }, [
+      {
+        stage: 'done',
+        detail: {
+          integrationError:
+            'GitHub answered 405 merging paulo/app#83: {"message":"Required status check is expected"}',
+        },
+      },
+    ])
+    const exhausted = await seed('done', { issueNumber: 84 }, [
+      { stage: 'intake', detail: { decision: 'retry', automatic: true } },
+      { stage: 'intake', detail: { decision: 'retry', automatic: true } },
+      { stage: 'intake', detail: { decision: 'retry', automatic: true } },
+      {
+        stage: 'done',
+        detail: {
+          integrationError:
+            'GitHub answered 405 merging paulo/app#84: {"message":"Pull Request has merge conflicts"}',
+        },
+      },
+    ])
+
+    expect(await runConflictRetries(deps(), { limit: 5 })).toEqual({ started: 1, skipped: 0 })
+
+    const stages = new Map((await getDb().select().from(task)).map((t) => [t.id, t.stage] as const))
+    expect(
+      [conflicted, integrated, refusedOtherwise, exhausted].map((id) => stages.get(id)),
+    ).toEqual(['intake', 'done', 'done', 'done'])
+    // The old branch goes first, which closes the refused pull request, so the new run does not collide with it.
+    expect(deleted).toEqual(['factory/81'])
+    expect(await getDb().select().from(decision)).toEqual([])
+    const intake = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, conflicted))
+    expect(intake.at(-1)?.detail).toMatchObject({ decision: 'retry', automatic: true })
+    expect(queued.map((q) => q.input)).toEqual([{ taskId: conflicted }])
+  })
+
+  it('starts no more conflicted tasks in one pass than the limit, the longest-waiting first', async () => {
+    const conflict = (issueNumber: number) =>
+      seed('done', { issueNumber }, [
+        {
+          stage: 'done',
+          detail: {
+            integrationError: 'GitHub answered 405: {"message":"Pull Request has merge conflicts"}',
+          },
+        },
+      ])
+    const first = await conflict(91)
+    await conflict(92)
+
+    expect(await runConflictRetries(deps(), { limit: 1 })).toEqual({ started: 1, skipped: 0 })
+    expect(queued.map((q) => q.input)).toEqual([{ taskId: first }])
   })
 
   it('counts a task that moved on since the board was read, and starts the rest', async () => {
