@@ -21,6 +21,8 @@ import { claudeEvents } from './transcript'
  */
 export const CLAUDE_CODE_VERSION = '2.1.319'
 const CLAUDE = '$HOME/.local/bin/claude'
+/** The exit code of a command the factory's timeout killed. */
+const TIMED_OUT = 124
 
 /**
  * How Claude Code pays for its requests: a Console API key, or the owner's subscription through
@@ -151,7 +153,9 @@ export function parseClaudeResult(exitCode: number, stdout: string, stderr: stri
       session_id?: string
     }
     const summary = String(parsed.result ?? '').slice(0, SUMMARY_MAX)
-    const ok = exitCode === 0 && parsed.is_error !== true
+    // A run killed by the timeout after it printed its result had finished: a command it left in the
+    // background kept the process alive past its last word, and the checks still judge the work.
+    const ok = (exitCode === 0 || exitCode === TIMED_OUT) && parsed.is_error !== true
     const quota = ok ? undefined : detectQuota(summary)
     return {
       ok,

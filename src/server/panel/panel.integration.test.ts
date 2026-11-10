@@ -30,11 +30,12 @@ import {
   type FindingAction,
   releaseTask,
   requestChanges,
+  resolveElsewhere,
   retry,
   type ActionDeps,
 } from './actions'
 import { health, inbox, listTasks, taskDetail } from './queries'
-import { retryWaiting, runDueRetries } from './retry-waiting'
+import { retryWaiting, runConflictRetries, runDueRetries } from './retry-waiting'
 import { stageStream } from './stream'
 import { eventsOf, pruneTranscripts } from '../factory/transcript-store'
 
@@ -428,13 +429,68 @@ describe('actions', () => {
     expect(decisions.map((d) => d.kind)).toEqual(['retry', 'retry'])
   })
 
-  it('does not retry a task that is running, waiting or done', async () => {
-    for (const stage of ['build', 'waiting', 'done']) {
+  it('delivers a failed or handed-over task a person resolved another way, at the integration head', async () => {
+    const heads: string[] = []
+    const withHead = (): ActionDeps => ({
+      ...deps(),
+      api: {
+        branchHead: async (_repo: string, _token: string, branch: string) => {
+          heads.push(branch)
+          return 'head1'
+        },
+      } as unknown as GithubApi,
+    })
+    const failed = await seed('failed')
+    const handed = await seed('handoff')
+
+    await resolveElsewhere(withHead(), failed, '  Fixed by hand in #1389.  ')
+    await resolveElsewhere(withHead(), handed, 'Split into #12 and #13, both delivered.')
+
+    expect(heads).toEqual(['workspace', 'workspace'])
+    const [row] = await getDb().select().from(task).where(eq(task.id, failed))
+    expect(row).toMatchObject({ stage: 'done', resolvedSha: 'head1' })
+    expect(await getDb().select().from(decision)).toMatchObject([
+      { taskId: failed, kind: 'resolve', sha: 'head1', note: 'Fixed by hand in #1389.' },
+      { taskId: handed, kind: 'resolve', sha: 'head1' },
+    ])
+    const [card] = (await listTasks(getDb())).filter((c) => c.id === failed)
+    expect(card).toMatchObject({ column: 'review', resolved: true })
+    expect(queued).toEqual([])
+  })
+
+  it('refuses to resolve without saying where, or a task that is not failed or handed over', async () => {
+    const failed = await seed('failed')
+    await expect(resolveElsewhere(deps(), failed, '  ')).rejects.toThrow(/say where/)
+    for (const stage of ['build', 'done']) {
       const id = await seed(stage)
+      await expect(resolveElsewhere(deps(), id, 'Fixed in #1.')).rejects.toThrow(ActionRefused)
+    }
+    expect(await getDb().select().from(decision)).toEqual([])
+  })
+
+  it('does not retry a task that is running, waiting, integrated or resolved another way', async () => {
+    const tasks = [
+      await seed('build'),
+      await seed('waiting'),
+      await seed('done', { mergedSha: 'merge1' }),
+      await seed('done', { resolvedSha: 'head1' }),
+    ]
+    for (const id of tasks) {
       await expect(retry(deps(), id)).rejects.toThrow(ActionRefused)
     }
     expect(deleted).toEqual([])
     expect(queued).toEqual([])
+  })
+
+  it('retries a done task whose pull request was never merged, as when it conflicts with the base', async () => {
+    const id = await seed('done', { issueNumber: 61, headSha: 'abc' })
+
+    await retry(deps(), id)
+
+    expect(deleted).toEqual(['factory/61'])
+    expect(queued).toHaveLength(1)
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('intake')
+    expect((await getDb().select().from(decision)).map((d) => d.kind)).toEqual(['retry'])
   })
 
   it('starts again every task that failed for a reason that passes, and no other', async () => {
@@ -494,6 +550,77 @@ describe('actions', () => {
     const intake = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, oldest))
     expect(intake.at(-1)?.detail).toMatchObject({ decision: 'retry', automatic: true })
     expect(queued.map((q) => q.input)).toEqual([{ taskId: oldest }, { taskId: middle }])
+  })
+
+  it('runs again on its own a finished task whose pull request GitHub refused for a conflict with its base', async () => {
+    const conflict = (issueNumber: number) =>
+      seed(
+        'done',
+        { issueNumber, pullRequestUrl: `https://github.com/paulo/app/pull/${issueNumber}` },
+        [
+          {
+            stage: 'done',
+            detail: {
+              integrationError: `GitHub answered 405 merging paulo/app#${issueNumber}: {"message":"Pull Request has merge conflicts"}`,
+            },
+          },
+        ],
+      )
+    const conflicted = await conflict(81)
+    const integrated = await seed('done', { issueNumber: 82, mergedSha: 'abc' }, [
+      { stage: 'done', detail: {} },
+    ])
+    const refusedOtherwise = await seed('done', { issueNumber: 83 }, [
+      {
+        stage: 'done',
+        detail: {
+          integrationError:
+            'GitHub answered 405 merging paulo/app#83: {"message":"Required status check is expected"}',
+        },
+      },
+    ])
+    const exhausted = await seed('done', { issueNumber: 84 }, [
+      { stage: 'intake', detail: { decision: 'retry', automatic: true } },
+      { stage: 'intake', detail: { decision: 'retry', automatic: true } },
+      { stage: 'intake', detail: { decision: 'retry', automatic: true } },
+      {
+        stage: 'done',
+        detail: {
+          integrationError:
+            'GitHub answered 405 merging paulo/app#84: {"message":"Pull Request has merge conflicts"}',
+        },
+      },
+    ])
+
+    expect(await runConflictRetries(deps(), { limit: 5 })).toEqual({ started: 1, skipped: 0 })
+
+    const stages = new Map((await getDb().select().from(task)).map((t) => [t.id, t.stage] as const))
+    expect(
+      [conflicted, integrated, refusedOtherwise, exhausted].map((id) => stages.get(id)),
+    ).toEqual(['intake', 'done', 'done', 'done'])
+    // The old branch goes first, which closes the refused pull request, so the new run does not collide with it.
+    expect(deleted).toEqual(['factory/81'])
+    expect(await getDb().select().from(decision)).toEqual([])
+    const intake = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, conflicted))
+    expect(intake.at(-1)?.detail).toMatchObject({ decision: 'retry', automatic: true })
+    expect(queued.map((q) => q.input)).toEqual([{ taskId: conflicted }])
+  })
+
+  it('starts no more conflicted tasks in one pass than the limit, the longest-waiting first', async () => {
+    const conflict = (issueNumber: number) =>
+      seed('done', { issueNumber }, [
+        {
+          stage: 'done',
+          detail: {
+            integrationError: 'GitHub answered 405: {"message":"Pull Request has merge conflicts"}',
+          },
+        },
+      ])
+    const first = await conflict(91)
+    await conflict(92)
+
+    expect(await runConflictRetries(deps(), { limit: 1 })).toEqual({ started: 1, skipped: 0 })
+    expect(queued.map((q) => q.input)).toEqual([{ taskId: first }])
   })
 
   it('counts a task that moved on since the board was read, and starts the rest', async () => {

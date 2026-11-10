@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { AUTOMATIC_RETRIES, retryAt } from './auto-retry'
+import { AUTOMATIC_RETRIES, rerunsAfterConflict, retryAt } from './auto-retry'
 
 const failedAt = new Date('2026-11-06T00:13:00Z')
 const iso = (d: Date | null) => d?.toISOString() ?? null
@@ -45,5 +45,39 @@ describe('when a failed task runs again on its own', () => {
 
   it('never runs again on its own a failure of the work itself', () => {
     expect(retryAt({ retryable: null, failedAt, automaticRetries: 0 })).toBeNull()
+  })
+})
+
+describe('when a finished task whose pull request conflicts with its base runs again on its own', () => {
+  const conflict =
+    'GitHub answered 405 merging usetheokit/theokit#1475: {"message":"Pull Request has merge conflicts","status":"405"}'
+
+  it('runs again a task GitHub refused to merge because the pull request conflicts with its base', () => {
+    expect(rerunsAfterConflict(conflict, 0)).toBe(true)
+  })
+
+  it('runs it again up to the same limit as an environment failure', () => {
+    expect(rerunsAfterConflict(conflict, AUTOMATIC_RETRIES - 1)).toBe(true)
+  })
+
+  it('leaves it to a person once it conflicted again after every automatic run', () => {
+    expect(rerunsAfterConflict(conflict, AUTOMATIC_RETRIES)).toBe(false)
+  })
+
+  it('leaves to a person a merge GitHub refused for another reason', () => {
+    expect(
+      rerunsAfterConflict(
+        'GitHub answered 405 merging a/b#3: {"message":"Required status check is expected"}',
+        0,
+      ),
+    ).toBe(false)
+  })
+
+  it('does nothing for a task whose integration recorded no error', () => {
+    expect(rerunsAfterConflict(undefined, 0)).toBe(false)
+  })
+
+  it('reads only a recorded message: a stored value of another shape holding the same words is not a refusal', () => {
+    expect(rerunsAfterConflict(['Pull Request has merge conflicts'], 0)).toBe(false)
   })
 })

@@ -1,8 +1,9 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { decision, finding, question, stageEvent, task, watch } from '../db/schema'
+import { decision, finding, question, repository, stageEvent, task, watch } from '../db/schema'
 import type { GithubApp } from '../github/app'
+import { integrationBranch } from '../factory/branches'
 import { release as promote, ReleaseRefused } from '../factory/deliver'
 import type { GithubApi } from '../github/pulls'
 import type { Bump } from '../factory/release'
@@ -134,7 +135,9 @@ export async function requestChanges(deps: ActionDeps, taskId: number, note: str
 
 /**
  * Starts a failed or handed-over task again from the beginning. Its branch is deleted first (which
- * also closes its pull request), so the new run does not collide with the old one.
+ * also closes its pull request), so the new run does not collide with the old one. A done task whose
+ * pull request was never merged (GitHub refused it, as for a conflict with the base) is not delivered
+ * either, so it may start again too.
  */
 export async function retry(
   deps: ActionDeps,
@@ -143,16 +146,61 @@ export async function retry(
 ) {
   const row = await load(deps.db, taskId)
   // A run the supervisor found stalled or lost is in a working stage, which retry otherwise refuses.
-  const allowed = options.fromFinding
-    ? [...STUCK_STAGES, 'failed', 'handoff']
-    : ['failed', 'handoff']
+  const notIntegrated = row.stage === 'done' && !row.mergedSha && !row.resolvedSha
+  const allowed = [
+    ...(options.fromFinding ? STUCK_STAGES : []),
+    'failed',
+    'handoff',
+    ...(notIntegrated ? ['done'] : []),
+  ]
   if (!allowed.includes(row.stage)) {
-    throw new ActionRefused('only a failed or handed-over task can be retried')
+    throw new ActionRefused(
+      'only a failed or handed-over task, or one whose pull request was never merged, can be retried',
+    )
   }
   const { token } = await deps.github.installationToken(row.repository)
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
   const decisionId = await requeue(deps, taskId, allowed, 'retry', '', row.headSha)
   return { decisionId }
+}
+
+/**
+ * Delivers a failed or handed-over task that a person resolved another way: by hand, because the
+ * factory may not touch the file, or by splitting the issue into items that were delivered. The note
+ * says where, and the task is marked resolved at the integration branch's head, which holds that work.
+ */
+export async function resolveElsewhere(deps: ActionDeps, taskId: number, note: string) {
+  const text = note.trim()
+  if (text === '') throw new ActionRefused('say where the issue was resolved')
+  const row = await load(deps.db, taskId)
+  if (!['failed', 'handoff'].includes(row.stage)) {
+    throw new ActionRefused('only a failed or handed-over task can be resolved another way')
+  }
+  const [config] = await deps.db
+    .select({ baseBranch: repository.baseBranch })
+    .from(repository)
+    .where(eq(repository.fullName, row.repository))
+  const branch = integrationBranch(config ?? {})
+  const { token } = await deps.github.installationToken(row.repository)
+  const sha = await deps.api.branchHead(row.repository, token, branch)
+  if (!sha) throw new ActionRefused(`${row.repository} has no ${branch} branch to resolve this at`)
+  return deps.inTransaction(async (tx) => {
+    const moved = await tx
+      .update(task)
+      .set({ stage: 'done', resolvedSha: sha })
+      .where(and(eq(task.id, taskId), inArray(task.stage, ['failed', 'handoff'])))
+      .returning({ id: task.id })
+    if (moved.length === 0)
+      throw new ActionRefused('this task moved on before it could be resolved')
+    const [made] = await tx
+      .insert(decision)
+      .values({ taskId, kind: 'resolve', sha, note: text.slice(0, NOTE_MAX) })
+      .returning({ id: decision.id })
+    await tx
+      .insert(stageEvent)
+      .values({ taskId, stage: 'done', detail: { decision: 'resolve', note: text } })
+    return { decisionId: made.id, sha }
+  })
 }
 
 /**
@@ -162,10 +210,16 @@ export async function retry(
  */
 export async function retryAutomatically(deps: ActionDeps, taskId: number) {
   const row = await load(deps.db, taskId)
-  if (row.stage !== 'failed') throw new ActionRefused('only a failed task runs again on its own')
+  // A done task whose pull request GitHub refused to merge is not delivered, so it may run again too.
+  const notIntegrated = row.stage === 'done' && !row.mergedSha && !row.resolvedSha
+  if (row.stage !== 'failed' && !notIntegrated) {
+    throw new ActionRefused(
+      'only a failed task, or one whose pull request was never merged, runs again on its own',
+    )
+  }
   const { token } = await deps.github.installationToken(row.repository)
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
-  await requeue(deps, taskId, ['failed'], 'automatic_retry', '', row.headSha)
+  await requeue(deps, taskId, [row.stage], 'automatic_retry', '', row.headSha)
 }
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "aifactory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A software factory that turns GitHub issues into verified pull requests with coding agents running in cloud sandboxes.",
   "type": "module",

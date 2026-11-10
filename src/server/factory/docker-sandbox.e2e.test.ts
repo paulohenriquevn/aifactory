@@ -42,6 +42,20 @@ describe('the docker sandbox', () => {
     expect(await sh('echo oops >&2; exit 7')).toMatchObject({ stderr: 'oops\n', exitCode: 7 })
   })
 
+  it('reaps an orphan that exits, so a check that a subprocess is gone sees it gone', async () => {
+    const result = await sh(
+      "sh -c 'sleep 1 & echo $!' > /tmp/orphan; sleep 2; kill -0 $(cat /tmp/orphan) 2>/dev/null && echo alive || echo gone",
+    )
+    expect(result.stdout).toBe('gone\n')
+  })
+
+  it('lets a client reach a server that listens on localhost, as on a hosted runner', async () => {
+    const result = await sh(
+      `node -e "const s=require('http').createServer((q,r)=>r.end('ok')).listen(5173,'localhost',async()=>{console.log(await (await fetch('http://localhost:5173')).text());process.exit(0)})"`,
+    )
+    expect(result).toMatchObject({ stdout: 'ok\n', exitCode: 0 })
+  })
+
   it('stops a command that outlives its timeout, and says so', async () => {
     const result = await sh('sleep 30', 2_000)
     expect(result).toMatchObject({ exitCode: 124, timedOut: true })

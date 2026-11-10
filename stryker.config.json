@@ -30,7 +30,8 @@
     "src/server/factory/transcript.ts",
     "src/server/factory/clone.ts",
     "src/app/lib/transcript.ts",
-    "src/server/factory/recipe.ts"
+    "src/server/factory/recipe.ts",
+    "src/server/factory/auto-retry.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

@@ -19,6 +19,7 @@ writeFileSync(key, 'not a real key: it is only read when a token is asked for')
 
 const base = {
   GITHUB_APP_SLUG: 'factory',
+  GITHUB_APP_BOT_USER_ID: '1',
   GITHUB_APP_ID: '1',
   GITHUB_APP_PRIVATE_KEY_PATH: key,
   CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-x',

@@ -73,7 +73,7 @@ export type GithubApi = {
     token: string,
     number: number,
     sha: string,
-    method: 'merge' | 'squash',
+    merge: PullRequestMerge,
   ): Promise<{ sha: string }>
   /** The check runs and commit statuses a commit has so far. */
   commitChecks(repo: string, token: string, sha: string): Promise<CommitChecks>
@@ -118,8 +118,36 @@ export type GithubApi = {
   ): Promise<IssueComment[]>
 }
 
+/**
+ * How a pull request is merged. A squash names its own commit: left to GitHub, its message lists every
+ * commit author as `Co-authored-by`, the factory's bot included, even when the bot is the only author
+ * (observed on 2026-11-09, #13). `title` is the pull request's, and the commit is named as GitHub would
+ * name it, with ` (#<number>)` after it and no body.
+ */
+export type PullRequestMerge =
+  { readonly method: 'merge' } | { readonly method: 'squash'; readonly title: string }
+
+function mergeFields(number: number, merge: PullRequestMerge): Record<string, string> {
+  if (merge.method === 'merge') return { merge_method: 'merge' }
+  return { merge_method: 'squash', commit_title: `${merge.title} (#${number})`, commit_message: '' }
+}
+
 /** Runs on the factory host with an installation token, never in the sandbox. */
-export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url, init)): GithubApi {
+/** How many times a merge is asked for when GitHub's answer is one a moment later may change. */
+const MERGE_ATTEMPTS = 4
+const MERGE_RETRY_MS = 3_000
+
+/**
+ * A merge refused for a moment: another merge moved the base between the request and the merge (405
+ * "Base branch was modified"), or GitHub failed (5xx). A conflict is not one: it needs new work.
+ */
+const mergeMayPassLater = (status: number, message: string) =>
+  status >= 500 || (status === 405 && /base branch was modified/i.test(message))
+
+export function createGithubApi(
+  fetchImpl: FetchLike = (url, init) => fetch(url, init),
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
+): GithubApi {
   const call = (repo: string, token: string, path: string, init: RequestInit = {}) =>
     fetchImpl(`https://api.github.com/repos/${repo}${path}`, {
       ...init,
@@ -324,18 +352,25 @@ export function createGithubApi(fetchImpl: FetchLike = (url, init) => fetch(url,
       return { sha, changed: false }
     },
 
-    async mergePullRequest(repo, token, number, sha, method) {
-      const merged = (await (
-        await ensure(
-          await call(repo, token, `/pulls/${number}/merge`, {
-            method: 'PUT',
-            body: JSON.stringify({ sha, merge_method: method }),
-          }),
-          `merging ${repo}#${number}`,
-          [200],
-        )
-      ).json()) as { sha: string }
-      return { sha: merged.sha }
+    async mergePullRequest(repo, token, number, sha, merge) {
+      const body = JSON.stringify({ sha, ...mergeFields(number, merge) })
+      for (let attempt = 1; ; attempt += 1) {
+        const response = await call(repo, token, `/pulls/${number}/merge`, { method: 'PUT', body })
+        if (response.status !== 200 && attempt < MERGE_ATTEMPTS) {
+          const message = await response
+            .clone()
+            .text()
+            .catch(() => '')
+          if (mergeMayPassLater(response.status, message)) {
+            await wait(MERGE_RETRY_MS * attempt)
+            continue
+          }
+        }
+        const merged = (await (
+          await ensure(response, `merging ${repo}#${number}`, [200])
+        ).json()) as { sha: string }
+        return { sha: merged.sha }
+      }
     },
 
     async commitChecks(repo, token, sha) {
