@@ -17,6 +17,7 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - A merge GitHub refuses for a moment no longer leaves a task done with its pull request open: a 5xx or a 405 that says the base branch was modified is asked again, up to four times (#14)
+- A run starting while another run makes its docker sandbox no longer removes that run's new network and fails it at the sandbox stage: a network counts as an orphan only once it is as old as a stale container (#15)
 - The factory's squash merges no longer gain a `Co-authored-by` trailer for its own bot: each squash commit is named after its pull request, with no body, instead of the message GitHub composes, which lists every commit author; commits are also signed with the bot user's own email, which needs the new `GITHUB_APP_BOT_USER_ID` (#13)
 - A repository's test that starts a server on localhost and fetches it no longer fails in the docker sandbox: localhost is named on 127.0.0.1 alone, as on a hosted runner (#12)
 - A repository's test that a subprocess is gone no longer fails in the docker sandbox: the sandbox now runs an init that reaps exited orphans (#11)

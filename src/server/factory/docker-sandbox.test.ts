@@ -411,7 +411,10 @@ describe('cleaning up what a crash left', () => {
       const line = args.join(' ')
       if (line.includes('{{.Names}} {{.CreatedAt}}')) return ok(listing)
       if (line.includes('ps -a') && line.includes('{{.Names}}')) return ok('factory-sbx-bbb\n')
-      if (line.startsWith('network ls')) return ok('factory-sbx-aaa\nfactory-sbx-bbb\n')
+      if (line.startsWith('network ls'))
+        return ok(
+          'factory-sbx-aaa 2026-11-05 14:00:00.1 -0300 -03\nfactory-sbx-bbb 2026-11-05 14:00:00.1 -0300 -03\n',
+        )
       return undefined
     })
 
@@ -422,6 +425,23 @@ describe('cleaning up what a crash left', () => {
     expect(all()).toContain('rm -f factory-px-aaa')
     expect(all()).toContain('network rm factory-sbx-aaa')
     expect(all()).not.toContain('network rm factory-sbx-bbb')
+  })
+
+  it('keeps a network made a moment ago whose sandbox does not exist yet, as one another run is starting', async () => {
+    // A run creates its network first and its containers after; a sweep in between saw it as an orphan
+    // and removed it, and the run failed with "network factory-sbx-… not found" (task 613, 2026-11-10).
+    const { docker, all } = fakeDocker((args) => {
+      const line = args.join(' ')
+      if (line.includes('{{.Names}} {{.CreatedAt}}')) return ok('')
+      if (line.includes('ps -a') && line.includes('{{.Names}}')) return ok('')
+      if (line.startsWith('network ls'))
+        return ok('factory-sbx-ccc 2026-11-05 19:59:58.5 -0300 -03\n')
+      return undefined
+    })
+
+    await removeStaleSandboxes(60 * 60_000, docker, now)
+
+    expect(all().filter((call) => call.startsWith('network rm'))).toEqual([])
   })
 })
 

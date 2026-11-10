@@ -300,15 +300,18 @@ export async function removeStaleSandboxes(
   const stale = staleNames(listed.stdout, maxAgeMs, now)
   for (const name of stale) await docker(['rm', '-f', name])
   const names = await docker(['ps', '-a', '--filter', `label=${LABEL}`, '--format', '{{.Names}}'])
+  // A run makes its network before its containers, so a network is an orphan only once it is as old as a
+  // stale container: a sweep from another run starting at the same moment otherwise removes it.
   const networks = await docker([
     'network',
     'ls',
     '--filter',
     `label=${LABEL}`,
     '--format',
-    '{{.Name}}',
+    '{{.Name}} {{.CreatedAt}}',
   ])
-  for (const name of orphanNetworks(lines(networks.stdout), lines(names.stdout))) {
+  const oldNetworks = staleNames(networks.stdout, maxAgeMs, now)
+  for (const name of orphanNetworks(oldNetworks, lines(names.stdout))) {
     await docker(['network', 'rm', name])
   }
   return stale.length
