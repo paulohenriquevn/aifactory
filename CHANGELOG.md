@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A failed or handed-over task that a person resolved another way can be marked resolved from its page, with a note saying where; it moves to Delivered (#10)
+
+### Changed
+
+- A done task whose pull request GitHub refused for a conflict with its base now runs again on its own from the new base, up to three times, instead of waiting for a person to press Retry; a merge refused for any other reason still waits for a person (#16)
+- A done task whose pull request was never merged, as when GitHub refuses it for a conflict with the base, can be started again from the panel (#14)
+
+### Fixed
+
+- A merge GitHub refuses for a moment no longer leaves a task done with its pull request open: a 5xx or a 405 that says the base branch was modified is asked again, up to four times (#14)
+- A run starting while another run makes its docker sandbox no longer removes that run's new network and fails it at the sandbox stage: a network counts as an orphan only once it is as old as a stale container (#15)
+- The factory's squash merges no longer gain a `Co-authored-by` trailer for its own bot: each squash commit is named after its pull request, with no body, instead of the message GitHub composes, which lists every commit author; commits are also signed with the bot user's own email, which needs the new `GITHUB_APP_BOT_USER_ID` (#13)
+- A repository's test that starts a server on localhost and fetches it no longer fails in the docker sandbox: localhost is named on 127.0.0.1 alone, as on a hosted runner (#12)
+- A repository's test that a subprocess is gone no longer fails in the docker sandbox: the sandbox now runs an init that reaps exited orphans (#11)
+- A Claude Code run that printed its result before a background command kept it alive past the timeout no longer fails the task (#8)
+- The factory can push a change to `.github/workflows`: its installation token now asks for the `workflows` permission (#9)
+
 ## [0.1.0] - 2026-11-08
 
 ### Added

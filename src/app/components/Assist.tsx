@@ -16,6 +16,7 @@ const LABEL: Record<AssistKind, string> = {
   job: 'Help me say it',
   issue: 'Improve this',
   changes: 'Help me say it',
+  resolution: 'Help me say it',
   setup: 'Set this up for me',
 }
 
@@ -25,6 +26,7 @@ const NEEDS_WORDS: Record<AssistKind, boolean> = {
   job: true,
   issue: true,
   changes: true,
+  resolution: true,
   setup: false,
 }
 

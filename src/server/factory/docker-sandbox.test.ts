@@ -12,6 +12,7 @@ import {
   proxyArgs,
   removeStaleSandboxes,
   sandboxArgs,
+  localhostOnIpv4,
   sandboxEnv,
   staleNames,
   type Docker,
@@ -142,6 +143,19 @@ describe('creating a docker sandbox', () => {
     await sandbox.stop()
   })
 
+  it('names localhost on 127.0.0.1 alone before the run starts, as a hosted runner does', async () => {
+    const hosts = '127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n'
+    const { docker, calls } = fakeDocker((args) =>
+      args.at(-1) === '/etc/hosts' && args.includes('cat') ? ok(hosts) : undefined,
+    )
+    const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
+
+    const write = calls.find((c) => c.args.join(' ').includes('cat > /etc/hosts'))
+    expect(write?.args.slice(0, 4)).toEqual(['exec', '-i', '-u', 'root'])
+    expect(write?.input).toBe('127.0.0.1\tlocalhost\n::1\tip6-localhost ip6-loopback\n')
+    await sandbox.stop()
+  })
+
   it('removes the sandbox, the proxy, the network and the rules once it is stopped', async () => {
     const { docker, all, calls } = fakeDocker()
     const sandbox = await dockerSandboxProvider({ docker, sleep: instant }).create(spec)
@@ -239,6 +253,14 @@ describe('creating a docker sandbox', () => {
       ),
     ).toMatch(/--memory 8g --memory-swap 8g --cpus 2/)
     expect(sandboxArgs('n', 'net', {}).join(' ')).toMatch(/--memory 5g --memory-swap 5g --cpus 3/)
+  })
+
+  it('runs an init as the first process of the sandbox, so an orphan that exits is reaped, not left a zombie', () => {
+    // Without it a grandchild whose parent exited stays a zombie under the container's first process, and
+    // `kill(pid, 0)` still finds it: a test that checks a subprocess is gone fails for the sandbox's sake.
+    const args = sandboxArgs('n', 'net', {})
+    expect(args).toContain('--init')
+    expect(args.indexOf('--init')).toBeLessThan(args.indexOf('aifactory-sandbox:3'))
   })
 
   it('gives the proxy no capabilities and a memory limit, and the sandbox no volume at all', () => {
@@ -389,7 +411,10 @@ describe('cleaning up what a crash left', () => {
       const line = args.join(' ')
       if (line.includes('{{.Names}} {{.CreatedAt}}')) return ok(listing)
       if (line.includes('ps -a') && line.includes('{{.Names}}')) return ok('factory-sbx-bbb\n')
-      if (line.startsWith('network ls')) return ok('factory-sbx-aaa\nfactory-sbx-bbb\n')
+      if (line.startsWith('network ls'))
+        return ok(
+          'factory-sbx-aaa 2026-11-05 14:00:00.1 -0300 -03\nfactory-sbx-bbb 2026-11-05 14:00:00.1 -0300 -03\n',
+        )
       return undefined
     })
 
@@ -400,6 +425,23 @@ describe('cleaning up what a crash left', () => {
     expect(all()).toContain('rm -f factory-px-aaa')
     expect(all()).toContain('network rm factory-sbx-aaa')
     expect(all()).not.toContain('network rm factory-sbx-bbb')
+  })
+
+  it('keeps a network made a moment ago whose sandbox does not exist yet, as one another run is starting', async () => {
+    // A run creates its network first and its containers after; a sweep in between saw it as an orphan
+    // and removed it, and the run failed with "network factory-sbx-… not found" (task 613, 2026-11-10).
+    const { docker, all } = fakeDocker((args) => {
+      const line = args.join(' ')
+      if (line.includes('{{.Names}} {{.CreatedAt}}')) return ok('')
+      if (line.includes('ps -a') && line.includes('{{.Names}}')) return ok('')
+      if (line.startsWith('network ls'))
+        return ok('factory-sbx-ccc 2026-11-05 19:59:58.5 -0300 -03\n')
+      return undefined
+    })
+
+    await removeStaleSandboxes(60 * 60_000, docker, now)
+
+    expect(all().filter((call) => call.startsWith('network rm'))).toEqual([])
   })
 })
 
@@ -558,5 +600,31 @@ describe('a docker sandbox that reaches its time limit', () => {
 
     expect(result.stderr).toBe('npm ERR! missing script')
     await sandbox.stop()
+  })
+})
+
+describe('localhostOnIpv4', () => {
+  // Docker names localhost on ::1 too, and a server told to listen on localhost binds ::1 first while a
+  // client's lookup drops ::1 in a container with no other IPv6 address: the two never meet.
+  it('takes localhost off the ::1 line and keeps its other names', () => {
+    expect(
+      localhostOnIpv4('127.0.0.1\tlocalhost\n::1\tlocalhost ip6-localhost ip6-loopback\n'),
+    ).toBe('127.0.0.1\tlocalhost\n::1\tip6-localhost ip6-loopback\n')
+  })
+
+  it('drops a ::1 line that named only localhost, and leaves every other line as it was', () => {
+    const hosts = '127.0.0.1 localhost\n::1 localhost\nff02::1\tip6-allnodes\n172.20.0.3\tabc\n'
+    expect(localhostOnIpv4(hosts)).toBe(
+      '127.0.0.1 localhost\nff02::1\tip6-allnodes\n172.20.0.3\tabc\n',
+    )
+  })
+
+  it('adds localhost on 127.0.0.1 when no line names it there', () => {
+    expect(localhostOnIpv4('::1\tlocalhost\n')).toBe('127.0.0.1\tlocalhost\n')
+  })
+
+  it('changes nothing in a file that already names localhost on 127.0.0.1 alone', () => {
+    const hosts = '127.0.0.1\tlocalhost\n::1\tip6-localhost ip6-loopback\n'
+    expect(localhostOnIpv4(hosts)).toBe(hosts)
   })
 })

@@ -1,6 +1,6 @@
 import type { UIMessage } from 'theokit/client'
 
-export type AssistKind = 'goal' | 'job' | 'issue' | 'changes' | 'setup'
+export type AssistKind = 'goal' | 'job' | 'issue' | 'changes' | 'resolution' | 'setup'
 
 /** What the assistant hands back through its `propose` tool, which is what the owner can accept. */
 export type Proposal = {

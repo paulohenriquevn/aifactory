@@ -37,6 +37,14 @@ import {
 
 type TaskRow = typeof task.$inferSelect
 
+/**
+ * Per task, in a query grouped by `stage_event.task_id`: the automatic runs since a person last started it.
+ * A person's retry starts the count over.
+ */
+export function automaticRunsSincePerson() {
+  return sql<number>`count(*) filter (where ${stageEvent.stage} = 'intake' and ${stageEvent.detail}->>'automatic' = 'true' and ${stageEvent.id} > coalesce((select max(i.id) from stage_event i where i.task_id = ${stageEvent.taskId} and i.stage = 'intake' and (i.detail->>'automatic') is distinct from 'true'), 0))`
+}
+
 const iso = (date: Date) => date.toISOString()
 
 /** Whether a failed task runs again on its own and when, from its last failure. */
@@ -71,8 +79,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       // Only the current run's: a retry starts again at attempt 1 with a new intake, so the checks of
       // the runs before it are not attempts of this one.
       verifies: sql<number>`count(*) filter (where ${stageEvent.stage} = 'verify' and ${stageEvent.id} > coalesce((select max(i.id) from stage_event i where i.task_id = ${stageEvent.taskId} and i.stage = 'intake'), 0))`,
-      // Automatic runs since a person last started the task: a person's retry starts the count over.
-      automatic: sql<number>`count(*) filter (where ${stageEvent.stage} = 'intake' and ${stageEvent.detail}->>'automatic' = 'true' and ${stageEvent.id} > coalesce((select max(i.id) from stage_event i where i.task_id = ${stageEvent.taskId} and i.stage = 'intake' and (i.detail->>'automatic') is distinct from 'true'), 0))`,
+      automatic: automaticRunsSincePerson(),
     })
     .from(stageEvent)
     .where(inArray(stageEvent.taskId, ids))

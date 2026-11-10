@@ -68,8 +68,24 @@ async function redirect(url, res, server) {
   writeFileSync(pemPath, app.pem, { mode: 0o600 })
   chmodSync(pemPath, 0o600)
 
+  // The App's commits must carry the bot user's own email, which holds its id; GitHub adds a
+  // co-author to every squash of a commit signed any other way.
+  const bot = await fetch(
+    `https://api.github.com/users/${encodeURIComponent(`${app.slug}[bot]`)}`,
+    {
+      headers: { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' },
+    },
+  )
+  if (!bot.ok) {
+    res.writeHead(502).end(`GitHub answered ${bot.status} for the user ${app.slug}[bot]`)
+    console.error('reading the bot user failed with status', bot.status)
+    return
+  }
+  const { id: botUserId } = await bot.json()
+
   const env = [
     `GITHUB_APP_ID=${app.id}`,
+    `GITHUB_APP_BOT_USER_ID=${botUserId}`,
     `GITHUB_APP_CLIENT_ID=${app.client_id}`,
     `GITHUB_APP_SLUG=${app.slug}`,
     `GITHUB_APP_PRIVATE_KEY_PATH=${pemPath}`,

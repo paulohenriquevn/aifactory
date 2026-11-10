@@ -61,8 +61,19 @@ describe('GitHub App installation tokens', () => {
         pull_requests: 'write',
         issues: 'write',
         checks: 'write',
+        workflows: 'write',
       },
     })
+  })
+
+  it('asks for the workflows permission, without which GitHub refuses a push that touches .github/workflows', async () => {
+    const github = fakeGithub()
+    await app(github.fetch).installationToken('paulohenriquevn/aifactory-playground')
+
+    const mint = github.calls.find((c) => c.url.endsWith('/access_tokens'))
+    expect((mint?.body as { permissions: Record<string, string> }).permissions.workflows).toBe(
+      'write',
+    )
   })
 
   it('never sends an access_tokens request without a repository filter', async () => {

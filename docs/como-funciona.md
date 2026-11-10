@@ -91,6 +91,12 @@ passada, a que espera há mais tempo primeiro:
   "Needs a person", que divide a issue ou dá mais tempo. O timeout de um comando do ambiente (clone,
   instalação) continua sendo falha de ambiente.
 
+- PR que o GitHub recusou por conflito com a base (`Pull Request has merge conflicts`): outra task mexeu
+  nos mesmos arquivos e entrou antes. A task fica `done` sem commit integrado, e a mesma passada a
+  recomeça sobre a base nova, como faria o "Retry", com o mesmo limite de 3 vezes e até 3 tasks por
+  passada. Merge recusado por outro motivo (branch protegida, check obrigatório) continua esperando uma
+  pessoa.
+
 O reinício automático não grava uma decisão em nome de ninguém: o evento `intake` leva
 `automatic: true`, e um "Retry" de uma pessoa zera a contagem. O cartão diz quando a task roda de novo, e
 as tentativas contam só a execução atual.
@@ -150,6 +156,10 @@ Outras garantias:
   cada parada, e 20 execuções esgotam o armazenamento do plano Hobby (erro 402).
 - Prazos: sandbox 50 minutos, agente 25 minutos, cada check 10 minutos. O job renova o lock a cada
   40 segundos (`extendLease`), então um worker que morre libera a task em minutos.
+- Um agente que já entregou o resultado do turno e foi morto pelo prazo conta como terminado. Um comando
+  que ele deixou em segundo plano mantém o Claude Code vivo depois da última palavra, e antes a fábrica
+  descartava esse trabalho pronto (a task 287 terminou às 11:25 e foi morta às 11:32). Os checks e o
+  revisor continuam julgando o que ele fez.
 - O sandbox sempre é parado, inclusive quando o run falha ou o lock expira.
 
 ## Evidência e portão
@@ -291,8 +301,9 @@ padrão da fábrica, para qualquer repositório:
 review aprova, **a fábrica mesmo faz o merge** (squash), sem pedir a ninguém: os checks e o review são a
 decisão. O merge é fixado ao SHA que foi verificado e revisado, então um push que caia entre olhar e
 mergear faz o GitHub recusar em vez de juntar o que ninguém viu. Se o GitHub recusar o merge (um conflito,
-uma branch protegida), a task não falha: o PR fica aberto para uma pessoa e o motivo fica no estágio
-`done` (`integrationError`). Trabalho entregue a uma pessoa (`handoff`) nunca é mergeado pela fábrica.
+uma branch protegida), a task não falha: o motivo fica no estágio `done` (`integrationError`). Um conflito com a base volta a
+rodar sozinho (veja o reinício automático acima); qualquer outra recusa deixa o PR aberto para uma
+pessoa. Trabalho entregue a uma pessoa (`handoff`) nunca é mergeado pela fábrica.
 
 **Pré-release.** Logo depois de integrar, a fábrica avança `develop` até o commit integrado e cria uma tag
 `pre/<issue>-<sha7>` sobre ele, marcada como pré-release no GitHub. Nas notas vão os checks, o veredito do
@@ -566,11 +577,12 @@ enquanto o agente trabalha, e uma conexão que caiu.
 **Ações.** Todas passam pelo servidor, que confere o estágio da task de novo, então uma página velha não
 consegue fazer o que a task já não permite.
 
-| Ação           | Quando                          | O que faz                                                                                                             |
-| -------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Aprovar        | task com PR (`done`, `handoff`) | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.       |
-| Pedir mudanças | task com PR, com um texto       | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review. |
-| Tentar de novo | task `failed` ou `handoff`      | Apaga a branch (o que fecha o PR) e recomeça do zero.                                                                 |
+| Ação                  | Quando                                                        | O que faz                                                                                                                                                                                                                |
+| --------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Aprovar               | task com PR (`done`, `handoff`)                               | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.                                                                                                          |
+| Pedir mudanças        | task com PR, com um texto                                     | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review.                                                                                                    |
+| Tentar de novo        | task `failed` ou `handoff`, ou `done` com o PR nunca mergeado | Apaga a branch (o que fecha o PR) e recomeça do zero, sobre a base atual. É o caminho para um PR que o GitHub recusou por conflito.                                                                                      |
+| Marcar como resolvida | task `failed` ou `handoff`, com um texto                      | Para o que uma pessoa resolveu por outro caminho (à mão, ou dividindo a issue em outras já entregues). O texto diz onde. A task vai para Delivered, marcada como resolvida no commit em que a branch de integração está. |
 
 Se o agente, ao receber um pedido de mudança, concluir que não há o que mudar (o teste já existia, por
 exemplo), a task volta a `done` e a resposta dele vira um comentário na issue, em vez de falhar.
@@ -599,7 +611,11 @@ ele abre. Nenhum comando.
 2. **Instalar a App e dar acesso aos repositórios.** O botão "Install on GitHub" (em Repositories e no
    Setup) abre a página de instalação da App no GitHub, numa aba nova. Lá o dono escolhe a conta ou a
    organização e os repositórios, e o painel, que passa a perguntar ao GitHub a cada poucos segundos,
-   percebe sozinho quando a instalação aparece e avisa. A permissão é do GitHub, não nossa. A App precisa
+   percebe sozinho quando a instalação aparece e avisa. A permissão é do GitHub, não nossa. Em
+   "Repository permissions", a App precisa de leitura e escrita em Contents, Pull requests, Issues,
+   Checks e Workflows. O token de cada execução pede exatamente essas cinco, e sem Workflows o GitHub
+   recusa o push de qualquer mudança em `.github/workflows`. Ao ganhar uma permissão, a App pede
+   aprovação em cada instalação, e enquanto alguma não aceitar, o token daquela conta não é emitido. A App precisa
    ser pública para ser instalada fora da conta que a criou (uma organização, por exemplo). Para o GitHub
    devolver o dono ao painel ao terminar, preencha o "Setup URL" da App com
    `http://localhost:3000/repositories` e marque "Redirect on update"; sem isso o dono volta ao painel por conta própria, e a página percebe o mesmo.
@@ -948,21 +964,22 @@ branch sua (padrão ou a escolhida)          branch factory-memory (só a fábri
 Tudo vem do ambiente, lido quando um job começa, não na subida do servidor. O servidor sobe e
 responde `/api/health` mesmo sem as credenciais.
 
-| Variável                                              | Para quê                                                |
-| ----------------------------------------------------- | ------------------------------------------------------- |
-| `DATABASE_URL`                                        | Postgres do estado e da fila de jobs                    |
-| `GITHUB_WEBHOOK_SECRET`                               | verifica a assinatura do webhook                        |
-| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`                    | identidade do GitHub App                                |
-| `GITHUB_APP_PRIVATE_KEY_PATH`                         | chave privada do App (arquivo em `.secrets/`)           |
-| `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`      | credencial do Claude Code                               |
-| `FACTORY_CLAUDE_AUTH`                                 | `api-key` ou `subscription`, quando as duas existem     |
-| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Vercel Sandbox, sem a validade de 12 horas do OIDC      |
-| `VERCEL_OIDC_TOKEN`                                   | alternativa de desenvolvimento, de `vercel env pull`    |
-| `OPENROUTER_API_KEY`, `FACTORY_CHAT_MODEL`            | o assistente do chat no OpenRouter                      |
-| `FACTORY_CHAT_CODEX_MODEL`                            | o modelo do assistente na assinatura do ChatGPT         |
-| `FACTORY_GUIDE_MODEL`                                 | o modelo dos guias de página (padrão gpt-4.1-mini)      |
-| `FACTORY_JOBS=off`                                    | sobe uma prévia do painel sem pegar jobs da fila        |
-| `FACTORY_KNOWLEDGE_DIR`                               | onde fica o espelho da base (padrão `.state/knowledge`) |
+| Variável                                              | Para quê                                                   |
+| ----------------------------------------------------- | ---------------------------------------------------------- |
+| `DATABASE_URL`                                        | Postgres do estado e da fila de jobs                       |
+| `GITHUB_WEBHOOK_SECRET`                               | verifica a assinatura do webhook                           |
+| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`                    | identidade do GitHub App                                   |
+| `GITHUB_APP_BOT_USER_ID`                              | id do usuário `<slug>[bot]`, que vai no e-mail dos commits |
+| `GITHUB_APP_PRIVATE_KEY_PATH`                         | chave privada do App (arquivo em `.secrets/`)              |
+| `ANTHROPIC_API_KEY` ou `CLAUDE_CODE_OAUTH_TOKEN`      | credencial do Claude Code                                  |
+| `FACTORY_CLAUDE_AUTH`                                 | `api-key` ou `subscription`, quando as duas existem        |
+| `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | Vercel Sandbox, sem a validade de 12 horas do OIDC         |
+| `VERCEL_OIDC_TOKEN`                                   | alternativa de desenvolvimento, de `vercel env pull`       |
+| `OPENROUTER_API_KEY`, `FACTORY_CHAT_MODEL`            | o assistente do chat no OpenRouter                         |
+| `FACTORY_CHAT_CODEX_MODEL`                            | o modelo do assistente na assinatura do ChatGPT            |
+| `FACTORY_GUIDE_MODEL`                                 | o modelo dos guias de página (padrão gpt-4.1-mini)         |
+| `FACTORY_JOBS=off`                                    | sobe uma prévia do painel sem pegar jobs da fila           |
+| `FACTORY_KNOWLEDGE_DIR`                               | onde fica o espelho da base (padrão `.state/knowledge`)    |
 
 `.env.local` e `.secrets/` ficam fora do git, com modo 600.
 

@@ -14,12 +14,15 @@ import { Assist } from './Assist'
 export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: () => void }) {
   const { task } = detail
   const [note, setNote] = useState('')
+  const [resolution, setResolution] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string>()
   const [bump, setBump] = useState<'patch' | 'minor' | 'major'>('patch')
 
   const hasPullRequest = (task.stage === 'done' || task.stage === 'handoff') && !!task.headSha
-  const canRetry = task.stage === 'failed' || task.stage === 'handoff'
+  const canResolve = task.stage === 'failed' || task.stage === 'handoff'
+  // Done but never merged (GitHub refused the pull request): the work is not delivered.
+  const canRetry = canResolve || (task.stage === 'done' && !task.integrated && !task.resolved)
   const canRelease = task.stage === 'done' && task.preRelease !== null
 
   async function run(path: string, body?: unknown, done?: string) {
@@ -29,6 +32,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
       await post(`/api/panel/tasks/${task.id}/${path}`, body)
       setMessage(done)
       setNote('')
+      setResolution('')
       onDone()
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
@@ -127,6 +131,38 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
             onClick={() => void run('changes', { note }, 'Sent back to the agent.')}
           >
             Send back
+          </Button>
+        </div>
+      ) : null}
+      {canResolve ? (
+        <div className="mt-4">
+          <label className="block text-sm">
+            <span className="text-foreground">Resolved another way</span>
+            <Textarea
+              value={resolution}
+              onChange={(e) => setResolution(e.target.value)}
+              rows={2}
+              placeholder="Where was it resolved? A pull request you made by hand, or the issues it was split into."
+              className="mt-1 w-full"
+            />
+          </label>
+          <Assist
+            kind="resolution"
+            text={resolution}
+            repository={task.repository}
+            context={`The factory could not deliver the issue "${task.title}" (#${task.issueNumber}) in ${task.repository}`}
+            onUse={(p) => setResolution(p.text)}
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            className="mt-2"
+            disabled={busy || resolution.trim() === ''}
+            onClick={() =>
+              void run('resolve', { note: resolution }, 'Marked as delivered another way.')
+            }
+          >
+            Mark as resolved
           </Button>
         </div>
       ) : null}

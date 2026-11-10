@@ -38,6 +38,24 @@ describe('parseClaudeResult', () => {
     )
   })
 
+  it('is ok when the turn ended with a result and only the process outlived it', () => {
+    // A command the agent left in the background keeps claude alive after its last word, until the
+    // factory's timeout kills it: the work was finished, and the checks judge it.
+    expect(
+      parseClaudeResult(
+        124,
+        JSON.stringify({ is_error: false, result: 'done', total_cost_usd: 0.5, session_id: 's' }),
+        '',
+      ),
+    ).toEqual({ ok: true, summary: 'done', costUsd: 0.5, sessionId: 's' })
+  })
+
+  it('is not ok when the process was killed after a result that is an error', () => {
+    expect(
+      parseClaudeResult(124, JSON.stringify({ is_error: true, result: 'Invalid API key' }), '').ok,
+    ).toBe(false)
+  })
+
   it('keeps the tail of the output when there is no JSON', () => {
     const result = parseClaudeResult(2, 'boom', 'segfault')
     expect(result.ok).toBe(false)

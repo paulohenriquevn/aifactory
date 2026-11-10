@@ -43,3 +43,20 @@ export function retryAt(failure: FailureToRetry): Date | null {
   }
   return null
 }
+
+/** GitHub's refusal to merge a pull request that conflicts with its base, as the integration records it. */
+const MERGE_CONFLICT = /Pull Request has merge conflicts/
+
+/**
+ * Whether a task the factory finished, but whose pull request GitHub refused to merge because it conflicts
+ * with its base, runs again on its own. Its work started from a base that has moved since (another task
+ * merged first), and starting again from the new one is what a person would do. It is limited like an
+ * environment failure, so a pull request that conflicts every time goes to a person.
+ */
+export function rerunsAfterConflict(integrationError: unknown, automaticRetries: number): boolean {
+  return (
+    typeof integrationError === 'string' &&
+    MERGE_CONFLICT.test(integrationError) &&
+    automaticRetries < AUTOMATIC_RETRIES
+  )
+}

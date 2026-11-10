@@ -6,6 +6,8 @@ export const KINDS = {
     'The description of one issue in a plan: rewrite it so it stands alone and ends with "Done when:" and a list of things that can be checked. Keep its meaning.',
   changes:
     'A request for changes to a pull request the factory already opened: turn what the owner wants different into a precise instruction the building agent can follow, naming what to change and how to tell it worked.',
+  resolution:
+    'A note on an issue the factory could not deliver and a person resolved another way (by hand, or by splitting it into issues that were delivered): say in one or two sentences where it was resolved, naming the pull requests, commits or issues the owner mentioned, so a later reader can check it.',
 } as const
 
 export type Kind = keyof typeof KINDS | 'setup'

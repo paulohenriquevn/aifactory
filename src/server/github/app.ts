@@ -68,6 +68,9 @@ const PERMISSIONS = {
   pull_requests: 'write',
   issues: 'write',
   checks: 'write',
+  // GitHub refuses a push that touches `.github/workflows` from a token without it, and a fix to a
+  // repository's CI is often exactly that. Every installation must have accepted it, or the mint fails.
+  workflows: 'write',
 } as const
 
 /** How long the list of reachable repositories is kept. */

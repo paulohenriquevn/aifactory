@@ -251,6 +251,25 @@ describe('task actions', () => {
     )
   })
 
+  it('marks a failed task resolved another way only with a note saying where', async () => {
+    const failed = detail({
+      task: { ...base, stage: 'failed', column: 'attention', headSha: null },
+    })
+    const calls = serve({ 'POST /api/panel/tasks/5/resolve': { decisionId: 3, sha: 'h' } })
+    render(<TaskActions detail={failed} onDone={noop} />)
+    const mark = screen.getByRole('button', { name: 'Mark as resolved' }) as HTMLButtonElement
+    expect(mark.disabled).toBe(true)
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Fixed by hand in #1389.' } })
+    fireEvent.click(mark)
+
+    await waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0]).toMatchObject({
+      url: '/api/panel/tasks/5/resolve',
+      body: { note: 'Fixed by hand in #1389.' },
+    })
+  })
+
   it('offers a retry for a failed task, asks first, and has nothing for a running one', async () => {
     const failed = detail({
       task: { ...base, stage: 'failed', column: 'attention', headSha: null },
@@ -294,6 +313,20 @@ describe('releasing from the panel', () => {
     })
     expect(confirm).toHaveBeenCalledTimes(2)
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Released.'))
+  })
+
+  it('offers to start again a done task whose pull request was never merged, and only that one', () => {
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeDefined()
+    expect(screen.queryByText('Resolved another way')).toBeNull()
+    for (const task of [
+      { ...base, integrated: true },
+      { ...base, resolved: true },
+    ]) {
+      cleanup()
+      render(<TaskActions detail={detail({ task })} onDone={noop} />)
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    }
   })
 
   it('does not offer to ask for changes on work that is already integrated', () => {
