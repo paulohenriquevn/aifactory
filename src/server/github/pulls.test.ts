@@ -283,10 +283,43 @@ describe('pull request state and merge', () => {
     const { fetch, calls } = fakeFetch({
       'PUT /pulls/9/merge': { status: 200, body: { sha: 'merge1' } },
     })
-    expect(await createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', 'squash')).toEqual({
+    expect(
+      await createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', {
+        method: 'squash',
+        title: 'T',
+      }),
+    ).toEqual({
       sha: 'merge1',
     })
     expect(calls[0]).toMatchObject({ method: 'PUT', body: { sha: 'abc', merge_method: 'squash' } })
+  })
+
+  it('names the squash commit itself, so GitHub adds no Co-authored-by trailer to it', async () => {
+    const { fetch, calls } = fakeFetch({
+      'PUT /pulls/9/merge': { status: 200, body: { sha: 'merge1' } },
+    })
+
+    await createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', {
+      method: 'squash',
+      title: 'Fix the parser (#4)',
+    })
+
+    expect(calls[0].body).toEqual({
+      sha: 'abc',
+      merge_method: 'squash',
+      commit_title: 'Fix the parser (#4) (#9)',
+      commit_message: '',
+    })
+  })
+
+  it('leaves a merge commit message to GitHub, which adds no trailer to one', async () => {
+    const { fetch, calls } = fakeFetch({
+      'PUT /pulls/9/merge': { status: 200, body: { sha: 'merge1' } },
+    })
+
+    await createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', { method: 'merge' })
+
+    expect(calls[0].body).toEqual({ sha: 'abc', merge_method: 'merge' })
   })
 
   it('throws when GitHub refuses the merge, as it does when the head moved', async () => {
@@ -294,7 +327,10 @@ describe('pull request state and merge', () => {
       'PUT /pulls/9/merge': { status: 409, body: { message: 'Head branch was modified' } },
     })
     await expect(
-      createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
+      createGithubApi(fetch).mergePullRequest('o/r', 't', 9, 'abc', {
+        method: 'squash',
+        title: 'T',
+      }),
     ).rejects.toThrow(/409.*Head branch was modified/)
   })
 
@@ -324,7 +360,7 @@ describe('pull request state and merge', () => {
       't',
       9,
       'abc',
-      'squash',
+      { method: 'squash', title: 'T' },
     )
 
     expect(merged).toEqual({ sha: 'merge1' })
@@ -339,7 +375,10 @@ describe('pull request state and merge', () => {
     )
 
     expect(
-      await createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
+      await createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', {
+        method: 'squash',
+        title: 'T',
+      }),
     ).toEqual({ sha: 'merge1' })
     expect(github.merges()).toBe(3)
   })
@@ -348,7 +387,10 @@ describe('pull request state and merge', () => {
     const github = answering({ status: 405, body: { message: 'Base branch was modified.' } })
 
     await expect(
-      createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
+      createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', {
+        method: 'squash',
+        title: 'T',
+      }),
     ).rejects.toThrow(/405.*Base branch was modified/)
     expect(github.merges()).toBe(4)
   })
@@ -357,7 +399,10 @@ describe('pull request state and merge', () => {
     const github = answering({ status: 405, body: { message: 'Pull Request has merge conflicts' } })
 
     await expect(
-      createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', 'squash'),
+      createGithubApi(github.fetch, noWait).mergePullRequest('o/r', 't', 9, 'abc', {
+        method: 'squash',
+        title: 'T',
+      }),
     ).rejects.toThrow(/405.*merge conflicts/)
     expect(github.merges()).toBe(1)
   })

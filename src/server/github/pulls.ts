@@ -73,7 +73,7 @@ export type GithubApi = {
     token: string,
     number: number,
     sha: string,
-    method: 'merge' | 'squash',
+    merge: PullRequestMerge,
   ): Promise<{ sha: string }>
   /** The check runs and commit statuses a commit has so far. */
   commitChecks(repo: string, token: string, sha: string): Promise<CommitChecks>
@@ -116,6 +116,20 @@ export type GithubApi = {
     issueNumber: number,
     since: Date,
   ): Promise<IssueComment[]>
+}
+
+/**
+ * How a pull request is merged. A squash names its own commit: left to GitHub, its message lists every
+ * commit author as `Co-authored-by`, the factory's bot included, even when the bot is the only author
+ * (observed on 2026-11-09, #13). `title` is the pull request's, and the commit is named as GitHub would
+ * name it, with ` (#<number>)` after it and no body.
+ */
+export type PullRequestMerge =
+  { readonly method: 'merge' } | { readonly method: 'squash'; readonly title: string }
+
+function mergeFields(number: number, merge: PullRequestMerge): Record<string, string> {
+  if (merge.method === 'merge') return { merge_method: 'merge' }
+  return { merge_method: 'squash', commit_title: `${merge.title} (#${number})`, commit_message: '' }
 }
 
 /** Runs on the factory host with an installation token, never in the sandbox. */
@@ -338,12 +352,10 @@ export function createGithubApi(
       return { sha, changed: false }
     },
 
-    async mergePullRequest(repo, token, number, sha, method) {
+    async mergePullRequest(repo, token, number, sha, merge) {
+      const body = JSON.stringify({ sha, ...mergeFields(number, merge) })
       for (let attempt = 1; ; attempt += 1) {
-        const response = await call(repo, token, `/pulls/${number}/merge`, {
-          method: 'PUT',
-          body: JSON.stringify({ sha, merge_method: method }),
-        })
+        const response = await call(repo, token, `/pulls/${number}/merge`, { method: 'PUT', body })
         if (response.status !== 200 && attempt < MERGE_ATTEMPTS) {
           const message = await response
             .clone()

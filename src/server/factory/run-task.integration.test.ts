@@ -23,6 +23,7 @@ import type {
   CheckRun,
   GithubApi,
   IssueComment,
+  PullRequestMerge,
   PullRequestState,
   ReleaseInput,
 } from '../github/pulls'
@@ -105,6 +106,8 @@ const githubApi: GithubApi & {
   latest: string | undefined
   pullRequest: PullRequestState | undefined
   merges: { number: number; sha: string }[]
+  /** How each of those merges was asked for: the method, and a squash's commit title. */
+  mergeKinds: PullRequestMerge[]
   /** What the factory asked to be merged into a branch (the pre-release branch, after an integration). */
   branchMerges: { base: string; head: string }[]
   /** GitHub refuses to merge the pull request (a conflict, a protected branch). */
@@ -132,6 +135,7 @@ const githubApi: GithubApi & {
   latest: undefined,
   pullRequest: undefined,
   merges: [],
+  mergeKinds: [],
   async createCheckRun(_repo, _token, check) {
     this.checkRuns.push(check)
   },
@@ -165,9 +169,10 @@ const githubApi: GithubApi & {
   async findPullRequest() {
     return this.pullRequest
   },
-  async mergePullRequest(_repo, _token, number, sha) {
+  async mergePullRequest(_repo, _token, number, sha, merge) {
     if (this.mergeFails) throw new Error('GitHub answered 405 merging paulo/app#12: conflicts')
     this.merges.push({ number, sha })
+    this.mergeKinds.push(merge)
     return { sha: 'merge0001' }
   },
   defaultBranch: async () => githubApi.branches.defaultName,
@@ -206,6 +211,7 @@ beforeEach(() => {
   githubApi.latest = undefined
   githubApi.pullRequest = undefined
   githubApi.merges = []
+  githubApi.mergeKinds = []
   githubApi.branchMerges = []
   githubApi.mergeFails = false
   githubApi.branchMergeFails = false
@@ -1580,6 +1586,10 @@ describe('the factory always makes a pre-release', () => {
 
     expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
     expect(githubApi.branchMerges).toEqual([{ base: 'develop', head: 'merge0001' }])
+    // The squash is named after the pull request, so GitHub adds no Co-authored-by trailer to it (#13).
+    expect(githubApi.mergeKinds).toEqual([
+      { method: 'squash', title: expect.stringMatching(/ \(#7\)$/) },
+    ])
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
     expect(row).toMatchObject({ stage: 'done', mergedSha: 'merge0001' })
     const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]

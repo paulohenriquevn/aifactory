@@ -202,7 +202,9 @@ export async function release(
 
   let merged: { sha: string }
   try {
-    merged = await deps.api.mergePullRequest(row.repository, token, pr.number, sha, 'merge')
+    merged = await deps.api.mergePullRequest(row.repository, token, pr.number, sha, {
+      method: 'merge',
+    })
   } catch (error) {
     await deps.db.update(task).set({ stage: 'done' }).where(eq(task.id, taskId))
     throw new ReleaseRefused(

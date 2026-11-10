@@ -874,7 +874,10 @@ export class Run {
     const { deps, taskId, row, token, api, branch } = this.c
     let merged: { sha: string }
     try {
-      merged = await api.mergePullRequest(row.repository, token, pullNumber, sha, 'squash')
+      merged = await api.mergePullRequest(row.repository, token, pullNumber, sha, {
+        method: 'squash',
+        title: this.title,
+      })
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) }
     }
