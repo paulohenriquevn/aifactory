@@ -140,8 +140,12 @@ describe('freshCodexLogin', () => {
     const env = newHome()
     writeCliLogin(env, accessExpiring(60_000))
     let answer: () => void = () => {}
+    // Resolved once the renewal is inside the lock and asking: a fixed wait raced it on a loaded machine.
+    let asked: () => void = () => {}
+    const renewalAsked = new Promise<void>((done) => (asked = done))
     const slow = (() =>
       new Promise<Response>((done) => {
+        asked()
         answer = () =>
           done(
             new Response(
@@ -154,7 +158,7 @@ describe('freshCodexLogin', () => {
       })) as unknown as typeof fetch
 
     const renewing = freshCodexLogin({ env, fetch: slow, now: () => NOW })
-    await new Promise((done) => setTimeout(done, 20))
+    await renewalAsked
     const saving = saveCodexLogin(
       {
         access: 'new-account-access',
