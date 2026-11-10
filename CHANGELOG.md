@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
 ### Added
 
 - A failed or handed-over task that a person resolved another way can be marked resolved from its page, with a note saying where; it moves to Delivered (#10)
@@ -57,5 +59,6 @@ All notable changes to this project are documented here. The format follows
 - The checks run on a clean tree of the pushed commit, so what the agent left in ignored files no longer decides the result (#6)
 - The backup check reads the whole dump and no longer fails with EPIPE on dumps over about a megabyte (#3)
 
-[Unreleased]: https://github.com/paulohenriquevn/aifactory/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/paulohenriquevn/aifactory/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/paulohenriquevn/aifactory/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/paulohenriquevn/aifactory/releases/tag/v0.1.0
