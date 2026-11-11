@@ -508,3 +508,29 @@ export const knowledgeDelivery = pgTable('knowledge_delivery', {
   files: integer('files').notNull(),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+/**
+ * A failure the promotion watch filed: one issue per repository, check and failure signature, so the same
+ * failure on a later commit is a comment on its issue rather than a second issue. `lastSha` is the head
+ * commit it was last reported on, which keeps a pass from saying it twice. `issueNumber` is empty while the
+ * issue is being opened: the row is taken first so that two passes cannot open two.
+ */
+export const promotionFinding = pgTable(
+  'promotion_finding',
+  {
+    id: serial('id').primaryKey(),
+    repository: text('repository').notNull(),
+    checkName: text('check_name').notNull(),
+    signature: text('signature').notNull(),
+    issueNumber: integer('issue_number'),
+    issueUrl: text('issue_url'),
+    /** Whether the issue went to the factory's agents (`factory` label) or to a person. */
+    forFactory: boolean('for_factory').notNull(),
+    lastSha: text('last_sha').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('promotion_finding_unique').on(table.repository, table.checkName, table.signature),
+  ],
+)

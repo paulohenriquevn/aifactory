@@ -40,7 +40,7 @@ src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   panel/            what the panel shows and does: queries, actions, owner session, event stream
-  crons/            defineCron files (`poll-answers`, `watch-main`, `publish-changesets`, `integrate-after-ci`, `supervise`,
+  crons/            defineCron files (`poll-answers`, `watch-main`, `watch-promotions`, `publish-changesets`, `integrate-after-ci`, `supervise`,
                     `catch-up`, `retry-due`, `knowledge-sync`, `prune-transcripts`)
   knowledge/        the owner's knowledge repository: mirror, sync, the slice each agent gets, notes
   db/               Postgres config, pool, Drizzle schema, health probe

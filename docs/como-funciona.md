@@ -469,6 +469,39 @@ No painel, a task liberada ganha a seção "Default branch after the release", c
 do revert e o botão "I dealt with it", que tira o caso da caixa de entrada sem mexer em nada no GitHub. Uma
 `main` vermelha aparece na caixa de entrada e no cartão da task.
 
+## O vigia das promoções
+
+Os PRs que levam o trabalho adiante (`workspace` → `develop`, `develop` → a branch de release e o Version
+Packages `changeset-release/<release>`) também podem ficar vermelhos, e aí `develop` para e nada é lançado.
+Um cron (`watch-promotions`) olha esses PRs abertos em cada repositório habilitado, a cada cinco minutos, e
+trata cada check que falhou no commit de cabeça:
+
+| O que ele vê                                            | O que acontece                                                                    |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Um job do Actions falhou na primeira tentativa          | Roda de novo os jobs que falharam daquela run, uma vez só, e não abre nada ainda. |
+| O job falhou de novo depois disso                       | Lê o log do job e guarda as linhas que dizem o que quebrou.                       |
+| Um check que não é do Actions falhou (CodeQL, Sonar)    | Lê as anotações e o resumo do check, sem rodar de novo.                           |
+| A mesma falha, com a issue dela aberta, num commit novo | Comenta na issue, em vez de abrir outra.                                          |
+| A mesma falha, com a issue dela já fechada              | Abre uma issue nova: o conserto não se sustentou.                                 |
+
+As linhas do log são escolhidas sem modelo: asserções, testes que falharam, erros de tipo e de lint (com o
+arquivo), e o que ferramentas como o knip listam. Um job que só diz que outros falharam (o resumo do CI) é
+deixado de lado quando outro check diz o motivo. A falha é identificada pelo check e por essas linhas, sem os
+valores que um teste inventa a cada execução, e a tabela `promotion_finding` liga cada uma à sua issue.
+
+A issue sai com o label `factory`, então um agente a pega como qualquer outra. A exceção é um scanner de
+segredos (TruffleHog, gitleaks): ele lê todos os commits da promoção, inclusive os que já estão no histórico,
+que nunca é reescrito, e nenhuma mudança no código o faz passar. Essa issue sai sem o label, para uma pessoa
+decidir.
+
+Cada passada abre no máximo `FACTORY_PROMOTION_ISSUES_PER_PASS` issues novas por repositório (três, se não
+for definido; zero desliga a abertura e mantém as reexecuções), para que um pipeline quebrado não inunde o
+tracker. O resto fica para a próxima passada. Comentários não contam nesse limite. Nada aqui faz merge.
+
+O diagnóstico não passa por um assistente no processo do servidor. O log é texto que veio de fora, e um agente
+lendo esse texto onde estão as credenciais da fábrica seria uma porta aberta. Quem diagnostica é o agente
+que pega a issue, dentro da sandbox, com o repositório e os comandos do projeto à mão.
+
 ## Saúde da própria fábrica
 
 **Custo por execução.** Toda execução de um agente (um build, um retrabalho, uma retomada depois de uma
