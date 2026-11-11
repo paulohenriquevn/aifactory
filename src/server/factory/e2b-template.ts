@@ -3,7 +3,7 @@
  * scripts/build-e2b-template.mts. The tag moves with the Dockerfile, so a sandbox never starts from an
  * image older than the code that expects it.
  */
-export const E2B_TEMPLATE = 'aifactory-sandbox:3'
+export const E2B_TEMPLATE = 'aifactory-sandbox:4'
 
 /**
  * What each sandbox gets. A run builds and tests a pnpm monorepo, which needs about what the Docker

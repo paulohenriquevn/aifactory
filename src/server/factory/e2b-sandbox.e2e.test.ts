@@ -32,6 +32,11 @@ describe('an E2B sandbox', () => {
     expect((await sh('pnpm --version')).exitCode).toBe(0)
   })
 
+  it('has the tools a project test suite calls, such as the seccomp tests of theokit-sdk', async () => {
+    // bwrap runs here, so theokit-sdk's sandbox tests run too, and they trace a process with strace.
+    expect((await sh('command -v bwrap strace')).stdout.trim().split('\n')).toHaveLength(2)
+  })
+
   it('cannot reach a domain that is not listed', async () => {
     const blocked = await sh('curl -sS -m 15 -o /dev/null https://example.com')
     expect(blocked.exitCode).not.toBe(0)
