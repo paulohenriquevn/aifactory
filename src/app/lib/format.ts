@@ -61,10 +61,28 @@ export function stageLabel(
   return LABELS[stage]
 }
 
+const text = (value: unknown) => (value === undefined || value === null ? '' : String(value))
+
+/** What a task's work came to when it finished: its pull request, its delivery, its integration. */
+function describeDone(d: Record<string, unknown>): string {
+  if (d.resolved) return `already resolved at ${text(d.sha).slice(0, 7)}, issue closed`
+  return [
+    text(d.pullRequestUrl),
+    d.preRelease ? `pre-release ${text(d.preRelease)}` : '',
+    d.preReleaseError ? `no pre-release: ${text(d.preReleaseError)}` : '',
+    d.unchanged ? 'nothing to change' : '',
+    Array.isArray(d.awaitingChecks)
+      ? `waiting for the repository checks: ${d.awaitingChecks.join(', ')}`
+      : '',
+    d.integratedBy ? `merged by ${text(d.integratedBy)} at ${text(d.mergedSha).slice(0, 7)}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 /** One line about what happened at a stage, from what the factory recorded. */
 export function describeEvent(event: TimelineEvent): string {
   const d = (event.detail ?? {}) as Record<string, unknown>
-  const text = (value: unknown) => (value === undefined || value === null ? '' : String(value))
   switch (event.stage) {
     case 'intake':
       return d.decision
@@ -92,21 +110,7 @@ export function describeEvent(event: TimelineEvent): string {
     case 'waiting':
       return text(d.question)
     case 'done':
-      if (d.resolved) return `already resolved at ${text(d.sha).slice(0, 7)}, issue closed`
-      return [
-        text(d.pullRequestUrl),
-        d.preRelease ? `pre-release ${text(d.preRelease)}` : '',
-        d.preReleaseError ? `no pre-release: ${text(d.preReleaseError)}` : '',
-        d.unchanged ? 'nothing to change' : '',
-        Array.isArray(d.awaitingChecks)
-          ? `waiting for the repository checks: ${d.awaitingChecks.join(', ')}`
-          : '',
-        d.integratedBy
-          ? `merged by ${text(d.integratedBy)} at ${text(d.mergedSha).slice(0, 7)}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('\n')
+      return describeDone(d)
     case 'released':
       if (d.publishing === 'changesets') {
         return `promoted by ${text(d.actor)}; the repository's release workflow publishes it`
