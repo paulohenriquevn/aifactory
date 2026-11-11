@@ -46,6 +46,13 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
   return (
     <section aria-label="Actions" className="rounded-lg border border-border bg-card p-4">
       <h2 className="mb-3 text-sm font-semibold">What do you want to do?</h2>
+      {task.waitingForChecks ? (
+        <p className="mb-3 text-sm text-muted-foreground">
+          GitHub merges this pull request once the repository's required checks pass, and the
+          factory finishes the integration then. A check that fails sends the work back to the
+          agent.
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {hasPullRequest ? (
           <Button

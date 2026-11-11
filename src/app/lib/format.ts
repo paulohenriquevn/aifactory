@@ -38,7 +38,8 @@ const LABELS: Record<Stage, string> = {
 }
 
 /**
- * What a stage is called. A finished task whose pull request the factory already merged is "integrated", not
+ * What a stage is called. A finished task whose pull request the factory already merged is "integrated", one
+ * whose pull request GitHub merges once the repository's required checks pass is "waiting for CI", neither
  * "pull request open", and a failure the factory will repeat says so instead of "failed".
  */
 export function stageLabel(
@@ -46,11 +47,14 @@ export function stageLabel(
   extra: {
     integrated?: boolean
     resolved?: boolean
+    /** The pull request waits for the repository's required checks, and GitHub merges it after them. */
+    waitingForChecks?: boolean
     retryable?: Retryable
   } = {},
 ): string {
   if (stage === 'done' && extra.resolved) return 'already resolved'
   if (stage === 'done' && extra.integrated) return 'integrated'
+  if (stage === 'done' && extra.waitingForChecks) return 'waiting for CI'
   if (stage === 'failed' && extra.retryable === 'quota') return 'waiting for the limit'
   if (stage === 'failed' && extra.retryable === 'environment') return 'will retry'
   if (stage === 'failed' && extra.retryable === 'blocked') return 'waiting for another issue'
@@ -64,7 +68,7 @@ export function describeEvent(event: TimelineEvent): string {
   switch (event.stage) {
     case 'intake':
       return d.decision
-        ? `a person ${text(d.decision).replace('_', ' ')}${d.note ? `: ${text(d.note)}` : ''}`
+        ? `${d.automatic ? 'the factory' : 'a person'} ${text(d.decision).replace('_', ' ')}${d.note ? `: ${text(d.note)}` : ''}`
         : ''
     case 'sandbox':
       return text(d.provider)
@@ -94,6 +98,12 @@ export function describeEvent(event: TimelineEvent): string {
         d.preRelease ? `pre-release ${text(d.preRelease)}` : '',
         d.preReleaseError ? `no pre-release: ${text(d.preReleaseError)}` : '',
         d.unchanged ? 'nothing to change' : '',
+        Array.isArray(d.awaitingChecks)
+          ? `waiting for the repository checks: ${d.awaitingChecks.join(', ')}`
+          : '',
+        d.integratedBy
+          ? `merged by ${text(d.integratedBy)} at ${text(d.mergedSha).slice(0, 7)}`
+          : '',
       ]
         .filter(Boolean)
         .join('\n')

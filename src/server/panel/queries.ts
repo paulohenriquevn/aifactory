@@ -126,6 +126,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       updatedAt: iso(new Date(seen?.last ?? r.createdAt)),
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
       integrated: r.mergedSha !== null,
+      waitingForChecks: r.awaitingCiSha !== null,
       resolved: r.resolvedSha !== null,
       retryable: again?.retryable ?? null,
       retryAt: again?.at.toISOString() ?? null,

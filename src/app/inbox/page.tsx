@@ -42,6 +42,7 @@ export default function InboxPage() {
                     <StageBadge
                       stage={task.stage}
                       integrated={task.integrated}
+                      waitingForChecks={task.waitingForChecks}
                       resolved={task.resolved}
                       retryable={task.retryable}
                     />

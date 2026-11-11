@@ -115,7 +115,19 @@ describe('describeEvent', () => {
       'a person request changes: rename it',
     )
     expect(line('intake', null)).toBe('')
+    expect(
+      line('intake', { decision: 'request_changes', note: 'CI failed', automatic: true }),
+    ).toBe('the factory request changes: CI failed')
     expect(line('intake', {})).toBe('')
+  })
+
+  it('says which checks an integration waits for, and that GitHub merged it once they passed', () => {
+    expect(line('done', { pullRequestUrl: 'u', awaitingChecks: ['CI', 'Lint'] })).toBe(
+      'u\nwaiting for the repository checks: CI, Lint',
+    )
+    expect(
+      line('done', { pullRequestUrl: 'u', integratedBy: 'auto-merge', mergedSha: 'merge0001' }),
+    ).toBe('u\nmerged by auto-merge at merge00')
   })
 
   it('names the sandbox, the branch and the review', () => {
@@ -192,5 +204,10 @@ describe('stageLabel with what is known of the task', () => {
     expect(stageLabel('failed', { retryable: 'blocked' })).toBe('waiting for another issue')
     expect(stageLabel('failed', { retryable: null })).toBe('failed')
     expect(stageLabel('build', { integrated: true, retryable: 'quota' })).toBe('building')
+  })
+
+  it('says a finished task waits for the repository checks, rather than that it is not integrated', () => {
+    expect(stageLabel('done', { waitingForChecks: true })).toBe('waiting for CI')
+    expect(stageLabel('handoff', { waitingForChecks: true })).toBe('handed to a person')
   })
 })

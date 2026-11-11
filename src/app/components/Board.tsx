@@ -48,6 +48,7 @@ export function Card({ task }: { task: TaskCard }) {
           <StageBadge
             stage={task.stage}
             integrated={task.integrated}
+            waitingForChecks={task.waitingForChecks}
             resolved={task.resolved}
             retryable={task.retryable}
             wrap
@@ -136,6 +137,7 @@ export function TaskList({ tasks }: { tasks: TaskCard[] }) {
               <StageBadge
                 stage={task.stage}
                 integrated={task.integrated}
+                waitingForChecks={task.waitingForChecks}
                 resolved={task.resolved}
                 retryable={task.retryable}
               />

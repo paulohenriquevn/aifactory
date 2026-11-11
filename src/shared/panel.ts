@@ -168,6 +168,11 @@ export type TaskCard = {
   /** The pull request was merged into the integration branch, so it is on the pre-release branch too. */
   integrated: boolean
   /**
+   * The pull request waits for the integration branch's required checks: GitHub merges it once they pass,
+   * and the factory finishes the integration then. It is not a merge GitHub refused.
+   */
+  waitingForChecks: boolean
+  /**
    * Delivered without a pull request: the agent changed nothing, the checks passed at the commit and the
    * reviewer confirmed the code already does what the issue asks. The factory closed the issue.
    */

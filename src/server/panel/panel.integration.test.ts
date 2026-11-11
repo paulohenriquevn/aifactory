@@ -187,6 +187,18 @@ describe('listTasks', () => {
   })
 })
 
+describe('listTasks and an integration that waits for the repository checks', () => {
+  it('says which finished tasks wait for the required checks to merge', async () => {
+    const waiting = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' })
+    const refused = await seed('done', { headSha: 'def' })
+
+    const cards = new Map((await listTasks(getDb())).map((c) => [c.id, c]))
+
+    expect(cards.get(waiting)).toMatchObject({ waitingForChecks: true, integrated: false })
+    expect(cards.get(refused)).toMatchObject({ waitingForChecks: false })
+  })
+})
+
 describe('listTasks and the retries the factory makes on its own', () => {
   const environment = { stage: 'failed', detail: { error: 'git push: remote rejected' } }
   const automatic = { stage: 'intake', detail: { decision: 'retry', automatic: true } }

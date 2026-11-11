@@ -36,6 +36,7 @@ const base: TaskCard = {
   updatedAt: '2026-11-04T10:05:00Z',
   approved: false,
   integrated: false,
+  waitingForChecks: false,
   resolved: false,
   retryable: null,
   retryAt: null,
@@ -327,6 +328,18 @@ describe('releasing from the panel', () => {
       render(<TaskActions detail={detail({ task })} onDone={noop} />)
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     }
+  })
+
+  it('says GitHub merges a pull request that waits for the repository checks', () => {
+    render(
+      <TaskActions detail={detail({ task: { ...base, waitingForChecks: true } })} onDone={noop} />,
+    )
+    expect(
+      screen.getByText(/merges this pull request once the repository's required checks pass/),
+    ).toBeDefined()
+    cleanup()
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    expect(screen.queryByText(/required checks pass/)).toBeNull()
   })
 
   it('does not offer to ask for changes on work that is already integrated', () => {
