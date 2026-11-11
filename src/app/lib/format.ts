@@ -1,6 +1,14 @@
-import type { Retryable, Stage, TimelineEvent } from '../../shared/panel'
+import type { MetricRow, Retryable, Stage, TimelineEvent } from '../../shared/panel'
 
 export const money = (usd: number) => (usd < 0.005 ? '$0.00' : `$${usd.toFixed(2)}`)
+
+/** An indicator's value in its unit: a share as a percentage, a cost in dollars, a duration in its unit. */
+export function metricValue(value: number, unit: MetricRow['unit']): string {
+  if (unit === 'share') return `${(value * 100).toFixed(0)}%`
+  if (unit === 'usd') return money(value)
+  if (unit === 'count') return value.toFixed(1)
+  return `${value.toFixed(0)} ${unit === 'minutes' ? 'min' : 'h'}`
+}
 
 export const shortSha = (sha: string | null | undefined) => (sha ? sha.slice(0, 7) : '')
 

@@ -528,6 +528,43 @@ snapshots do provedor, a tabela de jobs) não resolve os achados dela: não ver 
 ter sumido. "Começar de novo" apaga a branch e recomeça do zero, e o painel pede confirmação, porque uma run
 que parecia parada pode, raramente, ainda estar viva.
 
+**Indicadores e faixas de controle.** O cron `measure` roda de hora em hora e lê o que a fábrica já grava
+(eventos de estágio, evidência, reviews e o vigia da `main`). Com isso calcula oito indicadores por
+repositório e um conjunto para a fábrica inteira (`*` no banco, "All repositories" no painel). Cada run de
+uma task começa num `intake` e só conta quando termina (`done`, `failed` ou `handoff`). Uma run que só
+esperou outra issue fechar não conta.
+
+| Indicador                 | O que mede                                                                                | Piora quando |
+| ------------------------- | ----------------------------------------------------------------------------------------- | ------------ |
+| `first_pass_checks`       | Se todas as checagens da primeira verificação da run passaram                             | cai          |
+| `rework_rounds`           | Quantos retrabalhos a run teve                                                            | sobe         |
+| `first_review_approval`   | Se o primeiro review da run aprovou                                                       | cai          |
+| `minutes_to_first_review` | Minutos do início da run até o primeiro review                                            | sobe         |
+| `minutes_to_delivery`     | Minutos do início da run até o `done`                                                     | sobe         |
+| `cost_per_delivery`       | Custo de uma run entregue                                                                 | sobe         |
+| `change_failure`          | Se a entrega voltou: nova run, `failed` ou `handoff` depois do `done`, ou `main` vermelha | sobe         |
+| `hours_to_release`        | Horas da criação da task até a primeira release                                           | sobe         |
+
+Os valores viram um ponto por dia (a média do dia, guardada em `metric_point`), e só quando o dia tem
+observações suficientes: três, ou uma para `hours_to_release`. A faixa de cada série é a média e o desvio dos
+pontos dos últimos 30 dias, sem os 8 mais recentes. Sobre esses 8 rodam as regras de Western Electric, sempre
+no sentido em que o indicador piora. Melhorar demais não dispara nada. Sem 7 pontos de base, ou com desvio
+zero, a série fica "no baseline yet". A detecção é só aritmética, sem modelo.
+
+| Regra                         | Quando dispara                     | O que acontece                |
+| ----------------------------- | ---------------------------------- | ----------------------------- |
+| `four_of_five_beyond_1_sigma` | 4 dos últimos 5 pontos além de 1σ  | Só registra                   |
+| `two_of_three_beyond_2_sigma` | 2 dos últimos 3 além de 2σ         | Registra e mostra no painel   |
+| `eight_on_one_side`           | Os últimos 8 do lado ruim da média | Registra e mostra no painel   |
+| `beyond_3_sigma`              | O último ponto além de 3σ          | Registra, mostra e abre issue |
+
+As faixas e os níveis ficam em `src/server/metrics/config.ts`, versionados. Cada regra quebrada num dia vira
+uma linha em `metric_signal`, uma vez só. A issue vai para `paulohenriquevn/aifactory`, com a tabela dos
+pontos, e só uma por indicador e repositório a cada 30 dias. Quando o mesmo dia já abriu issue num
+repositório, a série da fábrica inteira não abre outra. Se o GitHub recusa, o erro fica na linha e a passada
+seguinte tenta de novo. A página Health mostra o último dia de cada indicador, a base e o estado da faixa, e
+os sinais dos últimos 14 dias que mostram ou abrem issue.
+
 ## Qualidade do código
 
 Três gates rodam no job `quality` do CI, ao lado do `check`. Localmente: `pnpm quality`, ou cada um

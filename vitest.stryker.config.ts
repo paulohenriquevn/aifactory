@@ -46,6 +46,9 @@ export default defineConfig({
       'src/server/factory/recipe.test.ts',
       'src/app/panel.test.tsx',
       'src/app/page.test.tsx',
+      'src/server/metrics/bands.test.ts',
+      'src/server/metrics/history.test.ts',
+      'src/server/metrics/series.test.ts',
     ],
   },
 })

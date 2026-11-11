@@ -534,3 +534,45 @@ export const promotionFinding = pgTable(
     unique('promotion_finding_unique').on(table.repository, table.checkName, table.signature),
   ],
 )
+
+/**
+ * One day of one indicator the factory keeps about itself (`metrics/config.ts`), for one repository or for
+ * all of them (`*`): the mean of what was observed that day and how many observations made it. The
+ * `measure` cron writes it again on every pass for the days it still covers.
+ */
+export const metricPoint = pgTable(
+  'metric_point',
+  {
+    metric: text('metric').notNull(),
+    repository: text('repository').notNull(),
+    /** `YYYY-MM-DD`, in UTC. */
+    day: text('day').notNull(),
+    value: real('value').notNull(),
+    samples: integer('samples').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.metric, t.repository, t.day] })],
+)
+
+/**
+ * A control-band rule an indicator broke on a day, recorded once. `tier` says what it led to: `log` only this
+ * row, `show` this row and the panel, `act` an issue as well (`issueUrl`, or `error` when opening it failed).
+ */
+export const metricSignal = pgTable(
+  'metric_signal',
+  {
+    id: serial('id').primaryKey(),
+    metric: text('metric').notNull(),
+    repository: text('repository').notNull(),
+    day: text('day').notNull(),
+    rule: text('rule').notNull(),
+    tier: text('tier', { enum: ['log', 'show', 'act'] }).notNull(),
+    value: real('value').notNull(),
+    mean: real('mean').notNull(),
+    sd: real('sd').notNull(),
+    issueUrl: text('issue_url'),
+    error: text('error'),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('metric_signal_once').on(t.metric, t.repository, t.day, t.rule)],
+)

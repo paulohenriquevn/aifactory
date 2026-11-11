@@ -40,7 +40,10 @@
     "src/server/factory/promotion.ts",
     "src/server/evals/compare.ts",
     "src/server/evals/cases.ts",
-    "src/server/evals/suite.ts"
+    "src/server/evals/suite.ts",
+    "src/server/metrics/bands.ts",
+    "src/server/metrics/history.ts",
+    "src/server/metrics/series.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { Stage, TimelineEvent } from '../../shared/panel'
 
-import { ago, describeEvent, money, runsAgain, shortSha, stageLabel } from './format'
+import { ago, describeEvent, metricValue, money, runsAgain, shortSha, stageLabel } from './format'
 
 describe('money', () => {
   it('writes cents, and a sum too small to be one as zero', () => {
@@ -11,6 +11,16 @@ describe('money', () => {
     expect(money(0.005)).toBe('$0.01')
     expect(money(0.0049)).toBe('$0.00')
     expect(money(0)).toBe('$0.00')
+  })
+})
+
+describe('metricValue', () => {
+  it('writes each indicator in its unit', () => {
+    expect(metricValue(0.756, 'share')).toBe('76%')
+    expect(metricValue(0.531, 'usd')).toBe('$0.53')
+    expect(metricValue(1.25, 'count')).toBe('1.3')
+    expect(metricValue(42.4, 'minutes')).toBe('42 min')
+    expect(metricValue(3.6, 'hours')).toBe('4 h')
   })
 })
 

@@ -3,6 +3,7 @@ import { Button } from '@usetheo/ui'
 import { Link } from 'react-router'
 
 import type { FindingView, HealthReport } from '../../shared/panel'
+import { MetricsSection } from '../components/MetricsSection'
 import { post } from '../lib/api'
 import { ago, money } from '../lib/format'
 import { useResource } from '../lib/live'
@@ -170,6 +171,8 @@ export default function HealthPage() {
               <p className="mt-3 text-sm text-muted-foreground">No agent has run yet.</p>
             )}
           </section>
+
+          <MetricsSection />
         </>
       )}
     </div>

@@ -7,6 +7,7 @@ import type {
   FindingView,
   HealthReport,
   InboxItem,
+  MetricsReport,
   TaskCard,
   TaskDetail,
   WatchView,
@@ -612,6 +613,91 @@ const found = (over: Partial<FindingView>): FindingView => ({
   firstSeenAt: '2026-11-04T10:00:00Z',
   lastSeenAt: '2026-11-04T10:50:00Z',
   ...over,
+})
+
+const metricsReport: MetricsReport = {
+  rows: [
+    {
+      metric: 'cost_per_delivery',
+      label: 'Cost per delivered run',
+      unit: 'usd',
+      worse: 'up',
+      repository: '*',
+      day: '2026-11-08',
+      value: 5,
+      samples: 3,
+      mean: 1,
+      sd: 0.1,
+      band: 'act',
+      rules: ['beyond_3_sigma'],
+    },
+    {
+      metric: 'first_pass_checks',
+      label: 'First-pass checks',
+      unit: 'share',
+      worse: 'down',
+      repository: 'paulo/app',
+      day: '2026-11-08',
+      value: 0.75,
+      samples: 4,
+      mean: null,
+      sd: null,
+      band: 'no_baseline',
+      rules: [],
+    },
+  ],
+  signals: [
+    {
+      metric: 'cost_per_delivery',
+      label: 'Cost per delivered run',
+      repository: '*',
+      day: '2026-11-08',
+      rule: 'beyond_3_sigma',
+      tier: 'act',
+      value: 5,
+      mean: 1,
+      sd: 0.1,
+      issueUrl: 'https://github.com/paulohenriquevn/aifactory/issues/40',
+      error: null,
+    },
+  ],
+}
+
+describe('health metrics', () => {
+  it('shows each indicator against its band and links the issue a signal opened', async () => {
+    serve({ 'GET /api/panel/health': report(), 'GET /api/panel/metrics': metricsReport })
+    render(
+      <MemoryRouter>
+        <HealthPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(screen.getByText('issue opened')).toBeDefined())
+    expect(screen.getAllByText('Cost per delivered run')).toHaveLength(2)
+    expect(screen.getAllByText('All repositories').length).toBeGreaterThan(0)
+    expect(screen.getByText('$1.00 ± $0.10')).toBeDefined()
+    expect(screen.getByText('75%')).toBeDefined()
+    expect(screen.getByText('no baseline yet')).toBeDefined()
+    expect(screen.getByRole('link', { name: 'issue' }).getAttribute('href')).toBe(
+      'https://github.com/paulohenriquevn/aifactory/issues/40',
+    )
+  })
+
+  it('says when there is nothing to measure yet', async () => {
+    serve({
+      'GET /api/panel/health': report(),
+      'GET /api/panel/metrics': { rows: [], signals: [] },
+    })
+    render(
+      <MemoryRouter>
+        <HealthPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByText('Not enough finished work to measure yet.')).toBeDefined(),
+    )
+  })
 })
 
 describe('health', () => {

@@ -136,6 +136,46 @@ export type CostGroup = {
   quota: number
 }
 
+/**
+ * Where an indicator's latest day stands: no baseline yet, inside its band, or the strongest tier of the
+ * rules it broke (`log`, `show`, `act`).
+ */
+export type MetricBand = 'no_baseline' | 'in_band' | 'log' | 'show' | 'act'
+
+/** The latest day of one indicator for one repository, or for all of them when `repository` is `*`. */
+export type MetricRow = {
+  metric: string
+  label: string
+  unit: 'share' | 'count' | 'minutes' | 'hours' | 'usd'
+  worse: 'up' | 'down'
+  repository: string
+  day: string
+  value: number
+  samples: number
+  /** The baseline, when there are enough days before the latest ones to make one. */
+  mean: number | null
+  sd: number | null
+  band: MetricBand
+  rules: string[]
+}
+
+/** A rule an indicator broke that the owner should see: shown on the panel, or filed as an issue. */
+export type MetricSignalView = {
+  metric: string
+  label: string
+  repository: string
+  day: string
+  rule: string
+  tier: 'show' | 'act'
+  value: number
+  mean: number
+  sd: number
+  issueUrl: string | null
+  error: string | null
+}
+
+export type MetricsReport = { rows: MetricRow[]; signals: MetricSignalView[] }
+
 export type HealthReport = {
   cost: {
     last24HoursUsd: number
