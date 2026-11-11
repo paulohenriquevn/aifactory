@@ -2,7 +2,7 @@ import { createPublicKey, createVerify, generateKeyPairSync } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
 
-import { JOB_SHUTDOWN_WAIT_MS } from '../factory/drain'
+import { CREDENTIAL_RENEWAL_MS } from '../factory/credential-renewal'
 
 import { createGithubApp, TOKEN_LIFE_LEFT_MS, type FetchLike } from './app'
 
@@ -139,16 +139,16 @@ describe('GitHub App installation tokens', () => {
     expect(github.minted()).toBe(2)
   })
 
-  it('never hands out a token that would expire before a run that takes it now could finish', async () => {
-    // A run takes one token at its start and uses it to the end, the firewall's git header included. A cached
-    // token with ten minutes left expired in the middle of a run, and GitHub answered 401 "Bad credentials".
+  it('never hands out a token that would expire before the run that takes it renews it', async () => {
+    // A cached token with ten minutes left expired in the middle of a run, and GitHub answered 401 "Bad
+    // credentials". A run now renews its token every CREDENTIAL_RENEWAL_MS, so one handed out must outlive that.
     const github = fakeGithub({ expiresInMs: 10 * 60_000 })
     const auth = app(github.fetch)
     const first = await auth.installationToken('o/r')
     const second = await auth.installationToken('o/r')
 
     expect(second.token).not.toBe(first.token)
-    expect(TOKEN_LIFE_LEFT_MS).toBeGreaterThan(JOB_SHUTDOWN_WAIT_MS)
+    expect(TOKEN_LIFE_LEFT_MS).toBeGreaterThan(CREDENTIAL_RENEWAL_MS)
   })
 
   it('says so when the app is not installed on the repository', async () => {

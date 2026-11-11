@@ -3,7 +3,7 @@
 # tunnel is not touched.
 #
 # A restart does not cut the runs in progress: systemd signals theokit only (KillMode=mixed), which stops
-# taking jobs, waits for the run it is on (up to 52 minutes, see src/server/factory/drain.ts) and exits.
+# taking jobs, waits for the run it is on (up to 92 minutes, see src/server/factory/drain.ts) and exits.
 # So a deploy while tasks work takes as long as the longest of them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 working="select count(*) from task where stage in ('sandbox','build','push','verify','review','pr')"
 if busy=$(docker compose exec -T postgres psql -U factory -d factory -At -c "$working" 2>/dev/null); then
   if [ "$busy" != "0" ]; then
-    echo "$busy task(s) are working; the restart waits for them to finish (up to 52 minutes)." >&2
+    echo "$busy task(s) are working; the restart waits for them to finish (up to 92 minutes)." >&2
   fi
 else
   echo "could not ask the database whether tasks are working; going on" >&2

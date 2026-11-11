@@ -47,6 +47,12 @@ export type IsolatedSandbox = {
    * then fails instead of waiting.
    */
   snapshot?(): Promise<string>
+  /**
+   * Replaces the egress rules while the sandbox runs, so a credential the firewall attaches can be renewed
+   * before it expires. The new rules pass the same isolation check as the first ones. A provider that
+   * cannot leaves it out, and its runs end before the credentials they started with.
+   */
+  updateEgress?(egress: EgressRule[]): Promise<void>
 }
 
 export interface IsolatedSandboxProvider {

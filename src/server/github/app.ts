@@ -77,9 +77,9 @@ const PERMISSIONS = {
 const LIST_TTL_MS = 15_000
 
 /**
- * A token with less than this left is replaced rather than handed out. A run takes one token at its start and
- * keeps it to the end (the firewall's git header is set once, when its sandbox is made), and a run lasts up to
- * 52 minutes (`JOB_SHUTDOWN_WAIT_MS`), so a token handed out has to outlive that. GitHub's last an hour.
+ * A token with less than this left is replaced rather than handed out, so one handed out is at most five
+ * minutes old. A run renews its token every `CREDENTIAL_RENEWAL_MS` (factory/credential-renewal.ts), and
+ * drain.test.ts keeps the token a run holds at least half an hour from expiring. GitHub's last an hour.
  */
 export const TOKEN_LIFE_LEFT_MS = 55 * 60_000
 

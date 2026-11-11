@@ -16,6 +16,7 @@ import { parseLearned, withoutLearned } from '../knowledge/format'
 
 import { cloneRepository } from './clone'
 import { ensureBranches, integrationBranch, PRE_RELEASE_BRANCH } from './branches'
+import { githubEgress, renewGithubCredential } from './credential-renewal'
 import { createPreRelease, release } from './deliver'
 import {
   DEFAULT_CHECKS,
@@ -90,11 +91,13 @@ export type RunContext = {
 
 type Timeouts = NonNullable<RunTaskDeps['timeouts']>
 /**
- * The sandbox stops a run after `sandboxMs`. A builder may take 25 minutes, so 30 left no room for the checks,
- * a review and a rework: 21 of 616 runs in three days were cut there. A run keeps the GitHub token it took at
- * its start, and GitHub's last an hour, so the limit stays well under that (drain.test.ts).
+ * The sandbox stops a run after `sandboxMs`. A run is a builder (up to 25 minutes), the checks, a review, and
+ * at times a rework and the checks again. In a repository whose checks take twenty minutes on a busy machine
+ * that is more than 50 minutes, and 8 runs were cut at 50 on 2026-11-11 (paulohenriquevn/aifactory#4). The
+ * GitHub token is renewed while the run works (`renewGithubCredential`), so the limit is set by what a run
+ * needs, not by the hour a token lasts.
  */
-export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 50 * 60_000, agentMs: 25 * 60_000 }
+export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 90 * 60_000, agentMs: 25 * 60_000 }
 
 /** What the factory handed over, or why it could not. A failure to hand over never fails the task. */
 type Handed = { tag: string; url: string } | { error: string }
@@ -207,20 +210,32 @@ export class Run {
       timeoutMs: (deps.timeouts ?? DEFAULT_TIMEOUTS).sandboxMs,
       cacheKey: c.row.repository,
       egress: [
-        {
-          domain: 'github.com',
-          headers: {
-            authorization: `Basic ${Buffer.from(`x-access-token:${c.token}`).toString('base64')}`,
-          },
-        },
+        githubEgress(c.token),
         ...agentEgress,
         { domain: 'registry.npmjs.org' },
         ...c.repo.egress.map((domain) => ({ domain })),
       ],
     }
-    const sandbox = resuming
+    const started = resuming
       ? await restoreIsolatedSandbox(deps.sandbox, resuming.snapshotId, spec)
       : await createIsolatedSandbox(deps.sandbox, spec)
+    c.state.sandbox = started
+    // A run may outlast the hour its first token lasts, so the token is renewed while it works.
+    const sandbox = renewGithubCredential(started, spec.egress, {
+      mint: async () => (await deps.github.installationToken(c.row.repository)).token,
+      onToken: (token) => {
+        c.token = token
+      },
+      onFailure: (error) =>
+        console.warn(
+          JSON.stringify({
+            event: 'credential_renewal_failed',
+            taskId: c.taskId,
+            repository: c.row.repository,
+            error: String(error),
+          }),
+        ),
+    })
     c.state.sandbox = sandbox
     // The snapshot did its job; keeping it only costs storage.
     if (resuming) await deps.sandbox.deleteSnapshot?.(resuming.snapshotId).catch(() => {})
@@ -329,7 +344,7 @@ export class Run {
    * issue, and everything a resume needs is stored. Never returns: the run ends here.
    */
   private async ask(text: string, attempt: number): Promise<never> {
-    const { deps, taskId, row, token, api, state } = this.c
+    const { deps, taskId, row, api, state } = this.c
     if (!this.sandbox.snapshot || !deps.sandbox.restore) {
       throw new StageFailure(
         `the agent asked a question, but ${deps.sandbox.name} cannot save a sandbox to wait: ${text}`,
@@ -344,7 +359,7 @@ export class Run {
     try {
       commentId = await api.commentOnIssue(
         row.repository,
-        token,
+        this.c.token,
         row.issueNumber,
         questionComment(taskId, text),
       )
@@ -511,13 +526,13 @@ export class Run {
    * say). That is an answer, not a failure: the pull request stays as it was, and the person reads why.
    */
   private async answeredWithNoChange(first: HarnessResult): Promise<RunResult | undefined> {
-    const { deps, taskId, row, token, api, branch, continuation } = this.c
+    const { deps, taskId, row, api, branch, continuation } = this.c
     if (!continuation || !row.pullRequestUrl || !row.headSha) return undefined
     const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
     if (pending.stdout.trim() !== '') return undefined
     await api.commentOnIssue(
       row.repository,
-      token,
+      this.c.token,
       row.issueNumber,
       `You asked for changes. The agent left the pull request as it is:\n\n${first.summary.slice(0, 3_000)}`,
     )
@@ -545,7 +560,7 @@ export class Run {
    * otherwise it goes to a person with what did not hold.
    */
   private async resolvedAlready(first: HarnessResult): Promise<RunResult | undefined> {
-    const { deps, taskId, row, token, api, continuation, state } = this.c
+    const { deps, taskId, row, api, continuation, state } = this.c
     if (continuation) return undefined
     const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
     if (pending.stdout.trim() !== '') return undefined
@@ -571,7 +586,7 @@ export class Run {
     state.current = 'done'
     await api.commentOnIssue(
       row.repository,
-      token,
+      this.c.token,
       row.issueNumber,
       resolvedComment({
         sha: this.baseSha,
@@ -581,7 +596,7 @@ export class Run {
         rows: checked.here,
       }),
     )
-    await api.closeIssue(row.repository, token, row.issueNumber)
+    await api.closeIssue(row.repository, this.c.token, row.issueNumber)
     await enterStage(
       deps.db,
       taskId,
@@ -748,7 +763,7 @@ export class Run {
     attempt: number,
     options: { publish: boolean } = { publish: true },
   ): Promise<Checked> {
-    const { deps, taskId, row, token, api, state } = this.c
+    const { deps, taskId, row, api, state } = this.c
     const { db } = deps
     state.current = 'verify'
     await enterStage(
@@ -784,7 +799,7 @@ export class Run {
     const here = rows.filter((r) => r.sha === sha)
     // A commit of the integration branch that the run did not make gets no check run of the factory.
     if (!options.publish) return { results, here, verdict }
-    await api.createCheckRun(row.repository, token, {
+    await api.createCheckRun(row.repository, this.c.token, {
       name: 'aifactory/verify',
       headSha: sha,
       conclusion: verdict.open ? 'success' : 'failure',
@@ -871,10 +886,10 @@ export class Run {
    * protected branch) leaves the pull request open for a person and does not fail the task.
    */
   private async integrate(sha: string, pullNumber: number): Promise<Integrated> {
-    const { deps, taskId, row, token, api, branch } = this.c
+    const { deps, taskId, row, api, branch } = this.c
     let merged: { sha: string }
     try {
-      merged = await api.mergePullRequest(row.repository, token, pullNumber, sha, {
+      merged = await api.mergePullRequest(row.repository, this.c.token, pullNumber, sha, {
         method: 'squash',
         title: this.title,
       })
@@ -882,9 +897,14 @@ export class Run {
       return { error: error instanceof Error ? error.message : String(error) }
     }
     await deps.db.update(task).set({ mergedSha: merged.sha }).where(eq(task.id, taskId))
-    await api.deleteBranch(row.repository, token, branch).catch(() => {})
+    await api.deleteBranch(row.repository, this.c.token, branch).catch(() => {})
     try {
-      const develop = await api.mergeBranch(row.repository, token, PRE_RELEASE_BRANCH, merged.sha)
+      const develop = await api.mergeBranch(
+        row.repository,
+        this.c.token,
+        PRE_RELEASE_BRANCH,
+        merged.sha,
+      )
       return { mergedSha: merged.sha, developSha: develop.sha }
     } catch (error) {
       return {
@@ -902,11 +922,11 @@ export class Run {
    * the work is integrated either way.
    */
   private async proposePreRelease(): Promise<string | undefined> {
-    const { row, token, api } = this.c
+    const { row, api } = this.c
     const from = integrationBranch(this.c.repo)
     try {
       return (
-        await api.openPullRequest(row.repository, token, {
+        await api.openPullRequest(row.repository, this.c.token, {
           head: from,
           base: PRE_RELEASE_BRANCH,
           title: `Pre-release: ${from} into ${PRE_RELEASE_BRANCH}`,
@@ -924,14 +944,14 @@ export class Run {
     attempts: number,
     integrated?: Integrated,
   ): Promise<Handed> {
-    const { deps, taskId, row, issue, token, api } = this.c
+    const { deps, taskId, row, issue, api } = this.c
     try {
       return await createPreRelease(
         { db: deps.db, api },
         {
           taskId,
           repository: row.repository,
-          token,
+          token: this.c.token,
           issueNumber: row.issueNumber,
           title: issue.title,
           sha,
@@ -985,10 +1005,10 @@ export class Run {
     here: StoredCheck[],
     outcome: ReviewVerdict,
   ): Promise<RunResult> {
-    const { deps, taskId, row, token, api, branch, state } = this.c
+    const { deps, taskId, row, api, branch, state } = this.c
     state.current = 'pr'
     await enterStage(deps.db, taskId, 'pr', { branch, sha })
-    const pull = await api.openPullRequest(row.repository, token, {
+    const pull = await api.openPullRequest(row.repository, this.c.token, {
       head: branch,
       base: integrationBranch(this.c.repo),
       title: this.title,
@@ -1041,13 +1061,13 @@ export class Run {
     here: StoredCheck[],
     outcome: ReviewVerdict,
   ): Promise<RunResult> {
-    const { deps, taskId, row, token, api, branch, state } = this.c
+    const { deps, taskId, row, api, branch, state } = this.c
     const reason =
       outcome.verdict === 'invalid'
         ? `the review gave no usable verdict: ${outcome.summary}`
         : `the reviewer still asked for changes after ${attempt} attempt${attempt === 1 ? '' : 's'}`
     state.current = 'pr'
-    const pull = await api.openPullRequest(row.repository, token, {
+    const pull = await api.openPullRequest(row.repository, this.c.token, {
       head: branch,
       base: integrationBranch(this.c.repo),
       title: `[needs a person] ${this.title}`,
@@ -1063,7 +1083,7 @@ export class Run {
     })
     await api.commentOnIssue(
       row.repository,
-      token,
+      this.c.token,
       row.issueNumber,
       [
         `The factory could not get this approved: ${reason}.`,

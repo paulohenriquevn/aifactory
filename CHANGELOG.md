@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- A run may last 90 minutes instead of 50, so a run in a repository with slow checks has room for a rework and the checks again; the GitHub token is renewed every 15 minutes while a run works, in the sandbox's firewall and in the factory's own calls, instead of being taken once and kept until it expired (#4)
+
 ### Fixed
 
 - A deploy now starts every enabled worker, a stopped one included, so the factory runs as many tasks at once as it has workers; before, a worker that stopped once stayed stopped through every later deploy (#20)
