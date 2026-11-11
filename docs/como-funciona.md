@@ -39,7 +39,8 @@ issue com a label "factory"
    check run "success" + pull request com "Closes #<n>"
         |
         v
-   merge do PR em workspace, preso ao SHA verificado (a fábrica, sem pedir a ninguém)
+   merge do PR em workspace, preso ao SHA verificado (a fábrica, sem pedir a ninguém;
+   se workspace exige checks, o auto-merge do GitHub, depois do CI do repositório)
         |
         v
    develop avança até o commit integrado + pré-release no GitHub
@@ -94,8 +95,7 @@ passada, a que espera há mais tempo primeiro:
 - PR que o GitHub recusou por conflito com a base (`Pull Request has merge conflicts`): outra task mexeu
   nos mesmos arquivos e entrou antes. A task fica `done` sem commit integrado, e a mesma passada a
   recomeça sobre a base nova, como faria o "Retry", com o mesmo limite de 3 vezes e até 3 tasks por
-  passada. Merge recusado por outro motivo (branch protegida, check obrigatório) continua esperando uma
-  pessoa.
+  passada. Merge recusado por outro motivo continua esperando uma pessoa.
 
 O reinício automático não grava uma decisão em nome de ninguém: o evento `intake` leva
 `automatic: true`, e um "Retry" de uma pessoa zera a contagem. O cartão diz quando a task roda de novo, e
@@ -322,6 +322,32 @@ mergear faz o GitHub recusar em vez de juntar o que ninguém viu. Se o GitHub re
 uma branch protegida), a task não falha: o motivo fica no estágio `done` (`integrationError`). Um conflito com a base volta a
 rodar sozinho (veja o reinício automático acima); qualquer outra recusa deixa o PR aberto para uma
 pessoa. Trabalho entregue a uma pessoa (`handoff`) nunca é mergeado pela fábrica.
+
+**Integração que espera o CI do repositório.** Antes de mergear, a fábrica lê o que a branch de integração
+exige (`GET /repos/{r}/branches/{branch}` e as regras de `GET /repos/{r}/rules/branches/{branch}`). Se ela
+exige status checks, a fábrica não mergeia depois só dos checks dela: liga o auto-merge do PR (merge commit,
+com `expectedHeadOid` igual ao SHA verificado), grava esse SHA em `task.awaiting_ci_sha` e termina a
+execução. A task fica `done`, o painel mostra "waiting for CI", e nada de pré-release ainda. Se o GitHub
+recusar o auto-merge, a execução falha com uma mensagem dizendo o que configurar.
+
+O cron `integrate-after-ci` olha essas tasks a cada dois minutos:
+
+- O GitHub mergeou o SHA verificado: a fábrica grava `merged_sha` e faz o mesmo que depois de um merge
+  direto, com o mesmo código: avança `develop` (ou abre o PR para ela), cria a pré-release ali e aplica o
+  modo de release. O evento `done` novo leva `integratedBy: auto-merge`.
+- Um check obrigatório falhou: a fábrica desliga o auto-merge, para que o commit novo do agente não entre
+  antes de ser verificado, e manda o trabalho de volta ao agente, na mesma branch. O feedback nomeia cada
+  check, com o link e o fim do que ele reportou. Conta como execução automática: depois de 3, vai para
+  uma pessoa com a lista dos checks.
+- O PR conflita com a base: recomeça sobre a base nova, como no conflito de um merge direto.
+- Um push depois da verificação, um PR fechado sem merge, um merge de outro commit, o auto-merge
+  desligado por alguém, ou um check obrigatório que não reporta em 6 horas (um check que só roda em push
+  nunca aparece num PR): vai para uma pessoa (`handoff`), com um comentário na issue. A fábrica nunca
+  deixa mergear outro commit além do verificado.
+- Checks ainda rodando: espera.
+
+Para esse caminho funcionar, o repositório precisa de "Allow auto-merge" e "Allow merge commits" ligados,
+e os checks exigidos têm de rodar em pull requests contra a branch de integração.
 
 **Pré-release.** Logo depois de integrar, a fábrica avança `develop` até o commit integrado e cria uma tag
 `pre/<issue>-<sha7>` sobre ele, marcada como pré-release no GitHub. Nas notas vão os checks, o veredito do
@@ -587,7 +613,8 @@ uma é mudar o código, no arquivo que ela indica.
   precisa de uma pessoa), com o custo e o número de tentativas de cada task. Uma falha por cota do agente
   ou por problema de ambiente (rede, GitHub, sandbox, reinício) cai em "Will retry itself", porque a
   fábrica a repete sozinha quando passa. Só a falha do próprio trabalho fica em "Needs a person". Um PR
-  que a fábrica já integrou aparece como "integrated".
+  que a fábrica já integrou aparece como "integrated", e um que espera os checks obrigatórios do
+  repositório para o GitHub mergear aparece como "waiting for CI".
 - A caixa de entrada: só o que espera uma pessoa, do mais antigo ao mais novo. É uma pergunta do
   agente, um PR que ninguém aprovou, um trabalho entregue depois de três tentativas ou uma execução
   que falhou (com "sem cota" dito como tal).

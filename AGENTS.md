@@ -40,7 +40,7 @@ src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   panel/            what the panel shows and does: queries, actions, owner session, event stream
-  crons/            defineCron files (`poll-answers`, `watch-main`, `publish-changesets`, `supervise`,
+  crons/            defineCron files (`poll-answers`, `watch-main`, `publish-changesets`, `integrate-after-ci`, `supervise`,
                     `catch-up`, `retry-due`, `knowledge-sync`, `prune-transcripts`)
   knowledge/        the owner's knowledge repository: mirror, sync, the slice each agent gets, notes
   db/               Postgres config, pool, Drizzle schema, health probe
@@ -100,7 +100,10 @@ reads that file, not a convention.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;
   `.policy('public')` is for the webhook and the probes. The panel never goes through the tunnel.
 - **Three branches, the same in every repository.** `workspace` integrates: the factory merges its own pull
-  request there, pinned to the verified commit, once the checks pass and the review approves. `develop` is
+  request there, pinned to the verified commit, once the checks pass and the review approves. When the
+  integration branch requires status checks, the factory merges nothing itself: it turns on auto-merge pinned
+  to the verified commit (`task.awaiting_ci_sha`), and the `integrate-after-ci` cron finishes the integration
+  after GitHub merges, or sends the work back when a required check fails. Nothing else may merge there. `develop` is
   the pre-release: it advances to each integration, which gets a pre-release tag. The default branch
   (`main`) is the release. The factory never merges into it on its own account: a release is a promotion of
   `develop`, goes through `release()` in `factory/deliver.ts` with its refusals, and only a person or, in
