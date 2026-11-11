@@ -5,6 +5,7 @@ import type { SetupItem, SetupReport } from '../../shared/panel'
 import { claudeCredentialFromEnv } from '../factory/harness-claude'
 import { codexCredentialFromEnv } from '../factory/harness-codex'
 import { assistModel } from '../factory/models'
+import { e2bMaxSessionMs } from '../factory/e2b-sandbox'
 import { vercelCredentials } from '../factory/vercel-sandbox'
 
 /** Questions the report cannot answer from the environment: they ask the machine or another service. */
@@ -152,6 +153,22 @@ export async function sandboxItem(env: NodeJS.ProcessEnv, probes: Probes): Promi
         ? `Docker sandboxes on this machine (${docker.running} running now).`
         : 'Docker sandboxes on this machine.',
     }
+  }
+  if (env.FACTORY_SANDBOX?.trim() === 'e2b') {
+    return env.E2B_API_KEY
+      ? {
+          id: 'sandbox',
+          label: 'Sandbox',
+          status: 'ok',
+          detail: `E2B sandboxes, ${Math.round(e2bMaxSessionMs(env) / 60_000)} minutes each at most.`,
+        }
+      : {
+          id: 'sandbox',
+          label: 'Sandbox',
+          status: 'missing',
+          detail:
+            'FACTORY_SANDBOX is e2b, but E2B_API_KEY is not set. No agent runs without a sandbox.',
+        }
   }
   return vercelCredentials(env)
     ? {

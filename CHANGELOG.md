@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Sandboxes can run on E2B with `FACTORY_SANDBOX=e2b` and `E2B_API_KEY`, under the same domain allowlist, with credentials attached outside the sandbox and renewed while a run works; a run plans its agent passes for the hour E2B's free plan allows, or for `E2B_MAX_SESSION_MS` (#26)
+
 ### Changed
 
 - A run may last 90 minutes instead of 50, so a run in a repository with slow checks has room for a rework and the checks again; the GitHub token is renewed every 15 minutes while a run works, in the sandbox's firewall and in the factory's own calls, instead of being taken once and kept until it expired (#4)

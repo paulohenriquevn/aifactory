@@ -56,7 +56,13 @@ import {
   StageFailure,
   type StoredCheck,
 } from './run-support'
-import { agentTimeLeft, DEFAULT_CHECK_MS, DEFAULT_REVIEW_MS, NoTimeForAgent } from './agent-time'
+import {
+  agentTimeLeft,
+  fitToSession,
+  DEFAULT_CHECK_MS,
+  DEFAULT_REVIEW_MS,
+  NoTimeForAgent,
+} from './agent-time'
 import type { RepoConfig } from './repo-config'
 import { labelsWithRepoChoice } from './repo-config'
 import type { Parked, RunResult, RunTaskDeps } from './run-types'
@@ -181,7 +187,7 @@ export class Run {
     return `GIT_CONFIG_GLOBAL=${GITCONFIG} git -c core.hooksPath=/dev/null -C ${this.repoDir}`
   }
   private get timeouts(): Timeouts {
-    return this.c.deps.timeouts ?? DEFAULT_TIMEOUTS
+    return fitToSession(this.c.deps.timeouts ?? DEFAULT_TIMEOUTS, this.c.deps.sandbox.maxSessionMs)
   }
   /** How long the next agent pass may take; throws when the sandbox has too little time left for one. */
   private agentTimeout(): number {
@@ -221,7 +227,8 @@ export class Run {
     const agentEgress = mergeEgress(await Promise.all(agents.map((a) => a.egress())))
 
     const spec: SandboxSpec = {
-      timeoutMs: (deps.timeouts ?? DEFAULT_TIMEOUTS).sandboxMs,
+      timeoutMs: fitToSession(deps.timeouts ?? DEFAULT_TIMEOUTS, deps.sandbox.maxSessionMs)
+        .sandboxMs,
       cacheKey: c.row.repository,
       egress: [
         githubEgress(c.token),

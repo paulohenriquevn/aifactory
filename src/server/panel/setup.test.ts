@@ -293,6 +293,20 @@ describe('the sandbox line', () => {
   })
 })
 
+describe('the E2B sandbox line', () => {
+  it('is ready with a key, and says how long a sandbox may live', async () => {
+    const item = await sandboxItem({ FACTORY_SANDBOX: 'e2b', E2B_API_KEY: 'e2b_x' }, {})
+    expect(item).toMatchObject({ status: 'ok', detail: 'E2B sandboxes, 60 minutes each at most.' })
+    expect(JSON.stringify(item)).not.toContain('e2b_x')
+  })
+
+  it('blocks without a key, naming the variable', async () => {
+    const item = await sandboxItem({ FACTORY_SANDBOX: 'e2b' }, {})
+    expect(item.status).toBe('missing')
+    expect(item.detail).toContain('E2B_API_KEY')
+  })
+})
+
 describe('the chat and guides line', () => {
   it('warns, and points at ChatGPT, when there is no OpenRouter key', async () => {
     const item = await chatItem({}, {})

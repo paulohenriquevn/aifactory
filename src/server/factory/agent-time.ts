@@ -34,3 +34,13 @@ export function agentTimeLeft(limits: Limits, elapsedMs: number): number {
   if (left < MIN_AGENT_MS) throw new NoTimeForAgent(elapsedMs, limits.sandboxMs)
   return left
 }
+
+/**
+ * The limits cut to what the sandbox provider allows: a plan whose sandboxes live an hour (E2B's free one)
+ * gets a run planned for an hour, not one stopped halfway through its checks.
+ */
+export function fitToSession<T extends { sandboxMs: number }>(limits: T, maxSessionMs?: number): T {
+  return maxSessionMs !== undefined && maxSessionMs < limits.sandboxMs
+    ? { ...limits, sandboxMs: maxSessionMs }
+    : limits
+}

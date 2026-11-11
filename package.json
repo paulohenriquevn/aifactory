@@ -36,6 +36,7 @@
     "@usetheo/ui": "^0.35.4",
     "@vercel/sandbox": "^3.9.1",
     "drizzle-orm": "0.45.4",
+    "e2b": "2.63.0",
     "lucide-react": "0.471.2",
     "pg": "8.23.1",
     "proper-lockfile": "^4.1.2",

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { agentTimeLeft, DEFAULT_CHECK_MS, MIN_AGENT_MS, NoTimeForAgent } from './agent-time'
+import {
+  agentTimeLeft,
+  DEFAULT_CHECK_MS,
+  fitToSession,
+  MIN_AGENT_MS,
+  NoTimeForAgent,
+} from './agent-time'
 
 const MIN = 60_000
 const timeouts = { sandboxMs: 90 * MIN, agentMs: 45 * MIN, checkMs: 10 * MIN, reviewMs: 10 * MIN }
@@ -33,5 +39,25 @@ describe('agentTimeLeft', () => {
 
   it('still allows a pass with exactly the minimum', () => {
     expect(agentTimeLeft(timeouts, 70 * MIN - MIN_AGENT_MS)).toBe(MIN_AGENT_MS)
+  })
+})
+
+describe('fitToSession', () => {
+  it('cuts the sandbox limit to what the provider allows, keeping the rest', () => {
+    expect(fitToSession(timeouts, 60 * MIN)).toEqual({ ...timeouts, sandboxMs: 60 * MIN })
+  })
+
+  it('leaves the limits alone when the provider allows as much or does not say', () => {
+    expect(fitToSession(timeouts, 90 * MIN)).toBe(timeouts)
+    expect(fitToSession(timeouts, 24 * 60 * MIN)).toBe(timeouts)
+    expect(fitToSession(timeouts)).toBe(timeouts)
+  })
+
+  it('gives a first pass in an hour-long sandbox the time the checks and review leave', () => {
+    // E2B's free plan: 60 - (15 for the checks + 10 for the review) = 35 for the first build.
+    const { agentMs } = timeouts
+    expect(agentTimeLeft(fitToSession({ sandboxMs: 90 * MIN, agentMs }, 60 * MIN), 0)).toBe(
+      35 * MIN,
+    )
   })
 })

@@ -129,6 +129,24 @@ A imagem (`ops/sandbox`) é construída na primeira vez, e o teste `docker-sandb
 containers de verdade: a lista de domínios, a injeção do cabeçalho (conferida por um servidor local que
 ecoa o que recebeu), o HTTPS pelo proxy e a limpeza.
 
+### No E2B
+
+`FACTORY_SANDBOX=e2b` roda cada sandbox no E2B, com `E2B_API_KEY` no `.env.local`. A imagem é a mesma
+do Docker (`ops/sandbox/Dockerfile`), publicada como template `aifactory-sandbox:<versão>` por
+`node --env-file=.env.local scripts/build-e2b-template.mts`. Quem muda o Dockerfile roda o script de novo
+e sobe a versão em `E2B_TEMPLATE` (`src/server/factory/e2b-template.ts`).
+
+O E2B aplica a lista de domínios (`allowOut`, com todo o resto negado) e anexa os cabeçalhos de cada regra
+no proxy de saída dele, fora do sandbox. A renovação do token do GitHub troca as regras com o sandbox
+rodando (`updateNetwork`). O E2B não aplica as linhas `ENV` do Dockerfile, então o adapter passa as
+variáveis na criação, entre elas `NODE_EXTRA_CA_CERTS`, sem a qual o Node recusa o certificado do proxy.
+
+O plano gratuito para um sandbox depois de uma hora, e a execução se planeja para isso: o limite de 90
+minutos vira 60, e o primeiro passe do agente fica com 35 (60 menos 15 dos checks e 10 da revisão).
+`E2B_MAX_SESSION_MS` aumenta o limite num plano que permita mais. Um sandbox restaurado de um snapshot apaga
+o snapshot quando para, porque o E2B recusa apagar um snapshot em uso. O teste
+`e2b-sandbox.e2e.test.ts` roda contra o E2B de verdade (`npm run test:e2e`).
+
 ## Isolamento e segredos
 
 A fábrica só roda um agente dentro de um sandbox com uma lista explícita de domínios de saída.
