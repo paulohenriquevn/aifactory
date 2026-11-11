@@ -39,6 +39,10 @@ describe('e2bMaxSessionMs', () => {
 })
 
 describe('the sandbox environment', () => {
+  it('builds native modules against the headers in the image, since nodejs.org is not allowed', () => {
+    expect(SANDBOX_ENV.npm_config_nodedir).toBe('/usr/local')
+  })
+
   it('makes Node trust the egress proxy that attaches credentials', () => {
     expect(SANDBOX_ENV.NODE_EXTRA_CA_CERTS).toBe('/etc/ssl/certs/ca-certificates.crt')
   })

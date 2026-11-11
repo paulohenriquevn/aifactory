@@ -45,6 +45,10 @@ export const SANDBOX_ENV: Record<string, string> = {
   CI: 'true',
   COREPACK_HOME: '/cache/corepack',
   NODE_EXTRA_CA_CERTS: '/etc/ssl/certs/ca-certificates.crt',
+  // A native module with no prebuilt binary (better-sqlite3, node-pty) is compiled by node-gyp, which downloads
+  // Node's headers from nodejs.org, a domain no run allows. The image has them: the Docker provider never
+  // noticed, because its shared package cache kept the modules it had built.
+  npm_config_nodedir: '/usr/local',
 }
 
 /**

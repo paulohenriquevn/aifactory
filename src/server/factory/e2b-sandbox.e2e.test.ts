@@ -59,6 +59,16 @@ describe('an E2B sandbox', () => {
     expect((await sh('cat /tmp/factory-prompt.md')).stdout).toBe('second')
   })
 
+  it('installs a native module without reaching nodejs.org, as theokit needs for better-sqlite3', async () => {
+    const install = await sh(
+      'mkdir -p /work/native && cd /work/native && npm init -y >/dev/null && npm install better-sqlite3@12.11.1',
+      360_000,
+    )
+    expect(install.exitCode, install.stdout + install.stderr).toBe(0)
+    const query = `node -e "console.log(new (require('better-sqlite3'))(':memory:').prepare('select 1 as x').get().x)"`
+    expect((await sh(`cd /work/native && ${query}`)).stdout.trim()).toBe('1')
+  }, 400_000)
+
   it('returns the exit code and the output of a failing command', async () => {
     expect(await sh('echo out; echo err >&2; exit 7')).toMatchObject({
       stdout: 'out\n',
