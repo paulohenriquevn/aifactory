@@ -1,4 +1,5 @@
 import { ALL_TRAFFIC, CommandExitError, SandboxNotRunningError, TimeoutError } from 'e2b'
+import { shellEscapePosix } from '@theokit/agents/sandbox'
 import { describe, expect, it } from 'vitest'
 
 import { E2BBackend, e2bMaxSessionMs, networkFor, SANDBOX_ENV } from './e2b-sandbox'
@@ -116,8 +117,19 @@ describe('E2BBackend', () => {
     expect(lines).toEqual(['one', 'two'])
   })
 
+  it('removes a file before writing it again, which E2B refuses to overwrite in /tmp', async () => {
+    const { backend, calls, writes } = backendThat(async () => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+    }))
+    await backend.uploadFile("/tmp/factory prompt's.md", 'again')
+    expect(calls[0]?.command).toBe(`rm -f -- ${shellEscapePosix("/tmp/factory prompt's.md")}`)
+    expect(writes).toHaveLength(1)
+  })
+
   it('writes a file as the image user, text or bytes', async () => {
-    const { backend, writes } = backendThat(async () => ({}))
+    const { backend, writes } = backendThat(async () => ({ stdout: '', stderr: '', exitCode: 0 }))
     await backend.uploadFile('/work/a.txt', 'hi')
     await backend.uploadFile('/work/b.bin', Buffer.from([1, 2]))
     expect(writes[0]).toEqual(['/work/a.txt', 'hi', { user: 'node' }])

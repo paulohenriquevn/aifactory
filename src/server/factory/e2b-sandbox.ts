@@ -1,4 +1,4 @@
-import { SandboxBackend } from '@theokit/agents/sandbox'
+import { SandboxBackend, shellEscapePosix } from '@theokit/agents/sandbox'
 import {
   ALL_TRAFFIC,
   CommandExitError,
@@ -86,7 +86,16 @@ export class E2BBackend extends SandboxBackend {
     }
   }
 
+  /**
+   * E2B writes a file as root and hands it to the user, and the sandbox's kernel forbids root to open a file
+   * another user owns in a sticky directory (`fs.protected_regular`), so writing `/tmp/factory-prompt.md` a
+   * second time failed a rework with "permission denied". The file is removed first.
+   */
   async uploadFile(path: string, content: string | Buffer) {
+    const removed = await this.run(`rm -f -- ${shellEscapePosix(path)}`, DEFAULT_COMMAND_MS)
+    if (removed.exitCode !== 0) {
+      throw new Error(`cannot replace ${path} in the sandbox: ${removed.stderr.trim()}`)
+    }
     const data = typeof content === 'string' ? content : new Uint8Array(content).buffer
     await this.sandbox.files.write(path, data, { user: USER })
   }

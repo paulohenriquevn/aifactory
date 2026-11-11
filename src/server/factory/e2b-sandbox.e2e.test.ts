@@ -53,6 +53,12 @@ describe('an E2B sandbox', () => {
     expect((await sh('curl -sS -m 15 -o /dev/null https://example.com')).exitCode).not.toBe(0)
   })
 
+  it('writes the same file twice, as a run does with its prompt', async () => {
+    await sandbox.backend.uploadFile('/tmp/factory-prompt.md', 'first')
+    await sandbox.backend.uploadFile('/tmp/factory-prompt.md', 'second')
+    expect((await sh('cat /tmp/factory-prompt.md')).stdout).toBe('second')
+  })
+
   it('returns the exit code and the output of a failing command', async () => {
     expect(await sh('echo out; echo err >&2; exit 7')).toMatchObject({
       stdout: 'out\n',
