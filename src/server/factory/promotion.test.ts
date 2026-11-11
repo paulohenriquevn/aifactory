@@ -12,6 +12,7 @@ import {
   promotionPullRequests,
   withEvidence,
   type FailedCheck,
+  type FailureAt,
 } from './promotion'
 
 describe('newIssuesCapFromEnv', () => {
@@ -196,7 +197,7 @@ describe('recurrenceComment', () => {
         head: 'develop',
         base: 'main',
         sha: 'beef1234567',
-        rerun: true,
+        rerun: 'failed-again',
       },
     )
     expect(comment).toBe(
@@ -291,8 +292,8 @@ describe('the issue', () => {
     head: 'workspace',
     base: 'develop',
     sha: 'acf5736aaaa',
-    rerun: true,
-  }
+    rerun: 'failed-again',
+  } satisfies FailureAt
 
   it('names the check and the promotion in its title', () => {
     expect(issueTitle(check, at)).toBe(
@@ -316,8 +317,19 @@ describe('the issue', () => {
     expect(lines.slice(description + 1, description + 3)).toEqual(['', '## Evidence'])
   })
 
-  it('says a check it could not rerun was not rerun', () => {
-    expect(issueBody(check, { ...at, rerun: false })).toContain('was not rerun')
+  it('says a check that is not an Actions job was not rerun', () => {
+    const body = issueBody(check, { ...at, rerun: 'not-actions' })
+    expect(body).toContain('It is not a GitHub Actions job, so it was not rerun.')
+    expect(body).not.toContain('after a rerun')
+  })
+
+  it('says a job GitHub would not rerun could not be rerun, and failed on its first attempt', () => {
+    const body = issueBody(check, { ...at, rerun: 'refused' })
+    expect(body).toContain(
+      'GitHub refused to rerun it, so it could not be rerun: the evidence is from its first attempt.',
+    )
+    expect(body).not.toContain('after a rerun')
+    expect(body).not.toContain('not a GitHub Actions job')
   })
 
   it('tells a person why the factory leaves a secret scanner to them', () => {

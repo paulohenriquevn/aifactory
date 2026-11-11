@@ -12,6 +12,15 @@ export type FailedRun = {
   actions: boolean
 }
 
+/**
+ * What GitHub said to a rerun. A refusal (403 or 404, which GitHub answers when the App may not write
+ * Actions) is an answer, not an error: the watch files the first attempt instead.
+ */
+export type RerunAnswer = { started: true } | { started: false; refusal: string }
+
+/** The statuses with which GitHub refuses a rerun, rather than failing to answer. */
+const RERUN_REFUSED = [403, 404]
+
 /** What the promotion watch reads from GitHub, and the one thing it does there: rerun a failed job. */
 export type PromotionApi = {
   openPullRequest(
@@ -28,12 +37,17 @@ export type PromotionApi = {
   ): Promise<{ runId: number; attempt: number }>
   jobLog(repo: string, token: string, jobId: number): Promise<string>
   annotations(repo: string, token: string, checkRunId: number): Promise<string[]>
-  rerunFailedJobs(repo: string, token: string, runId: number): Promise<void>
+  rerunFailedJobs(repo: string, token: string, runId: number): Promise<RerunAnswer>
   issueOpen(repo: string, token: string, issueNumber: number): Promise<boolean>
 }
 
 /** A run that ended this way says the commit is broken. A cancelled or skipped one says nothing. */
 const FAILED = new Set(['failure', 'timed_out', 'startup_failure'])
+
+const refusal = async (response: Response, action: string, repo: string) => {
+  const detail = (await response.text().catch(() => '')).slice(0, 300)
+  return `GitHub answered ${response.status} ${action} on ${repo}: ${detail}`
+}
 
 /** Runs on the factory host with an installation token for one repository. */
 export function createPromotionApi(
@@ -55,10 +69,7 @@ export function createPromotionApi(
         authorization: `Bearer ${token}`,
       },
     })
-    if (!ok.includes(response.status)) {
-      const detail = (await response.text().catch(() => '')).slice(0, 300)
-      throw new Error(`GitHub answered ${response.status} ${action} on ${repo}: ${detail}`)
-    }
+    if (!ok.includes(response.status)) throw new Error(await refusal(response, action, repo))
     return response
   }
 
@@ -146,14 +157,17 @@ export function createPromotionApi(
     },
 
     async rerunFailedJobs(repo, token, runId) {
-      await call(
+      const action = `rerunning the failed jobs of run ${runId}`
+      const response = await call(
         repo,
         token,
         `/actions/runs/${runId}/rerun-failed-jobs`,
-        `rerunning the failed jobs of run ${runId}`,
-        [201],
+        action,
+        [201, ...RERUN_REFUSED],
         'POST',
       )
+      if (response.status === 201) return { started: true }
+      return { started: false, refusal: await refusal(response, action, repo) }
     },
 
     async issueOpen(repo, token, issueNumber) {

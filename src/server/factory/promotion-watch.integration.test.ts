@@ -29,6 +29,8 @@ type World = {
   attempts: Record<number, number>
   logs: Record<number, string>
   issueOpen: boolean
+  /** Set when GitHub refuses to rerun a run: the refusal it answers with. */
+  rerunRefusal?: string
 }
 let world: World
 let created: (NewIssue & { repo: string })[]
@@ -69,6 +71,9 @@ const api: PromotionApi = {
   annotations: async () => ['apps/a.ts:118 Server-side request forgery: depends on user input.'],
   rerunFailedJobs: async (_repo, _token, runId) => {
     reruns.push(runId)
+    return world.rerunRefusal === undefined
+      ? { started: true }
+      : { started: false, refusal: world.rerunRefusal }
   },
   issueOpen: async () => world.issueOpen,
 }
@@ -109,6 +114,62 @@ describe('the promotion watch', () => {
     expect(reruns).toEqual([9])
     expect(created).toEqual([])
     expect(result.reruns).toBe(1)
+  })
+
+  describe('when GitHub refuses to rerun a job that failed on its first attempt', () => {
+    const REFUSAL =
+      'GitHub answered 403 rerunning the failed jobs of run 9 on paulo/app: {"message":"Resource not accessible by integration"}'
+
+    beforeEach(() => {
+      world.attempts = { 1: 1 }
+      world.rerunRefusal = REFUSAL
+    })
+
+    it('files the failure from the first attempt in the same pass', async () => {
+      const result = await pollPromotions(deps())
+      expect(created).toHaveLength(1)
+      expect(created[0].body).toContain('onnxruntime-node  packages/sdk/package.json:455:6')
+      expect(result.opened).toEqual(['https://github.com/paulo/app/issues/51'])
+    })
+
+    it('says in the issue that the job could not be rerun', async () => {
+      await pollPromotions(deps())
+      expect(created[0].body).toContain('could not be rerun')
+      expect(created[0].body).not.toContain('after a rerun')
+    })
+
+    it('keeps the refusal in the errors and counts no rerun', async () => {
+      const result = await pollPromotions(deps())
+      expect(result.errors).toEqual([`paulo/app: ${REFUSAL}`])
+      expect(result.reruns).toBe(0)
+    })
+
+    it('asks once per run and files every refused job of it', async () => {
+      world.runs = [actionsRun(1, 'validate'), actionsRun(2, 'unit')]
+      world.attempts = { 1: 1, 2: 1 }
+      world.logs = { 1: LOG, 2: 'AssertionError: two' }
+      const result = await pollPromotions(deps())
+      expect(reruns).toEqual([9])
+      expect(created).toHaveLength(2)
+      expect(result.errors).toHaveLength(1)
+    })
+  })
+
+  it('keeps failing the pass when the rerun fails for a reason other than a refusal', async () => {
+    world.attempts = { 1: 1 }
+    const failing = deps({
+      api: {
+        ...api,
+        rerunFailedJobs: async () => {
+          throw new Error('GitHub answered 502 rerunning the failed jobs of run 9 on paulo/app')
+        },
+      },
+    })
+    const result = await pollPromotions(failing)
+    expect(result.errors).toEqual([
+      'paulo/app: GitHub answered 502 rerunning the failed jobs of run 9 on paulo/app',
+    ])
+    expect(created).toEqual([])
   })
 
   it('reruns a run once, even when several of its jobs failed', async () => {

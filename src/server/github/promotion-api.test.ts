@@ -135,14 +135,32 @@ describe('the jobs of a run', () => {
     const { fetch, calls } = fakeFetch({
       'POST /actions/runs/9/rerun-failed-jobs': { status: 201 },
     })
-    await createPromotionApi(fetch).rerunFailedJobs('o/r', 't', 9)
+    const answer = await createPromotionApi(fetch).rerunFailedJobs('o/r', 't', 9)
+    expect(answer).toEqual({ started: true })
     expect(calls[0]).toMatchObject({ method: 'POST', url: '/actions/runs/9/rerun-failed-jobs' })
   })
 
-  it('fails loudly when GitHub refuses', async () => {
-    const { fetch } = fakeFetch({ 'POST /actions/runs/9/rerun-failed-jobs': { status: 403 } })
+  it.each([403, 404])(
+    'answers with the refusal when GitHub refuses the rerun with %i',
+    async (status) => {
+      const { fetch } = fakeFetch({
+        'POST /actions/runs/9/rerun-failed-jobs': {
+          status,
+          text: '{"message":"Resource not accessible by integration"}',
+        },
+      })
+      const answer = await createPromotionApi(fetch).rerunFailedJobs('o/r', 't', 9)
+      expect(answer).toEqual({
+        started: false,
+        refusal: `GitHub answered ${status} rerunning the failed jobs of run 9 on o/r: {"message":"Resource not accessible by integration"}`,
+      })
+    },
+  )
+
+  it('fails loudly when the rerun fails for another reason', async () => {
+    const { fetch } = fakeFetch({ 'POST /actions/runs/9/rerun-failed-jobs': { status: 500 } })
     await expect(createPromotionApi(fetch).rerunFailedJobs('o/r', 't', 9)).rejects.toThrow(
-      /GitHub answered 403 rerunning the failed jobs of run 9 on o\/r/,
+      /GitHub answered 500 rerunning the failed jobs of run 9 on o\/r/,
     )
   })
 })

@@ -154,13 +154,27 @@ export function withEvidence<T extends FailedCheck>(checks: T[]): T[] {
   return telling.length > 0 ? telling : checks
 }
 
-/** Where a failure was seen. `rerun` is whether the job failed again after the watch reran it. */
+/**
+ * What became of the rerun before a failure counted: the check is not an Actions job, so it is never
+ * rerun; the job failed again after the watch reran it; or GitHub refused the rerun, so the evidence is
+ * the first attempt.
+ */
+export type Rerun = 'not-actions' | 'failed-again' | 'refused'
+
+/** Where a failure was seen, and what became of its rerun. */
 export type FailureAt = {
   pullRequest: { number: number; url: string }
   head: string
   base: string
   sha: string
-  rerun: boolean
+  rerun: Rerun
+}
+
+const RERUN_TOLD: Record<Rerun, string> = {
+  'not-actions': '. It is not a GitHub Actions job, so it was not rerun.',
+  'failed-again': ', and again after a rerun.',
+  refused:
+    '. GitHub refused to rerun it, so it could not be rerun: the evidence is from its first attempt.',
 }
 
 export const issueTitle = (check: FailedCheck, at: FailureAt): string =>
@@ -183,7 +197,7 @@ export function issueBody(check: FailedCheck, at: FailureAt): string {
     '',
     '## Description',
     '',
-    `The check \`${check.name}\` failed on the promotion ${at.head} -> ${at.base} (#${at.pullRequest.number}) at \`${at.sha.slice(0, 7)}\`${at.rerun ? ', and again after a rerun.' : '. It is not a GitHub Actions job, so it was not rerun.'}`,
+    `The check \`${check.name}\` failed on the promotion ${at.head} -> ${at.base} (#${at.pullRequest.number}) at \`${at.sha.slice(0, 7)}\`${RERUN_TOLD[at.rerun]}`,
     ...(person
       ? [
           '',

@@ -9,7 +9,7 @@ import { actionDeps } from '../panel/deps'
 
 /**
  * Watches the promotion pull requests of every enabled repository, every five minutes. A check that failed
- * on a head commit is rerun once, then filed as an issue the factory's agents fix (or one for a person, when
+ * on a head commit is rerun once (when GitHub allows it), then filed as an issue the factory's agents fix (or one for a person, when
  * no change can fix it), so a red promotion does not wait for someone to read its log.
  */
 export default defineCron('watch-promotions', {

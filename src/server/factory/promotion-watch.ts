@@ -4,7 +4,7 @@ import type { Database } from '../db'
 import { promotionFinding, repository } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { IssuesApi } from '../github/issues-api'
-import type { PromotionApi, PromotionPull } from '../github/promotion-api'
+import type { FailedRun, PromotionApi, PromotionPull, RerunAnswer } from '../github/promotion-api'
 import type { GithubApi } from '../github/pulls'
 import { FACTORY_LABEL } from '../ingest/decide'
 
@@ -20,6 +20,7 @@ import {
   withEvidence,
   type FailedCheck,
   type FailureAt,
+  type Rerun,
 } from './promotion'
 
 export type PromotionWatchDeps = {
@@ -61,8 +62,8 @@ export function passLog(result: PromotionWatchResult): { level: 'log' | 'error';
   return lines
 }
 
-/** A failed check with its evidence, and whether it failed again after a rerun. */
-type Seen = FailedCheck & { rerun: boolean }
+/** A failed check with its evidence, and what became of its rerun. */
+type Seen = FailedCheck & { rerun: Rerun }
 
 /** One repository in one pass: where to write, and how many issues it opened so far. */
 type Pass = {
@@ -123,7 +124,7 @@ async function watchRepository(
 const at = (
   pull: PromotionPull,
   promotion: { head: string; base: string },
-  rerun: boolean,
+  rerun: Rerun,
 ): FailureAt => ({
   pullRequest: { number: pull.number, url: pull.url },
   head: promotion.head,
@@ -135,29 +136,52 @@ const at = (
 /**
  * The checks that failed on a commit, with their evidence. An Actions job on its first attempt is not one
  * yet: its run is rerun (once, however many of its jobs failed) and a later pass reads the second attempt.
+ * When GitHub refuses the rerun, the first attempt is the evidence, and the refusal is one of the pass's
+ * errors, so the owner sees the permission the App lacks.
  */
 async function failuresOf(pass: Pass, sha: string): Promise<Seen[]> {
   const { api } = pass.deps
-  const rerunNow = new Set<number>()
+  const reruns = new Map<number, RerunAnswer>()
   const seen: Seen[] = []
   for (const run of await api.failedChecks(pass.repo, pass.token, sha)) {
-    const check = { name: run.name, url: run.url }
-    if (!run.actions) {
-      const annotations = await api.annotations(pass.repo, pass.token, run.id)
-      seen.push({ ...check, evidence: checkEvidence(annotations, run.summary), rerun: false })
-      continue
-    }
-    const job = await api.jobAttempt(pass.repo, pass.token, run.id)
-    if (job.attempt >= 2) {
-      const log = await api.jobLog(pass.repo, pass.token, run.id)
-      seen.push({ ...check, evidence: logEvidence(log), rerun: true })
-    } else if (!rerunNow.has(job.runId)) {
-      rerunNow.add(job.runId)
-      await api.rerunFailedJobs(pass.repo, pass.token, job.runId)
-      pass.result.reruns++
-    }
+    const failure = run.actions
+      ? await jobFailure(pass, run, reruns)
+      : await checkFailure(pass, run)
+    if (failure) seen.push(failure)
   }
   return seen
+}
+
+async function checkFailure(pass: Pass, run: FailedRun): Promise<Seen> {
+  const annotations = await pass.deps.api.annotations(pass.repo, pass.token, run.id)
+  const evidence = checkEvidence(annotations, run.summary)
+  return { name: run.name, url: run.url, evidence, rerun: 'not-actions' }
+}
+
+/** An Actions job's failure, or nothing yet when its run was just rerun. */
+async function jobFailure(
+  pass: Pass,
+  run: FailedRun,
+  reruns: Map<number, RerunAnswer>,
+): Promise<Seen | undefined> {
+  const { api } = pass.deps
+  const job = await api.jobAttempt(pass.repo, pass.token, run.id)
+  let rerun: Rerun = 'failed-again'
+  if (job.attempt < 2) {
+    const answer = reruns.get(job.runId) ?? (await rerunOnce(pass, job.runId, reruns))
+    if (answer.started) return undefined
+    rerun = 'refused'
+  }
+  const log = await api.jobLog(pass.repo, pass.token, run.id)
+  return { name: run.name, url: run.url, evidence: logEvidence(log), rerun }
+}
+
+async function rerunOnce(pass: Pass, runId: number, reruns: Map<number, RerunAnswer>) {
+  const answer = await pass.deps.api.rerunFailedJobs(pass.repo, pass.token, runId)
+  reruns.set(runId, answer)
+  if (answer.started) pass.result.reruns++
+  else pass.result.errors.push(`${pass.repo}: ${answer.refusal}`)
+  return answer
 }
 
 /** Files a failure once: a new one opens an issue, a known one on a new commit comments or opens again. */
