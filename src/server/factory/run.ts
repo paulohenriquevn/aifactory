@@ -56,7 +56,7 @@ import {
   StageFailure,
   type StoredCheck,
 } from './run-support'
-import { agentTimeLeft, NoTimeForAgent } from './agent-time'
+import { agentTimeLeft, DEFAULT_CHECK_MS, DEFAULT_REVIEW_MS, NoTimeForAgent } from './agent-time'
 import type { RepoConfig } from './repo-config'
 import { labelsWithRepoChoice } from './repo-config'
 import type { Parked, RunResult, RunTaskDeps } from './run-types'
@@ -679,7 +679,7 @@ export class Run {
       this.reviewer.run(this.backend, {
         onEvent,
         cwd: this.repoDir,
-        timeoutMs: this.timeouts.reviewMs ?? 10 * 60_000,
+        timeoutMs: this.timeouts.reviewMs ?? DEFAULT_REVIEW_MS,
         prompt: resolvedPrompt({
           repo: row.repository,
           issueNumber: row.issueNumber,
@@ -802,7 +802,7 @@ export class Run {
       this.backend,
       this.repoDir,
       this.checks,
-      this.timeouts.checkMs ?? 10 * 60_000,
+      this.timeouts.checkMs ?? DEFAULT_CHECK_MS,
     )
     for (const check of results) await db.insert(evidence).values({ taskId, sha, ...check })
     const rows = await db
@@ -851,7 +851,7 @@ export class Run {
       this.reviewer.run(this.backend, {
         onEvent,
         cwd: this.repoDir,
-        timeoutMs: this.timeouts.reviewMs ?? 10 * 60_000,
+        timeoutMs: this.timeouts.reviewMs ?? DEFAULT_REVIEW_MS,
         prompt: reviewPrompt({
           repo: row.repository,
           issueNumber: row.issueNumber,

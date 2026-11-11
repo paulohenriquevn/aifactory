@@ -2674,10 +2674,10 @@ describe('runTask agent time', () => {
 
     await runTask(deps(new FakeSandbox(changed()), { harness: builder, timeouts }), id)
 
-    // 60 minutes of sandbox, 20 kept for the checks and the review: at most 40 for the agent, not 45.
+    // 60 minutes of sandbox, 25 kept for the checks and the review: at most 35 for the agent, not 45.
     expect(given).toHaveLength(1)
-    expect(given[0]).toBeLessThanOrEqual(40 * MIN)
-    expect(given[0]).toBeGreaterThan(39 * MIN)
+    expect(given[0]).toBeLessThanOrEqual(35 * MIN)
+    expect(given[0]).toBeGreaterThan(34 * MIN)
   })
 
   it('fails a rework that has no time left with a message saying so, instead of starting it', async () => {
@@ -2687,7 +2687,7 @@ describe('runTask agent time', () => {
     const first = builder.run
     builder.run = async (backend, input) => {
       // The first build took 38 of the sandbox's 60 minutes.
-      vi.spyOn(Date, 'now').mockReturnValue(start + 38.5 * MIN)
+      vi.spyOn(Date, 'now').mockReturnValue(start + 31.5 * MIN)
       return first(backend, input)
     }
     const reviewer = reviewerSaying(verdictJson('changes', [finding], 'max=0 slips through'))
@@ -2706,7 +2706,7 @@ describe('runTask agent time', () => {
       .orderBy(desc(stageEvent.id))
       .limit(1)
     expect((failed.detail as { error: string }).error).toMatch(
-      /no time left for another agent pass: 38 of the sandbox's 60 minutes/,
+      /no time left for another agent pass: 31 of the sandbox's 60 minutes/,
     )
   })
 })

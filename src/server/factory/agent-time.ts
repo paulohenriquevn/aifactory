@@ -1,8 +1,13 @@
 /** The least an agent pass is worth starting with. Under it, the pass would be cut before it got anywhere. */
 export const MIN_AGENT_MS = 5 * 60_000
 
-const DEFAULT_CHECK_MS = 10 * 60_000
-const DEFAULT_REVIEW_MS = 10 * 60_000
+/**
+ * How long one check may take when the deps do not say. theokit-sdk's tests take 8 to 10 minutes on a busy
+ * machine and were cut at 10 three times on 2026-11-11 (paulohenriquevn/aifactory#24).
+ */
+export const DEFAULT_CHECK_MS = 15 * 60_000
+/** How long a review may take when the deps do not say. */
+export const DEFAULT_REVIEW_MS = 10 * 60_000
 
 type Limits = { sandboxMs: number; agentMs: number; checkMs?: number; reviewMs?: number }
 
