@@ -264,6 +264,17 @@ describe('buildPrompt', () => {
     expect(prompt).not.toContain('QUESTION:')
   })
 
+  it('says the repository checks, not a person, sent the work back when they did', () => {
+    const base = { repo: 'o/r', issueNumber: 1, title: 't', body: 'b', branch: 'x' }
+    const fromChecks = buildPrompt({ ...base, feedback: 'CI failed', feedbackFrom: 'checks' })
+    expect(fromChecks).toContain(
+      "The repository's required checks failed on your earlier pull request",
+    )
+    expect(fromChecks).toContain('CI failed')
+    expect(fromChecks).not.toContain('A person reviewed')
+    expect(buildPrompt({ ...base, feedback: 'rename' })).toContain('A person reviewed')
+  })
+
   it('says when the issue has no description', () => {
     const prompt = buildPrompt({ repo: 'o/r', issueNumber: 1, title: 't', body: '', branch: 'b' })
     expect(prompt).toContain('the issue has no description')

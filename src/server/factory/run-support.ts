@@ -170,6 +170,13 @@ export function gitConfig(author: { name: string; email: string }): string {
   return `[user]\n\tname = ${author.name}\n\temail = ${author.email}\n`
 }
 
+/** A run that continues on the branch the agent pushed, with what to change. */
+export type Continuation = {
+  feedback: string
+  /** The repository's required checks sent the work back, not a person. */
+  fromChecks?: boolean
+}
+
 /**
  * How a queued run starts: on the branch the agent pushed, with feedback, when a person asked for changes
  * or the factory sent the work back with its own note (the repository's checks failed); from the beginning
@@ -178,7 +185,7 @@ export function gitConfig(author: { name: string; email: string }): string {
 export function runContinuation(
   decided: { kind: string; note: string } | undefined,
   feedback: string | undefined,
-): { feedback: string } | undefined {
+): Continuation | undefined {
   if (decided?.kind === 'request_changes') return { feedback: decided.note }
-  return feedback ? { feedback } : undefined
+  return feedback ? { feedback, fromChecks: true } : undefined
 }

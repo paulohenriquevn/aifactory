@@ -1339,6 +1339,46 @@ describe('runTask continuing from a branch a person sent back', () => {
     expect(sandbox.stopped).toBe(1)
   })
 
+  it('hands to a person work whose required checks failed when the agent finds nothing to change', async () => {
+    const id = await seedTask()
+    await getDb()
+      .update(task)
+      .set({ stage: 'intake', headSha: 'oldsha1', pullRequestUrl: PR_URL })
+      .where(eq(task.id, id))
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async () => {
+        dirty = false
+        return { ok: true, summary: 'The failing check is broken on workspace too.' }
+      },
+    }
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder }),
+      id,
+      undefined,
+      {
+        feedback: 'CI failed',
+        fromChecks: true,
+      },
+    )
+
+    expect(result).toMatchObject({ status: 'handoff', pullRequestUrl: PR_URL })
+    expect(githubApi.comments).toEqual([
+      expect.stringMatching(/required checks failed[\s\S]*broken on workspace too/),
+    ])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row.stage).toBe('handoff')
+    const handoff = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'handoff'))
+    )[0]
+    expect(handoff.detail).toMatchObject({
+      reason: expect.stringMatching(/required checks failed and the agent changed nothing/),
+      unchanged: true,
+    })
+  })
+
   it('does not mention a review when nobody sent anything back', async () => {
     const id = await seedTask()
     const prompts: string[] = []

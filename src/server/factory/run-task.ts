@@ -6,7 +6,7 @@ import { BlockedByOpenIssues, declaredBlockers, openBlockers } from './blockers'
 import { withRecipe } from './recipe'
 import { createGithubApi } from '../github/pulls'
 
-import { Asked, QuotaStop, quotaDetail } from './run-support'
+import { Asked, QuotaStop, quotaDetail, type Continuation } from './run-support'
 import { loadRepoConfig } from './repo-config'
 import { Run, type RunState } from './run'
 import type { Parked, RunResult, RunTaskDeps } from './run-types'
@@ -33,7 +33,7 @@ export function runTask(
    * Set when a person sent the pull request back: the run starts from the branch the agent already
    * pushed, with what the person asked for in its prompt.
    */
-  continuation?: { feedback: string },
+  continuation?: Continuation,
 ): Promise<RunResult> {
   return execute(deps, taskId, signal, undefined, continuation)
 }
@@ -69,7 +69,7 @@ async function execute(
   taskId: number,
   signal: AbortSignal | undefined,
   resuming?: Parked,
-  continuation?: { feedback: string },
+  continuation?: Continuation,
 ): Promise<RunResult> {
   const { db } = deps
   const [row] = await db.select().from(task).where(eq(task.id, taskId))

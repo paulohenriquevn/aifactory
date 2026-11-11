@@ -62,6 +62,7 @@ import {
   Asked,
   QuotaStop,
   StageFailure,
+  type Continuation,
   type StoredCheck,
 } from './run-support'
 import {
@@ -101,7 +102,7 @@ export type RunContext = {
   state: RunState
   signal?: AbortSignal
   resuming?: Parked
-  continuation?: { feedback: string }
+  continuation?: Continuation
 }
 
 type Timeouts = NonNullable<RunTaskDeps['timeouts']>
@@ -521,6 +522,7 @@ export class Run {
           body: issue.body,
           branch,
           feedback: continuation?.feedback,
+          feedbackFrom: continuation?.fromChecks ? 'checks' : 'person',
           askQuestions: this.c.repo.askQuestions,
           knowledgeDir: this.feed?.dir,
           checks: this.checks,
@@ -544,6 +546,7 @@ export class Run {
     if (!continuation || !row.pullRequestUrl || !row.headSha) return undefined
     const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
     if (pending.stdout.trim() !== '') return undefined
+    if (continuation.fromChecks) return this.checksUnanswered(first)
     await api.commentOnIssue(
       row.repository,
       this.c.token,
@@ -564,6 +567,40 @@ export class Run {
       sha: row.headSha,
       pullRequestUrl: row.pullRequestUrl,
       summary: first.summary,
+    }
+  }
+
+  /**
+   * The repository's required checks failed and the agent changed nothing, saying why (often a check that
+   * fails on the integration branch too). Its auto-merge is already off and its wait over, so leaving the
+   * task done would leave it nowhere: it goes to a person, with the agent's words on the issue.
+   */
+  private async checksUnanswered(first: HarnessResult): Promise<RunResult> {
+    const { deps, taskId, row, api, branch } = this.c
+    const reason =
+      "the repository's required checks failed and the agent changed nothing, saying why below"
+    const said = first.summary.slice(0, 3_000)
+    await api.commentOnIssue(
+      row.repository,
+      this.c.token,
+      row.issueNumber,
+      `The repository's required checks failed on ${row.pullRequestUrl}, and the agent left it as it is:\n\n${said}`,
+    )
+    await enterStage(deps.db, taskId, 'handoff', {
+      branch,
+      sha: row.headSha,
+      reason,
+      pullRequestUrl: row.pullRequestUrl,
+      unchanged: true,
+      agentSummary: first.summary.slice(0, 4_000),
+      costUsd: this.cost,
+    })
+    return {
+      status: 'handoff',
+      branch,
+      sha: row.headSha!,
+      pullRequestUrl: row.pullRequestUrl!,
+      reason,
     }
   }
 

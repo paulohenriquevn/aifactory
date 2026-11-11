@@ -91,7 +91,10 @@ describe('runContinuation', () => {
   })
 
   it('continues on the branch with the feedback the factory queued, when no person decided', () => {
-    expect(runContinuation(undefined, 'CI failed')).toEqual({ feedback: 'CI failed' })
+    expect(runContinuation(undefined, 'CI failed')).toEqual({
+      feedback: 'CI failed',
+      fromChecks: true,
+    })
   })
 
   it('starts from the beginning for any other decision, or none', () => {
