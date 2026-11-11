@@ -172,6 +172,12 @@ describe('describeEvent', () => {
     )
   })
 
+  it('says a changesets release waits for the repository to publish it', () => {
+    expect(line('released', { actor: 'human', publishing: 'changesets' })).toBe(
+      "promoted by human; the repository's release workflow publishes it",
+    )
+  })
+
   it('has nothing to say for stages that carry nothing', () => {
     expect(line('pr', {})).toBe('')
   })

@@ -98,6 +98,9 @@ export function describeEvent(event: TimelineEvent): string {
         .filter(Boolean)
         .join('\n')
     case 'released':
+      if (d.publishing === 'changesets') {
+        return `promoted by ${text(d.actor)}; the repository's release workflow publishes it`
+      }
       return d.tag
         ? `${text(d.tag)} by ${text(d.actor)}${d.releaseError ? `, but the release could not be created: ${text(d.releaseError)}` : ''}`
         : `merged by ${text(d.actor)}, but the release could not be created: ${text(d.releaseError)}`
