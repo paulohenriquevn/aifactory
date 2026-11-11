@@ -1,7 +1,7 @@
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { desc, eq } from 'drizzle-orm'
 import { getStorageManager } from 'theokit/server/storage'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
@@ -2650,5 +2650,63 @@ describe("a project's recipe", () => {
     expect(sandbox.specs).toEqual([])
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
     expect(row.stage).toBe('failed')
+  })
+})
+
+describe('runTask agent time', () => {
+  const MIN = 60_000
+  const timeouts = { sandboxMs: 60 * MIN, agentMs: 45 * MIN }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('cuts the first build so the checks and the review still fit in the sandbox', async () => {
+    const id = await seedTask()
+    const given: number[] = []
+    const builder: CodingHarness = {
+      ...okHarness,
+      run: async (_backend, input) => {
+        given.push(input.timeoutMs ?? 0)
+        return { ok: true, summary: 'added truncate', costUsd: 0.12 }
+      },
+    }
+
+    await runTask(deps(new FakeSandbox(changed()), { harness: builder, timeouts }), id)
+
+    // 60 minutes of sandbox, 20 kept for the checks and the review: at most 40 for the agent, not 45.
+    expect(given).toHaveLength(1)
+    expect(given[0]).toBeLessThanOrEqual(40 * MIN)
+    expect(given[0]).toBeGreaterThan(39 * MIN)
+  })
+
+  it('fails a rework that has no time left with a message saying so, instead of starting it', async () => {
+    const id = await seedTask()
+    const start = Date.now()
+    const builder = resumableBuilder()
+    const first = builder.run
+    builder.run = async (backend, input) => {
+      // The first build took 38 of the sandbox's 60 minutes.
+      vi.spyOn(Date, 'now').mockReturnValue(start + 38.5 * MIN)
+      return first(backend, input)
+    }
+    const reviewer = reviewerSaying(verdictJson('changes', [finding], 'max=0 slips through'))
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer, timeouts }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'failed' })
+    expect(builder.resumed).toHaveLength(0)
+    const [failed] = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, id))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
+    expect((failed.detail as { error: string }).error).toMatch(
+      /no time left for another agent pass: 38 of the sandbox's 60 minutes/,
+    )
   })
 })

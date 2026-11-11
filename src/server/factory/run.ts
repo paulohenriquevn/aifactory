@@ -56,6 +56,7 @@ import {
   StageFailure,
   type StoredCheck,
 } from './run-support'
+import { agentTimeLeft, NoTimeForAgent } from './agent-time'
 import type { RepoConfig } from './repo-config'
 import { labelsWithRepoChoice } from './repo-config'
 import type { Parked, RunResult, RunTaskDeps } from './run-types'
@@ -91,13 +92,15 @@ export type RunContext = {
 
 type Timeouts = NonNullable<RunTaskDeps['timeouts']>
 /**
- * The sandbox stops a run after `sandboxMs`. A run is a builder (up to 25 minutes), the checks, a review, and
+ * The sandbox stops a run after `sandboxMs`. A run is a builder (up to `agentMs`, cut by `agentTimeLeft` so the
+ * checks and a review still fit), the checks, a review, and
  * at times a rework and the checks again. In a repository whose checks take twenty minutes on a busy machine
  * that is more than 50 minutes, and 8 runs were cut at 50 on 2026-11-11 (paulohenriquevn/aifactory#4). The
  * GitHub token is renewed while the run works (`renewGithubCredential`), so the limit is set by what a run
- * needs, not by the hour a token lasts.
+ * needs, not by the hour a token lasts. A first build that adds a package needs more than 25 minutes, and four
+ * were cut at 25 on 2026-11-11 (paulohenriquevn/aifactory#23), so a pass may take 45.
  */
-export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 90 * 60_000, agentMs: 25 * 60_000 }
+export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 90 * 60_000, agentMs: 45 * 60_000 }
 
 /** What the factory handed over, or why it could not. A failure to hand over never fails the task. */
 type Handed = { tag: string; url: string } | { error: string }
@@ -161,6 +164,8 @@ export class Run {
     private readonly sandbox: IsolatedSandbox,
     private readonly repoDir: string,
     private readonly baseSha: string,
+    /** When the sandbox started, which is when its time began to run out. */
+    private readonly startedAt: number,
   ) {
     this.cost = c.resuming?.costUsd ?? 0
     this.sessionId = c.resuming?.sessionId
@@ -177,6 +182,15 @@ export class Run {
   }
   private get timeouts(): Timeouts {
     return this.c.deps.timeouts ?? DEFAULT_TIMEOUTS
+  }
+  /** How long the next agent pass may take; throws when the sandbox has too little time left for one. */
+  private agentTimeout(): number {
+    try {
+      return agentTimeLeft(this.timeouts, Date.now() - this.startedAt)
+    } catch (error) {
+      if (error instanceof NoTimeForAgent) throw new StageFailure(error.message)
+      throw error
+    }
   }
   private get title() {
     return `${oneLine(this.c.issue.title)} (#${this.c.row.issueNumber})`
@@ -216,6 +230,7 @@ export class Run {
         ...c.repo.egress.map((domain) => ({ domain })),
       ],
     }
+    const startedAt = Date.now()
     const started = resuming
       ? await restoreIsolatedSandbox(deps.sandbox, resuming.snapshotId, spec)
       : await createIsolatedSandbox(deps.sandbox, spec)
@@ -248,7 +263,7 @@ export class Run {
     })
     // Stopping the sandbox stops the feed first, so no copy goes into a sandbox that is gone.
     c.state.sandbox = feed.attachTo(sandbox)
-    const run = new Run(c, builder, reviewer, sandbox, repoDir, baseSha)
+    const run = new Run(c, builder, reviewer, sandbox, repoDir, baseSha, startedAt)
     run.feed = feed
     run.remoteHead = await Run.remoteHeadOf(sandbox.backend, repoDir, c.branch)
     return run
@@ -485,7 +500,7 @@ export class Run {
         builder.resume!(backend, resuming.sessionId, {
           onEvent,
           cwd: repoDir,
-          timeoutMs: this.timeouts.agentMs,
+          timeoutMs: this.agentTimeout(),
           prompt,
         }),
       )
@@ -499,7 +514,7 @@ export class Run {
       builder.run(backend, {
         onEvent,
         cwd: repoDir,
-        timeoutMs: this.timeouts.agentMs,
+        timeoutMs: this.agentTimeout(),
         prompt: buildPrompt({
           repo: row.repository,
           issueNumber: row.issueNumber,
@@ -632,7 +647,7 @@ export class Run {
       this.builder.resume!(this.backend, this.sessionId!, {
         onEvent,
         cwd: this.repoDir,
-        timeoutMs: this.timeouts.agentMs,
+        timeoutMs: this.agentTimeout(),
         prompt: notResolvedPrompt({
           summary: outcome.summary,
           findings: outcome.findings,
@@ -738,7 +753,7 @@ export class Run {
       this.builder.resume!(this.backend, this.sessionId!, {
         onEvent,
         cwd: this.repoDir,
-        timeoutMs: this.timeouts.agentMs,
+        timeoutMs: this.agentTimeout(),
         prompt: reworkPrompt({ findings, failedChecks: failed, checks: this.checks }),
       }),
     )

@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - A run may last 90 minutes instead of 50, so a run in a repository with slow checks has room for a rework and the checks again; the GitHub token is renewed every 15 minutes while a run works, in the sandbox's firewall and in the factory's own calls, instead of being taken once and kept until it expired (#4)
+- An agent pass may take 45 minutes instead of 25, cut so one more round of checks and review still fits in the sandbox; a rework with less than five minutes left fails with a message saying so, instead of being stopped with the sandbox (#23)
 
 ### Fixed
 
