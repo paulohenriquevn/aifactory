@@ -32,6 +32,12 @@ import type {
 import { AutoMergeRefused } from '../github/pulls'
 
 import { retryableFailure } from '../../shared/panel'
+import {
+  divergedRepository,
+  PLANNED_CHANGE,
+  readsHistory,
+  WEAKENED_TEST,
+} from '../../test/diverged-repository'
 import { FakeBranches } from '../../test/fake-branches'
 import { knowledgeRules } from '../knowledge/prompt'
 import type { KnowledgeSource } from '../knowledge/source'
@@ -42,6 +48,7 @@ import { FakeSandbox, type Reply } from './fake-sandbox'
 import { eventsOf } from './transcript-store'
 import { parseRecipe } from './recipe'
 import type { CodingHarness } from './harness'
+import type { Finding } from './review'
 import { mergeEgress, resumeTask, runTask, type RunTaskDeps } from './run-task'
 import { release } from './deliver'
 import { pollAnswers } from './waiting'
@@ -1446,6 +1453,87 @@ describe('runTask planning before it builds', () => {
     })
     expect(githubApi.bodies[0]).toContain('<summary>Plan</summary>')
     expect(githubApi.bodies[0]).toContain('`src/truncate.js`: the function')
+  })
+
+  describe('on a branch the integration branch moved past', () => {
+    /** A sandbox whose history is a real repository, and whose clone of `workspace` is at `baseSha`. */
+    function onHistory(repo: { dir: string; baseSha: string }) {
+      let cloned = false
+      const history = readsHistory(repo.dir, '/vercel/work')
+      return new FakeSandbox(
+        changed((command) => {
+          if (!cloned && command.endsWith('rev-parse HEAD')) {
+            cloned = true
+            return { stdout: `${repo.baseSha}\n` }
+          }
+          return history(command)
+        }),
+      )
+    }
+
+    /** The findings of the first review of a task sent back, whose branch `workspace` moved past. */
+    async function sentBack() {
+      const id = await seedTask()
+      await getDb()
+        .insert(changePlan)
+        .values({ taskId: id, baseSha: 'cut0001', harness: 'fake-agent', plan })
+      const builder = resumableBuilder()
+      const sandbox = onHistory(divergedRepository({ behind: true }))
+
+      await runTask(deps(sandbox, { harness: builder, reviewer: approving() }), id, undefined, {
+        feedback: 'Rename the helper to cut.',
+      })
+
+      const [first] = await reviewsOf(id)
+      return first.findings as Finding[]
+    }
+
+    it('does not charge the task with a file only the integration branch changed', async () => {
+      const findings = await sentBack()
+
+      expect(findings.filter((f) => f.issue === 'changed outside the plan')).toEqual([])
+    })
+
+    it('does not report as weakened or deleted a test the integration branch changed', async () => {
+      const findings = await sentBack()
+
+      expect(findings.filter((f) => f.file?.endsWith('.test.js'))).toEqual([])
+    })
+
+    it('does not block on a test command or a workflow the integration branch changed', async () => {
+      const findings = await sentBack()
+
+      expect(findings.filter((f) => f.severity !== 'minor')).toEqual([])
+    })
+
+    it('reports on a first run what the change itself did, as before', async () => {
+      const id = await seedTask()
+      const repo = divergedRepository({
+        behind: false,
+        branch: {
+          ...PLANNED_CHANGE,
+          'src/extra.js': 'export {}\n',
+          'src/shared.test.js': WEAKENED_TEST,
+        },
+      })
+      const builder = planningBuilder([JSON.stringify(plan)])
+
+      await runTask(
+        deps(onHistory(repo), { harness: builder, reviewer: approving(), planFirst: true }),
+        id,
+      )
+
+      const [first] = await reviewsOf(id)
+      expect(first.findings).toEqual([
+        {
+          severity: 'major',
+          file: 'src/shared.test.js',
+          issue: 'the change weakens a test that was there before it: it leaves 1 assertion fewer',
+        },
+        { severity: 'minor', file: 'src/extra.js', issue: 'changed outside the plan' },
+        { severity: 'minor', file: 'src/shared.test.js', issue: 'changed outside the plan' },
+      ])
+    })
   })
 
   it('throws away what the planning turn changed, and tells the builder', async () => {

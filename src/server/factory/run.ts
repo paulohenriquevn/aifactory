@@ -35,15 +35,13 @@ import {
   type CheckResult,
   type Verdict,
 } from './evidence'
-import { diffGuards, parseNameStatus, testScriptOf } from './guards'
-import { TEST_PATHSPECS } from './test-weakening'
+import { diffFacts } from './diff-facts'
 import {
   changePlanPrompt,
   implementPlanPrompt,
   parseChangePlan,
   planAgainPrompt,
   renderChangePlan,
-  unplannedFiles,
   type ChangePlan,
 } from './change-plan'
 import { buildPrompt, type CodingHarness, type HarnessResult } from './harness'
@@ -1054,51 +1052,16 @@ export class Run {
     return { results, here, verdict }
   }
 
-  /**
-   * What the diff says about itself, without a model: facts an agent could bend, and the files it changed
-   * that the plan does not name.
-   */
-  private async diffFacts(): Promise<{ guards: Finding[]; unplanned: string[] }> {
-    const { backend, repoDir, baseSha } = this
-    const changes = parseNameStatus(
-      (await must(backend, `git -C ${repoDir} diff --name-status ${baseSha} HEAD`)).stdout,
-    )
-    const unplanned = this.plan
-      ? unplannedFiles(
-          changes.map((c) => c.path),
-          this.plan,
-        )
-      : []
-    return { guards: await this.guardsOf(changes), unplanned }
-  }
-
-  /** The guards of a diff: the checks' command, `.github/`, deleted or weakened tests. */
-  private async guardsOf(changes: ReturnType<typeof parseNameStatus>): Promise<Finding[]> {
-    const { backend, repoDir, baseSha } = this
-    const showScript = async (rev: string) => {
-      const shown = await backend.execute(`git -C ${repoDir} show ${rev}:package.json`)
-      return shown.exitCode === 0 ? testScriptOf(shown.stdout) : undefined
-    }
-    // Fixed pathspecs only: no path the agent wrote reaches the shell.
-    const tests = await must(
-      backend,
-      `git -C ${repoDir} diff -U0 --no-color --no-renames ${baseSha} HEAD -- ${TEST_PATHSPECS.join(' ')}`,
-    )
-    const { issue } = this.c
-    return diffGuards({
-      changes,
-      baseTestScript: await showScript(baseSha),
-      headTestScript: await showScript('HEAD'),
-      tests: { patch: tests.stdout, issue },
-    })
-  }
-
   /** Has the reviewer read the commit, adds the facts about the diff, and records the outcome. */
   private async review(sha: string, attempt: number): Promise<ReviewVerdict> {
     const { deps, taskId, row, issue, branch, state } = this.c
     state.current = 'review'
     await enterStage(deps.db, taskId, 'review', { sha, attempt, reviewer: this.reviewer.name })
-    const { guards, unplanned } = await this.diffFacts()
+    const { guards, unplanned } = await diffFacts(this.backend, this.repoDir, {
+      baseSha: this.baseSha,
+      plan: this.plan,
+      issue,
+    })
     const result = await this.settle(this.reviewer, 'reviewer', attempt, (onEvent) =>
       this.reviewer.run(this.backend, {
         onEvent,

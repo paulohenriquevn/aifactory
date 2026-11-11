@@ -12,12 +12,11 @@ import {
   parseChangePlan,
   planAgainPrompt,
   renderChangePlan,
-  unplannedFiles,
   type ChangePlan,
 } from '../factory/change-plan'
 import { cloneRepository } from '../factory/clone'
 import { failingChecks, runChecks, type CheckResult } from '../factory/evidence'
-import { diffGuards, parseNameStatus, testScriptOf } from '../factory/guards'
+import { diffFacts } from '../factory/diff-facts'
 import {
   buildPrompt,
   type CodingHarness,
@@ -47,7 +46,6 @@ import {
   type IsolatedSandboxProvider,
   type SandboxSpec,
 } from '../factory/sandbox'
-import { TEST_PATHSPECS } from '../factory/test-weakening'
 import { parseQuestion } from '../factory/waiting'
 import { KnowledgeFeed } from '../knowledge/feed'
 import type { KnowledgeSource } from '../knowledge/source'
@@ -221,31 +219,6 @@ class CaseRun {
     return failingChecks(results)
   }
 
-  /** What the diff says about itself without a model (`Run.diffFacts`): its guards and the files the plan does not name. */
-  private async diffFacts(): Promise<{ guards: Finding[]; unplanned: string[] }> {
-    const { backend, repoDir, c } = this
-    const changes = parseNameStatus(
-      (await must(backend, `git -C ${repoDir} diff --name-status ${c.baseSha} HEAD`)).stdout,
-    )
-    const script = async (rev: string) => {
-      const shown = await backend.execute(`git -C ${repoDir} show ${rev}:package.json`)
-      return shown.exitCode === 0 ? testScriptOf(shown.stdout) : undefined
-    }
-    // Fixed pathspecs only: no path the agent wrote reaches the shell.
-    const tests = await must(
-      backend,
-      `git -C ${repoDir} diff -U0 --no-color --no-renames ${c.baseSha} HEAD -- ${TEST_PATHSPECS.join(' ')}`,
-    )
-    const guards = diffGuards({
-      changes,
-      baseTestScript: await script(c.baseSha),
-      headTestScript: await script('HEAD'),
-      tests: { patch: tests.stdout, issue: { labels: c.labels, title: c.title, body: c.body } },
-    })
-    const paths = changes.map((change) => change.path)
-    return { guards, unplanned: this.plan ? unplannedFiles(paths, this.plan) : [] }
-  }
-
   private async review(sha: string, unplanned: string[]): Promise<ReviewVerdict> {
     this.reviewRounds++
     const { c } = this
@@ -297,7 +270,11 @@ class CaseRun {
         await this.rework([], failed)
         continue
       }
-      const { guards, unplanned } = await this.diffFacts()
+      const { guards, unplanned } = await diffFacts(this.backend, this.repoDir, {
+        baseSha: this.c.baseSha,
+        plan: this.plan,
+        issue: { labels: this.c.labels, title: this.c.title, body: this.c.body },
+      })
       const blocking = guards.filter((g) => g.severity !== 'minor')
       const read = await this.review(sha, unplanned)
       if (read.verdict === 'approve' && blocking.length === 0) {
