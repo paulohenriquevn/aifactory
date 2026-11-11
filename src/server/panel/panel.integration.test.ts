@@ -32,6 +32,7 @@ import {
   requestChanges,
   resolveElsewhere,
   retry,
+  sendBackAutomatically,
   type ActionDeps,
 } from './actions'
 import { health, inbox, listTasks, taskDetail } from './queries'
@@ -376,6 +377,45 @@ describe('actions', () => {
     const running = await seed('build')
     await expect(approve(deps(), running)).rejects.toThrow(ActionRefused)
     await expect(approve(deps(), 999)).rejects.toThrow(/does not exist/)
+  })
+
+  it("sends work whose required checks failed back to its agent, on its branch, in nobody's name", async () => {
+    const id = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' })
+
+    await sendBackAutomatically(deps(), id, 'CI failed: fix foo.test.ts')
+
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'intake', awaitingCiSha: null })
+    expect(await getDb().select().from(decision)).toEqual([])
+    // The branch stays: the agent works on what it pushed.
+    expect(deleted).toEqual([])
+    const [intake] = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, id))
+    expect(intake.detail).toEqual({
+      decision: 'request_changes',
+      note: 'CI failed: fix foo.test.ts',
+      automatic: true,
+    })
+    expect(queued).toEqual([
+      {
+        input: { taskId: id, feedback: 'CI failed: fix foo.test.ts' },
+        key: `task-${id}-auto${intake.id}`,
+      },
+    ])
+  })
+
+  it('sends back on its own only work that waits for the repository checks', async () => {
+    const id = await seed('done', { headSha: 'abc' })
+    await expect(sendBackAutomatically(deps(), id, 'note')).rejects.toThrow(ActionRefused)
+    expect(queued).toEqual([])
+  })
+
+  it('stops waiting for the repository checks when a person starts the task again', async () => {
+    const id = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' })
+
+    await retry(deps(), id)
+
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'intake', awaitingCiSha: null })
   })
 
   it('sends a pull request back with a note, starts a run, and refuses a second click', async () => {

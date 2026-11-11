@@ -1,7 +1,7 @@
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { pushWithRetry, resolvedComment } from './run-support'
+import { pushWithRetry, resolvedComment, runContinuation } from './run-support'
 
 const failing = (times: number) => {
   let calls = 0
@@ -80,5 +80,22 @@ describe('resolvedComment', () => {
     const text = resolvedComment({ ...input, claim: 'x'.repeat(5_000) })
     expect(text).toContain('x'.repeat(3_000))
     expect(text).not.toContain('x'.repeat(3_001))
+  })
+})
+
+describe('runContinuation', () => {
+  it('continues on the branch with the note of a request for changes', () => {
+    expect(runContinuation({ kind: 'request_changes', note: 'rename it' }, undefined)).toEqual({
+      feedback: 'rename it',
+    })
+  })
+
+  it('continues on the branch with the feedback the factory queued, when no person decided', () => {
+    expect(runContinuation(undefined, 'CI failed')).toEqual({ feedback: 'CI failed' })
+  })
+
+  it('starts from the beginning for any other decision, or none', () => {
+    expect(runContinuation({ kind: 'retry', note: '' }, undefined)).toBeUndefined()
+    expect(runContinuation(undefined, undefined)).toBeUndefined()
   })
 })

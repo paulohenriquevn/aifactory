@@ -169,3 +169,16 @@ export function gitConfig(author: { name: string; email: string }): string {
   }
   return `[user]\n\tname = ${author.name}\n\temail = ${author.email}\n`
 }
+
+/**
+ * How a queued run starts: on the branch the agent pushed, with feedback, when a person asked for changes
+ * or the factory sent the work back with its own note (the repository's checks failed); from the beginning
+ * otherwise.
+ */
+export function runContinuation(
+  decided: { kind: string; note: string } | undefined,
+  feedback: string | undefined,
+): { feedback: string } | undefined {
+  if (decided?.kind === 'request_changes') return { feedback: decided.note }
+  return feedback ? { feedback } : undefined
+}
