@@ -13,6 +13,8 @@ export const CI_SILENCE_MS = 6 * 60 * 60_000
 const NOTE_MAX = 4_000
 /** Below this much room for each check's report, the note lists the checks and their links only. */
 const TAIL_MIN = 80
+/** What surrounds a report in the note, besides the check's name: two line breaks, a colon and a fence. */
+const FRAME = 12
 
 /** What to do about a task whose pull request waits for the repository's required checks. */
 export type WaitingStep =
@@ -145,9 +147,10 @@ export function checksFeedback(sha: string, failed: CheckReport[]): string {
     ...failed.map((r) => `- ${r.name}: ${r.url}`),
   ].join('\n')
   const told = failed.filter((r) => r.detail.trim() !== '')
-  // Each report gets an equal share of what is left, less the lines around it.
-  const share = Math.floor((NOTE_MAX - head.length) / Math.max(told.length, 1)) - 40
-  if (told.length === 0 || share < TAIL_MIN) return head.slice(0, NOTE_MAX)
+  // Each report gets an equal share of what is left once its frame (`\n\n<name>:\n` and a fence) is counted.
+  const frames = told.reduce((sum, r) => sum + r.name.length + FRAME, 0)
+  const share = Math.floor((NOTE_MAX - head.length - frames) / Math.max(told.length, 1))
+  if (share < TAIL_MIN) return head.slice(0, NOTE_MAX)
   const tails = told.map((r) => `\n\n${r.name}:\n\`\`\`\n${r.detail.trim().slice(-share)}\n\`\`\``)
-  return (head + tails.join('')).slice(0, NOTE_MAX)
+  return head + tails.join('')
 }
