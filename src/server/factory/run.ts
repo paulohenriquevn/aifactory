@@ -3,7 +3,6 @@ import { asc, eq } from 'drizzle-orm'
 
 import {
   agentRun,
-  decision,
   evidence,
   question as questionTable,
   review as reviewTable,
@@ -15,10 +14,18 @@ import { KnowledgeFeed } from '../knowledge/feed'
 import { parseLearned, withoutLearned } from '../knowledge/format'
 
 import { cloneRepository } from './clone'
-import { ensureBranches, integrationBranch, PRE_RELEASE_BRANCH } from './branches'
+import { ensureBranches, integrationBranch } from './branches'
 import { withChangesetCheck } from './changesets'
 import { githubEgress, renewGithubCredential } from './credential-renewal'
-import { createPreRelease, release } from './deliver'
+import { createPreRelease } from './deliver'
+import {
+  advancePreRelease,
+  describeDelivery,
+  describeIntegration,
+  releaseByMode,
+  type Handed,
+  type Integrated,
+} from './integration'
 import {
   DEFAULT_CHECKS,
   failingChecks,
@@ -108,38 +115,6 @@ type Timeouts = NonNullable<RunTaskDeps['timeouts']>
  * were cut at 25 on 2026-11-11 (paulohenriquevn/aifactory#23), so a pass may take 45.
  */
 export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 90 * 60_000, agentMs: 45 * 60_000 }
-
-/** What the factory handed over, or why it could not. A failure to hand over never fails the task. */
-type Handed = { tag: string; url: string } | { error: string }
-
-/** What the integration did, or why it did not happen. Nothing set means it did not run. */
-type Integrated = {
-  /** The pull request was merged, and this is the commit on the integration branch. */
-  mergedSha?: string
-  /** The pre-release branch advanced, and this is where it is. */
-  developSha?: string
-  developError?: string
-  /**
-   * Where the work waits to reach the pre-release branch when GitHub would not let the factory advance it
-   * (a protected branch): a pull request from the integration branch, which the factory only opens.
-   */
-  developPullRequest?: string
-  /** GitHub refused to merge the pull request, which stays open for a person. */
-  error?: string
-}
-
-const describeIntegration = (integrated: Integrated) => ({
-  ...(integrated.error ? { integrationError: integrated.error } : {}),
-  ...(integrated.mergedSha ? { mergedSha: integrated.mergedSha } : {}),
-  ...(integrated.developSha ? { developSha: integrated.developSha } : {}),
-  ...(integrated.developError ? { developError: integrated.developError } : {}),
-  ...(integrated.developPullRequest ? { developPullRequest: integrated.developPullRequest } : {}),
-})
-
-const describeDelivery = (handed: Handed) =>
-  'tag' in handed
-    ? { preRelease: handed.tag, preReleaseUrl: handed.url }
-    : { preReleaseError: handed.error }
 
 /** The result of running the checks on a commit: what ran, what it adds up to, and what to show. */
 type Checked = { results: CheckResult[]; here: StoredCheck[]; verdict: Verdict }
@@ -914,18 +889,23 @@ export class Run {
   }
 
   /**
-   * The factory's delivery. It is made for any commit with green checks that reached a pull request,
-   * approved or handed over, and a failure here never fails the task: the pull request is the work,
-   * and the pre-release is how it is handed over.
-   */
-  /**
    * Integrates the approved work: the pull request is merged into the integration branch, pinned to the
    * commit that was verified and reviewed, and the pre-release branch then advances to include it. Nobody
    * is asked, because the checks and the review are the decision. A merge GitHub refuses (a conflict, a
    * protected branch) leaves the pull request open for a person and does not fail the task.
+   *
+   * An integration branch that requires status checks gets the repository's own CI first: GitHub merges
+   * the pull request through auto-merge once they pass, pinned to the same commit, and the
+   * `integrate-after-ci` cron does the rest. GitHub refusing auto-merge fails the run, with what to set.
    */
   private async integrate(sha: string, pullNumber: number): Promise<Integrated> {
     const { deps, taskId, row, api, branch } = this.c
+    const integration = integrationBranch(this.c.repo)
+    const required = await api.requiredChecks(row.repository, this.c.token, integration)
+    if (required.length > 0) {
+      await api.enableAutoMerge(row.repository, this.c.token, pullNumber, sha)
+      return { awaitingChecks: required }
+    }
     let merged: { sha: string }
     try {
       merged = await api.mergePullRequest(row.repository, this.c.token, pullNumber, sha, {
@@ -937,44 +917,13 @@ export class Run {
     }
     await deps.db.update(task).set({ mergedSha: merged.sha }).where(eq(task.id, taskId))
     await api.deleteBranch(row.repository, this.c.token, branch).catch(() => {})
-    try {
-      const develop = await api.mergeBranch(
-        row.repository,
-        this.c.token,
-        PRE_RELEASE_BRANCH,
-        merged.sha,
-      )
-      return { mergedSha: merged.sha, developSha: develop.sha }
-    } catch (error) {
-      return {
-        mergedSha: merged.sha,
-        developError: error instanceof Error ? error.message : String(error),
-        developPullRequest: await this.proposePreRelease(),
-      }
-    }
-  }
-
-  /**
-   * A protected pre-release branch only takes a pull request, so the factory opens one from the
-   * integration branch, or finds the one already open, and leaves the merge to whoever the branch's rules
-   * ask. It is one standing pull request: later integrations add to it. Failing to open it is not an error:
-   * the work is integrated either way.
-   */
-  private async proposePreRelease(): Promise<string | undefined> {
-    const { row, api } = this.c
-    const from = integrationBranch(this.c.repo)
-    try {
-      return (
-        await api.openPullRequest(row.repository, this.c.token, {
-          head: from,
-          base: PRE_RELEASE_BRANCH,
-          title: `Pre-release: ${from} into ${PRE_RELEASE_BRANCH}`,
-          body: `${PRE_RELEASE_BRANCH} accepts changes only through a pull request, so the factory could not advance it. Merging this pull request publishes what has been integrated into ${from}.`,
-        })
-      ).url
-    } catch {
-      return undefined
-    }
+    const advanced = await advancePreRelease(api, {
+      repository: row.repository,
+      token: this.c.token,
+      integration,
+      mergedSha: merged.sha,
+    })
+    return { mergedSha: merged.sha, ...advanced }
   }
 
   private async deliver(
@@ -1009,32 +958,18 @@ export class Run {
     }
   }
 
-  /**
-   * What the release mode says to do once a commit is delivered and approved. `trial` records what an
-   * agent would have released; `auto` releases it, and records why when that is refused. It returns the
-   * tag of a release that was made.
-   */
-  private async releaseByMode(sha: string): Promise<string | undefined> {
+  /** What the release mode says to do once a commit is delivered and approved (see `releaseByMode`). */
+  private releaseByMode(sha: string): Promise<string | undefined> {
     const { deps, taskId, api } = this.c
-    const actor = `agent:${this.reviewer.name}`
-    const record = (note: string) =>
-      deps.db.insert(decision).values({ taskId, kind: 'would_release', sha, note })
-    const mode = this.c.repo.releaseMode ?? deps.releaseMode
-    if (mode === 'trial') {
-      await record(`${actor}: checks green and the review approved`)
-      return undefined
-    }
-    if (mode !== 'auto') return undefined
-    try {
-      return (
-        await release({ db: deps.db, github: deps.github, api }, taskId, { bump: 'patch', actor })
-      ).tag
-    } catch (error) {
-      await record(
-        `an automatic release was refused: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return undefined
-    }
+    return releaseByMode(
+      { db: deps.db, github: deps.github, api },
+      {
+        taskId,
+        sha,
+        mode: this.c.repo.releaseMode ?? deps.releaseMode,
+        actor: `agent:${this.reviewer.name}`,
+      },
+    )
   }
 
   /** The work was approved: open the pull request, hand it over as a pre-release, and finish. */
@@ -1060,6 +995,7 @@ export class Run {
       }),
     })
     const integrated = await this.integrate(sha, pull.number)
+    if (integrated.awaitingChecks) return this.awaitChecks(sha, attempt, pull.url, integrated)
     const handed = await this.deliver(sha, pull.url, attempt, integrated)
     await enterStage(
       deps.db,
@@ -1088,6 +1024,36 @@ export class Run {
       preRelease,
       released,
     }
+  }
+
+  /**
+   * The work is approved and its pull request waits for the repository's required checks. The run ends here:
+   * the pre-release and the release follow the merge, from the `integrate-after-ci` cron, which reads what it
+   * needs for them from this stage's detail.
+   */
+  private async awaitChecks(
+    sha: string,
+    attempt: number,
+    pullRequestUrl: string,
+    integrated: Integrated,
+  ): Promise<RunResult> {
+    const { deps, taskId, branch } = this.c
+    await enterStage(
+      deps.db,
+      taskId,
+      'done',
+      {
+        branch,
+        sha,
+        pullRequestUrl,
+        costUsd: this.cost,
+        attempts: attempt,
+        agentSummary: this.summary,
+        ...describeIntegration(integrated),
+      },
+      { pullRequestUrl, awaitingCiSha: sha },
+    )
+    return { status: 'done', branch, sha, pullRequestUrl, summary: this.summary }
   }
 
   /**

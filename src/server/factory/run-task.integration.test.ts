@@ -1702,6 +1702,48 @@ describe('the factory always makes a pre-release', () => {
     expect(done.detail).toMatchObject({ integrationError: expect.stringContaining('conflicts') })
   })
 
+  it('leaves the merge to GitHub when the integration branch requires checks, pinned to the verified commit', async () => {
+    githubApi.required = ['CI', 'Lint']
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(result).not.toHaveProperty('preRelease')
+    expect(githubApi.autoMerges).toEqual([{ number: 12, sha: 'abc123def' }])
+    expect(githubApi.merges).toEqual([])
+    expect(githubApi.branchMerges).toEqual([])
+    // The pre-release follows the merge, which the repository's CI decides.
+    expect(githubApi.releases).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'done', mergedSha: null, awaitingCiSha: 'abc123def' })
+    const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
+    expect(done.detail).toMatchObject({
+      awaitingChecks: ['CI', 'Lint'],
+      pullRequestUrl: PR_URL,
+      agentSummary: 'added truncate',
+    })
+    expect((done.detail as Record<string, unknown>).integrationError).toBeUndefined()
+  })
+
+  it('fails the task saying what to configure when GitHub will not turn auto-merge on', async () => {
+    githubApi.required = ['CI']
+    githubApi.autoMergeRefused = true
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(githubApi.merges).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'failed', awaitingCiSha: null })
+    const failed = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
+    )[0]
+    expect(String((failed.detail as Record<string, unknown>).error)).toMatch(
+      /Allow auto-merge.*Allow merge commits/,
+    )
+  })
+
   it('keeps the work integrated and says why when develop cannot be advanced', async () => {
     githubApi.branchMergeFails = true
     const id = await seedTask()
