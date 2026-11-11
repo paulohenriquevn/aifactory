@@ -19,3 +19,7 @@ reports
 # its exact text is what the factory proposes: `okf_version: "0.2"` and `*` list items, as the specification
 # writes them.
 templates/knowledge
+
+# Written by `pnpm evals:cases` and a baseline run (docs/adr/0008); versioned, but generated.
+evals
+.evals

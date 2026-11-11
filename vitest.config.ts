@@ -15,7 +15,11 @@ export default defineConfig({
         test: {
           name: 'unit',
           include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
-          exclude: ['src/**/*.integration.test.ts', 'src/**/*.e2e.test.ts'],
+          exclude: [
+            'src/**/*.integration.test.ts',
+            'src/**/*.e2e.test.ts',
+            'src/**/*.evals.test.ts',
+          ],
           setupFiles: ['src/test/quiet-jsdom-css.ts', 'src/test/no-real-docker.ts'],
         },
       },
@@ -35,6 +39,15 @@ export default defineConfig({
           testTimeout: 300_000,
           hookTimeout: 60_000,
           setupFiles: ['src/test/use-test-database.ts'],
+        },
+      },
+      {
+        // Real agents on past tasks, against the factory's own database (read only). Costs money: ADR 0008.
+        test: {
+          name: 'evals',
+          include: ['src/**/*.evals.test.ts'],
+          testTimeout: 4 * 60 * 60_000,
+          hookTimeout: 60_000,
         },
       },
     ],

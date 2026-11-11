@@ -17,6 +17,14 @@ else
   echo "could not ask the database whether tasks are working; going on" >&2
 fi
 
+# When a prompt, an agent or a model changed since evals/baseline.json, the quick cases run again on real
+# agents and must do no worse than the baseline (docs/adr/0008). Nothing changed, nothing runs. It reads the
+# factory's database, which .env.local does not name: the default is the one scripts/run-server.sh uses.
+if ! DATABASE_URL="${DATABASE_URL:-postgres://factory:factory@localhost:54329/factory}" pnpm evals:check; then
+  echo "the agents did worse than the baseline (see above); nothing was built or restarted" >&2
+  exit 1
+fi
+
 pnpm build
 # All at once, so each process drains its own run in parallel. The workers run tasks and the feeder hands them
 # out from the same build, so each one left alone keeps the code from before it.

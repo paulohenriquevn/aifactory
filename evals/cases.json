@@ -1,0 +1,1420 @@
+[
+  {
+    "id": "paulohenriquevn/aifactory-playground#63",
+    "repository": "paulohenriquevn/aifactory-playground",
+    "issueNumber": 63,
+    "title": "Add capitalize(text) helper with tests",
+    "body": "Add a `capitalize(text)` helper to `src/`, exported like the others, with tests in the same style.\n\n## Done when\n- `capitalize('hello world')` returns `'Hello world'`: only the first character changes.\n- `capitalize('')` returns `''`, and `capitalize('Hello')` returns `'Hello'` unchanged.\n- `capitalize(42)` throws a `TypeError`.\n- `npm test` passes, and the README lists `capitalize` next to the other helpers.\n\nFinal test of aifactory 0.2.0.\n",
+    "labels": [
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "ddcebf190e5f0e821fc5cd99c7734ec30d79fbf9",
+    "checks": [
+      {
+        "name": "test",
+        "command": "npm test"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 663,
+      "costUsd": 0.08734910000000001,
+      "durationMs": 78407,
+      "attempts": 1,
+      "mergedSha": "7648d071d5f653a8611f4248e582ecf0d32d0085"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit#1731",
+    "repository": "usetheokit/theokit",
+    "issueNumber": 1731,
+    "title": "theoclaw: a fact the memory reviewer saved no longer reaches a new session's prompt",
+    "body": "**Area:** theoclaw / memory\n**Severity:** high (a fact the memory reviewer saved no longer reaches a new session, so cross-surface recall is broken)\n\n## Description\n\nThe live test `tests/live/memory.live.test.ts` > \"session_search finds a Telegram session from the control surface, and the reviewer fact is recalled\" fails on `develop` `1f0af6a`, four times out of four (two runs, each with one retry). It passed on `develop` `02e0a30` (Live model run of 2026-11-10 18:41).\n\nThe first half still works: after the Telegram turn, `MemoryStore.facts()` contains the city (the assertion at line 51 passes). The second half fails: a fresh session on another surface, asked \"What is my home city called?\", answers \"I do not know what your home city is …\". The saved fact does not reach the new session's system prompt.\n\nSource: Live model workflow (`.github/workflows/live-model.yml`), runs 43083182295 attempts 1 and 2, on the release pull request #1730.\n\n## Where to look\n\nThe commits that touched the system prompt of a new session between `02e0a30` and `1f0af6a`, first of all 6581baa (#1614, standing orders appended to the system prompt, touches `agent/persona-files.ts`) and ccc7fd3 (#1511, SOUL.md in chat replies). Check that the memory block and the standing orders are both appended, not one replacing the other.\n\n## Expected\n\nA fresh session gets the facts in `MemoryStore` in its system prompt, together with the standing orders and SOUL.md.\n\n## Acceptance\n\n- A unit test without a model: with a saved fact, a standing order and a SOUL.md, the system prompt of a new session contains all three. It fails on `1f0af6a`.\n- `pnpm --filter theoclaw run test` passes.\n\n---\nFound while releasing #1730, 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "325197579c873c8478f068bab46d48a615f8a48b",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build:packages"
+      },
+      {
+        "name": "tests",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|mjs)$' | tr '\\n' ' '); X=$(grep -rlE 'bwrap|HOST_TOOLS' apps/theoclaw/tests 2>/dev/null | sed 's/^/--exclude /' | tr '\\n' ' '); [ -z \"$F\" ] || THEOKIT_TEST_RUN_ID=1 pnpm exec vitest related --run --passWithNoTests $X $F"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck:only"
+      },
+      {
+        "name": "theoclaw-types",
+        "command": "pnpm --filter theoclaw run typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|cts|js|mjs|cjs)$' | tr '\\n' ' '); A=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | tr '\\n' ' '); { [ -z \"$F\" ] || NODE_OPTIONS=--max-old-space-size=3072 pnpm exec eslint $F; } && { [ -z \"$A\" ] || pnpm exec prettier --check --ignore-unknown $A; }"
+      },
+      {
+        "name": "release-hygiene",
+        "command": "node scripts/check-changeset-coverage.mjs origin/workspace && node apps/theoclaw/tools/check-exact-versions.mjs apps/theoclaw/package.json"
+      },
+      {
+        "name": "theoclaw-lint",
+        "command": "pnpm --filter theoclaw run lint"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 933,
+      "costUsd": 0.32891830000000005,
+      "durationMs": 866239,
+      "attempts": 1,
+      "mergedSha": "08df8fc65a55bbbe43a40f8a0db2c3e8805701f7"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-gateways#364",
+    "repository": "usetheokit/theokit-gateways",
+    "issueNumber": 364,
+    "title": "adapters: the outbound preconditions and handler wiring are copied across eight adapters, failing Sonar's 3% duplication gate",
+    "body": "**Area:** gateway adapters\n**Severity:** high (the SonarCloud quality gate of the standing `workspace -> develop` pull request #327 fails on it, so nothing reaches `develop` and nothing is released)\n**Build under test:** `workspace` at the head of #327, analyzed by SonarCloud on 2026-11-11\n\n## Description\n\nNew-code duplication on #327 is 3.7% against a 3% gate. The outbound path and the inbound handler wiring are copied adapter by adapter instead of living in `packages/gateway/src/adapter/base.ts`.\n\n## Evidence\n\nFrom `GET https://sonarcloud.io/api/duplications/show?key=usetheokit_theokit-gateways:packages/gateway-yuanbao/src/adapter.ts&pullRequest=327`:\n\n- `gateway-yuanbao/src/adapter.ts:95+24` = `gateway-zalo/src/adapter.ts:80+24` (`sendMessage` and the start of `sendText`: `refuseAttachments`, then `empty_text`, `not_connected`, `invalid_channel`)\n- the same 16 lines also in `gateway-raft:121`, `gateway-tlon-urbit:83`, `gateway-feishu-lark:87`, `gateway-nostr:101`, `gateway-twitch:103`\n- `gateway-yuanbao:132+24` = `gateway-zalo:115+24` (`onInbound` and `deliver`)\n- `gateway-yuanbao:185+21` = `gateway/src/adapter/weixin-base.ts:199+21` (the `remember` dedup set and `textFor`)\n\nMeasured new duplicated lines per file: yuanbao 69, zalo 63, raft 22, weixin-base 21, credential-patterns 16.\n\n## Expected\n\nThe shared steps live once in the base adapter (or a helper next to it) and each adapter keeps only what is specific to its platform: the error code prefix, the channel id wording, the API call. The behavior of every adapter stays the same, and its existing tests keep passing unchanged. SonarCloud new-code duplication on the pull request is under 3%.\n\n## Acceptance\n\n- `pnpm test` passes for every package touched, with no test changed except imports.\n- `pnpm exec jscpd` (or the repository's duplication check, if it has one) reports none of the blocks listed above.\n- The error codes and messages each adapter returns are the same before and after (the existing tests cover `empty_text`, `not_connected` and `invalid_channel`).\n\n## Related\n\n- #327 (standing `workspace -> develop` pull request)\n- #353 (an earlier duplication fix, WeChat and WeCom)\n- #363 (the security half of the same gate)\n\n---\nFound while clearing the quality gate of #327, 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "d8648c705c3074009703a882a1595a15ffbec1b8",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "guards",
+        "command": "pnpm quality:dts-typechecks && pnpm quality:dts-parity && pnpm quality:registry-augmentation && pnpm quality:integration-story && pnpm quality:adr-citations && pnpm quality:repository-field && pnpm quality:peer-range && pnpm quality:docs && pnpm --filter @theokit/gateway-integration test:unit && for pkg in packages/*/package.json tools/package.json; do node -e \"process.exit(require('./'+process.argv[1]).scripts?.test ? 0 : 1)\" \"$pkg\" || { echo \"$pkg has no test script\"; exit 1; }; done"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm -r --filter='[HEAD~1]' --filter=@theokit/gateway --filter='!@theokit/gateway-tools' run test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 927,
+      "costUsd": 1.5510712999999998,
+      "durationMs": 1905305,
+      "attempts": 2,
+      "mergedSha": "bac158b8b622110b89480d27ef0288cd55aac275"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-plugins#235",
+    "repository": "usetheokit/theokit-plugins",
+    "issueNumber": 235,
+    "title": "plugin-voice: no audio wake-word detector",
+    "body": "**Area**: Voice / Wake word\n**Severity**: medium (missing capability)\n**Parity id**: OC-101 (ledger: open)\n\n## Description\n\nOpenClaw 2026.11.3: gateway-wide wake words synced across nodes; Swabble on macOS (source `src/infra/voicewake.ts:27`, Observed).\nMeasured on OpenClaw: verdict `not-exercised`. needs the macOS app with a microphone (Reported).\n\ntheoclaw 0.1.0: verdict `absent`. stripWakeWord lives in the unwired talk-session module; no variable configures a wake word (Observed).\n\nBoth were measured side by side on 2026-11-10.\n\n## Evidence\n\n- Observed: `theoclaw@0.1.0` dist/voice/talk-session.js:3 stripWakeWord works on text transcripts only\n- Observed: no audio wake-word detector in `@theokit/plugin-voice@0.11.2` or elsewhere in TheoKit (grep wake: only TalkOptions UI)\n\n## What to build\n\nAn on-device keyword-spotting detector in `@theokit/plugin-voice` that listens to the microphone stream and emits an event when the configured wake word is heard, without sending audio to a provider before it fires. TheoClaw's `stripWakeWord` (`dist/voice/talk-session.js:3`) only works on text transcripts.\n\n## Acceptance\n\nWith the wake word 'theo' configured in the browser helper, saying 'theo' fires the wake event and starts a recording; speech without the word fires nothing and sends no STT request.\n\nHow this is checked, so it runs without a person at a microphone: an end-to-end test drives the browser helper in headless Chromium with recorded speech as the microphone (`--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<wav>`). Commit the recordings as fixtures: a few utterances of \"theo\" for enrollment, one more \"theo\" that must fire the wake event and start a recording, and a sentence without the word that must fire nothing and send no STT request (assert on the network log). The recordings may come from a speech synthesizer as long as they are real audio files, not synthetic tones.\n\nA unit test with synthetic tones or a stubbed recorder does not satisfy this issue on its own.\n\n## Related\n\n- usetheokit/theokit#1265 ([B-722], talk mode and wake word) carries the TheoClaw half and gets a comment pointing here\n\n---\nFound while measuring theoclaw 0.1.0 against OpenClaw 2026.11.3 side by side, 2026-11-10. No secrets in this body.\n\n",
+    "labels": [
+      "enhancement",
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "f0d906105fc9dc2ad5511a7668c6423dae23c4aa",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "pnpm lint"
+      },
+      {
+        "name": "format",
+        "command": "pnpm format:check"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 858,
+      "costUsd": 0.6033100999999998,
+      "durationMs": 534523,
+      "attempts": 1,
+      "mergedSha": "1732d5db902f6f6693ea9268f77cc6ba65731d90"
+    },
+    "quick": true
+  },
+  {
+    "id": "usetheokit/theokit-sdk#985",
+    "repository": "usetheokit/theokit-sdk",
+    "issueNumber": 985,
+    "title": "sandbox: no E2B backend ships, though the docs name it; aifactory had to write one",
+    "body": "**Area:** sandbox\n**Severity:** medium (every consumer that wants a cloud sandbox writes its own adapter)\n**Build under test:** @theokit/agents 16.3.x on @theokit/sdk 5.x\n\n## Description\n\n`sandbox/types.d.ts` says remote backends (Docker, Firecracker, E2B) only implement `execute` and `uploadFile`, and `provision.d.ts` says `provisionRepo` runs on Local/Docker/E2B, but no E2B backend ships. aifactory needed one on 2026-11-11 and wrote it outside the SDK: `src/server/factory/e2b-sandbox.ts` in paulohenriquevn/aifactory (commit 8d29e52).\n\nWhat the adapter had to solve, each one verified against E2B with a real sandbox (`e2b-sandbox.e2e.test.ts`, 7 tests passing):\n\n1. **Exit codes.** `sandbox.commands.run` throws `CommandExitError` for a non-zero exit and `TimeoutError` for a timeout. A backend has to turn the first into `{ exitCode }` and the second into 124.\n2. **A dead sandbox is not a timeout.** `SandboxNotRunningError` and `SandboxUnreachableError` extend `TimeoutError`; mapping every `TimeoutError` to 124 reports a stopped sandbox as a slow command, and the caller keeps going.\n3. **Dockerfile `ENV` is not applied.** A template built with `Template().fromDockerfile(...)` starts without the Dockerfile's `ENV` lines, so `HOME`, `CI` and friends must be passed in `envs` at creation.\n4. **Node does not trust E2B's egress proxy.** With `network.rules[].transform.headers` (credentials attached outside the sandbox), curl and git work but `fetch` fails with `unable to verify the first certificate` until `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt`.\n5. **Egress.** `allowOut` plus `denyOut: [ALL_TRAFFIC]` gives the allowlist; `updateNetwork` replaces the whole policy, so a credential renewal must resend the deny and every rule.\n6. **Snapshots.** `Sandbox.deleteSnapshot` fails with `400: cannot delete template ... because there are running sandboxes using it` while a sandbox restored from it runs, so the deletion has to wait for that sandbox to stop.\n\n## Proposal\n\nAn `E2BSandbox extends SandboxBackend` in `@theokit/sdk/sandbox` (with `e2b` as an optional peer) covering 1 to 4, and the `networkPolicy` it was created with, so `SandboxNetworkPolicy` (#1130 in usetheokit/theokit) describes it. Credential headers, renewal and snapshots could follow the same shape, since every VM backend needs them (the Vercel one in aifactory does the same three things).\n\n## Related\n\n- usetheokit/theokit#1130 (declarative `networkPolicy` and `dispose`, closed)\n- paulohenriquevn/aifactory#26\n\n---\nFound while moving aifactory's sandboxes to E2B, 2026-11-11. No secrets in the body.\n",
+    "labels": [
+      "enhancement",
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "b8a5f9e3776fb08cc78266b1dc209712a8a07f67",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "bundle",
+        "command": "pnpm check:bundle"
+      },
+      {
+        "name": "generated-docs",
+        "command": "node tools/generate-error-codes.mjs --check && node tools/generate-capability-map.mjs --check"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm exec turbo run test --filter='[HEAD~1]' --concurrency=3"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 924,
+      "costUsd": 0.5274366,
+      "durationMs": 1928993,
+      "attempts": 2,
+      "mergedSha": "77e081356a3f5df4b82c6ee49a625167af5219c7"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-ui#178",
+    "repository": "usetheokit/theokit-ui",
+    "issueNumber": 178,
+    "title": "release: the i18n layer from #173 has no changeset, so it would not be published",
+    "body": "**Area:** release\n**Severity:** high (the i18n layer cannot be published)\n\n## Description\n\n#173 (closing #172) added an i18n layer to `packages/ui` and reached `develop` without a changeset. `@theokit/ui` publishes through changesets, so promoting `develop` to `main` today would publish nothing: `.changeset/` on `develop` holds only `README.md` and `config.json`.\n\n## Expected\n\nA changeset in `.changeset/` naming `@theokit/ui` with a `minor` bump (a new, backward compatible capability), whose summary says what a consumer gets: a surface can now switch language, and how to use it, written from the exports #173 added.\n\n## Acceptance\n\n- `pnpm exec changeset status --since=origin/main` lists `@theokit/ui` with a minor bump.\n- No source file changes.\n\n## Related\n\n- #172, #173\n- paulohenriquevn/aifactory#27 (the factory now refuses a release with nothing to publish, and fails a task that changes a package without a changeset)\n\n---\nFound while preparing the first release of @theokit/ui from the factory, 2026-11-11. No secrets in the body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "c143208a4efc6800ef649647ab437aa5126b8a63",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "pnpm lint"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 925,
+      "costUsd": 0.12373699999999999,
+      "durationMs": 183045,
+      "attempts": 1,
+      "mergedSha": "9f78bcaa57a69194a2d29e30fc37812981b45e61"
+    },
+    "quick": false
+  },
+  {
+    "id": "paulohenriquevn/aifactory-playground#61",
+    "repository": "paulohenriquevn/aifactory-playground",
+    "issueNumber": 61,
+    "title": "Add truncate(text, max) helper with tests",
+    "body": "Add a `truncate(text, max)` helper to `src/`, exported like the others, with tests in the same style.\n\n## Done when\n- `truncate('hello world', 5)` returns `'hell…'`: the result is at most `max` characters, and the last one is `…` when the text was cut.\n- `truncate('hi', 5)` returns `'hi'` unchanged.\n- `truncate('abc', 0)` throws a `RangeError`, and so does a negative or non-integer `max`.\n- `npm test` passes.\n",
+    "labels": [
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "71220ffeb0950826c20d5836bc15a11f1c22a59d",
+    "checks": [
+      {
+        "name": "test",
+        "command": "npm test"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 493,
+      "costUsd": 0.081582,
+      "durationMs": 66977,
+      "attempts": 1,
+      "mergedSha": "ddcebf190e5f0e821fc5cd99c7734ec30d79fbf9"
+    },
+    "quick": true
+  },
+  {
+    "id": "usetheokit/theokit#1726",
+    "repository": "usetheokit/theokit",
+    "issueNumber": 1726,
+    "title": "theoclaw: six new CodeQL alerts (SSRF, file race, unanchored URL regex, file data sent out)",
+    "body": "**Area:** theoclaw\n**Severity:** high (CodeQL fails on the standing `workspace -> develop` pull request #1514 with six new alerts, so nothing reaches `develop`)\n\n## Description\n\nCodeQL reports six new alerts in code added to `apps/theoclaw` (check run 130696628554 on #1514, 2026-11-11):\n\n| Location | Rule |\n|---|---|\n| `apps/theoclaw/src/ops/proxy.ts:113` | Server-side request forgery: the request URL depends on a user-provided value |\n| `apps/theoclaw/src/sessions/sessions-command.ts:160` | Potential file system race condition (check then use) |\n| `apps/theoclaw/tests/meetings.test.ts:29` | Missing regular expression anchor on a URL pattern |\n| `apps/theoclaw/src/control-client/control-client.ts:48` | File data in outbound network request |\n| `apps/theoclaw/src/skills/publish.ts:101` | File data in outbound network request |\n| `apps/theoclaw/tests/postgres-start.test.ts:2` | Unused import `join` |\n\n## Expected\n\nEach alert is either fixed in code (anchor the regex, open the file once instead of check-then-use, drop the unused import) or, where the flagged flow is the feature itself (the operator's own proxy URL that `theoclaw proxy validate` is asked to reach, the control token read from the state directory and sent to the local control socket, the skill archive a publisher uploads), the code says so next to the line and validates what it can: the scheme, the host the operator configured, a size bound. Every decision is written in the pull request so the owner can dismiss the remaining alerts with that reason.\n\n## Acceptance\n\n- CodeQL on the pull request reports no new alert for the fixed lines.\n- The tests of the touched files pass, with a test for each behavior change (an unanchored URL is refused; a file replaced between check and use is not followed).\n\n---\nFound while clearing #1514, 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "4bfe87220f48b9a81969257d10a1fd3106eebaed",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build:packages"
+      },
+      {
+        "name": "tests",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|mjs)$' | tr '\\n' ' '); X=$(grep -rlE 'bwrap|HOST_TOOLS' apps/theoclaw/tests 2>/dev/null | sed 's/^/--exclude /' | tr '\\n' ' '); [ -z \"$F\" ] || THEOKIT_TEST_RUN_ID=1 pnpm exec vitest related --run --passWithNoTests $X $F"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck:only"
+      },
+      {
+        "name": "theoclaw-types",
+        "command": "pnpm --filter theoclaw run typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|cts|js|mjs|cjs)$' | tr '\\n' ' '); A=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | tr '\\n' ' '); { [ -z \"$F\" ] || NODE_OPTIONS=--max-old-space-size=3072 pnpm exec eslint $F; } && { [ -z \"$A\" ] || pnpm exec prettier --check --ignore-unknown $A; }"
+      },
+      {
+        "name": "release-hygiene",
+        "command": "node scripts/check-changeset-coverage.mjs origin/workspace && node apps/theoclaw/tools/check-exact-versions.mjs apps/theoclaw/package.json"
+      },
+      {
+        "name": "theoclaw-lint",
+        "command": "pnpm --filter theoclaw run lint"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 931,
+      "costUsd": 0.2988478,
+      "durationMs": 744039,
+      "attempts": 1,
+      "mergedSha": "325197579c873c8478f068bab46d48a615f8a48b"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-gateways#354",
+    "repository": "usetheokit/theokit-gateways",
+    "issueNumber": 354,
+    "title": "gateway-wecom, gateway-wechat: five critical Sonar findings in the signature and crypto code drop security and reliability to D",
+    "body": "## Description\n\nThe required check \"SonarCloud Code Analysis\" fails on `workspace`, which blocks the `workspace -> develop` pull request #327. Two of its three failed conditions are \"D Security Rating on New Code\" and \"D Reliability Rating on New Code\". Five critical findings in the new WeChat and WeCom crypto files cause both. This issue covers those two conditions; duplication is a separate issue.\n\n## Repro\n\n- Check run: https://sonarcloud.io/dashboard?id=usetheokit_theokit-gateways&pullRequest=327 (GitHub check run 130477338026 on 00af16f, 5 annotations)\n- Command: `gh api repos/usetheokit/theokit-gateways/check-runs/130477338026/annotations`\n\n```\npackages/gateway-wecom/src/crypto.ts:18   S4790 VULNERABILITY  Make sure this weak hash algorithm is not used in a sensitive context here.\npackages/gateway-wecom/src/crypto.ts:20   S2871 BUG            Provide a compare function that depends on \"String.localeCompare\", to reliably sort elements alphabetically.\npackages/gateway-wecom/src/crypto.ts:76   S5542 VULNERABILITY  Use a secure mode and padding scheme.\npackages/gateway-wechat/src/signature.ts:10  S4790 VULNERABILITY  Make sure this weak hash algorithm is not used in a sensitive context here.\npackages/gateway-wechat/src/signature.ts:12  S2871 BUG            Provide a compare function that depends on \"String.localeCompare\", to reliably sort elements alphabetically.\n```\n\nAll five are severity CRITICAL in the SonarCloud issues API.\n\n## Expected\n\nSecurity and reliability ratings on new code at A.\n\n## Actual\n\nBoth at D.\n\n## Probable cause\n\n- `packages/gateway-wechat/src/signature.ts:10-12` (3efe7e7, #345) and `packages/gateway-wecom/src/crypto.ts:18-20` (5980e00, #349) compute `sha1([...].sort().join(\"\"))`.\n- `packages/gateway-wecom/src/crypto.ts:76` (5980e00) uses `aes-256-cbc` with the IV taken from the key and manual PKCS#7 padding.\n\nSHA-1 signatures, AES-256-CBC, the key-derived IV and the 32-byte PKCS#7 block are what the WeChat and WeCom callback protocols require (the file headers state the formulas). The adapters cannot pick another algorithm and still talk to the platform. What is fixable:\n\n1. S2871 (the two BUGs): `.sort()` on strings without a comparator. The WeChat/WeCom spec sorts by byte order, so the comparator should be an explicit code-unit comparison (`(a, b) => (a < b ? -1 : a > b ? 1 : 0)`), not `localeCompare`, which would change the signature for mixed-case input. Add a test with mixed-case token and nonce that pins the expected signature.\n2. S4790 and S5542 (the three VULNERABILITYs): mark them as accepted in code with a `// NOSONAR` comment on the line that names the protocol requirement, or have the repository owner resolve them as \"Accepted\" in SonarCloud. Check how earlier gateways that verify SHA-1 or CBC signatures were handled and do the same.\n\n## Acceptance\n\n- The SonarCloud quality gate on the `workspace -> develop` pull request no longer lists \"Reliability Rating on New Code\" or \"Security Rating on New Code\" as failed conditions.\n- A test in `gateway-wechat` and one in `gateway-wecom` sign a request whose token and nonce mix upper and lower case and match a signature computed by the platform's documented algorithm.\n- The \"SonarCloud Code Analysis\" check passes on `workspace` once this and the separate duplication issue are both fixed.\n\n---\nFound while unblocking workspace -> develop (#327), 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "9c7e78a8780ff5a6489f14a2a95878f95ffbf082",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "guards",
+        "command": "pnpm quality:dts-typechecks && pnpm quality:dts-parity && pnpm quality:registry-augmentation && pnpm quality:integration-story && pnpm quality:adr-citations && pnpm quality:repository-field && pnpm quality:peer-range && pnpm quality:docs && pnpm --filter @theokit/gateway-integration test:unit && for pkg in packages/*/package.json tools/package.json; do node -e \"process.exit(require('./'+process.argv[1]).scripts?.test ? 0 : 1)\" \"$pkg\" || { echo \"$pkg has no test script\"; exit 1; }; done"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm -r --filter='[HEAD~1]' --filter=@theokit/gateway --filter='!@theokit/gateway-tools' run test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 908,
+      "costUsd": 0.1751435,
+      "durationMs": 1715321,
+      "attempts": 1,
+      "mergedSha": "55cd22584f0c9e3dc8f5ead45eb7b9fe3049f9f7"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-sdk#981",
+    "repository": "usetheokit/theokit-sdk",
+    "issueNumber": 981,
+    "title": "deps: two new high mongoose advisories (via mem0ai > natural) fail pnpm audit in the Quality step",
+    "body": "## Description\n\nThe `validate (node 22.12)` job is red on `workspace` and would be red on any branch, which blocks the `workspace -> develop` pull request #979. Two high-severity mongoose advisories published on 2026-11-10, after the last green `develop` run, make `pnpm audit --audit-level=high` fail inside `pnpm quality`. No code change caused this; the lockfile did not change.\n\n## Repro\n\n- Run: https://github.com/usetheokit/theokit-sdk/actions/runs/43011608059 (job `validate (node 22.12)`, step `Quality (dead code, cycles, LoC, duplication)`)\n- Command: `pnpm quality:audit` (runs `pnpm audit --prod --audit-level=low && pnpm audit --audit-level=high`)\n\n```\n│ high                │ Mongoose: Connection-level sanitizeFilter not applied  │\n│ Package             │ mongoose                                               │\n│ Vulnerable versions │ >=9.0.0 <9.11.4                                        │\n│ Patched versions    │ >=9.11.4                                               │\n│ Paths               │ packages__memory-mem0>mem0ai>natural>mongoose          │\n│ More info           │ https://github.com/advisories/GHSA-gg4r-jv3p-qx3c      │\n\n│ high                │ Mongoose walks into inherited properties when          │\n│                     │ hydrating, setting, and merging, ...                   │\n│ Paths               │ packages__memory-mem0>mem0ai>natural>mongoose          │\n│ More info           │ https://github.com/advisories/GHSA-8332-j7wj-wjw4      │\n\n24 vulnerabilities found\nSeverity: 2 low | 20 moderate | 2 high\n ELIFECYCLE  Command failed with exit code 1.\n```\n\n## Expected\n\n`pnpm quality:audit` exits 0, as it did on `develop` in run 42862271563 (2026-11-10 17:19 UTC: \"20 vulnerabilities found, Severity: 2 low | 18 moderate\", no high).\n\n## Actual\n\nTwo high advisories against `mongoose@9.10.0`, which `pnpm-lock.yaml` resolves through `packages/memory-mem0 -> mem0ai@3.1.8 -> natural@8.1.1 -> mongoose`.\n\n## Probable cause\n\nThe advisories are new, not the code:\n\n- GHSA-gg4r-jv3p-qx3c, published 2026-11-10T19:56Z\n- GHSA-8332-j7wj-wjw4, published 2026-11-10T20:56Z\n\nBoth came out after the last green `develop` run. The `--prod` audit passes (\"No known vulnerabilities found\"), so the path is not in a production dependency of a published package; only the second, all-dependencies audit at `high` fails.\n\nThe repository already handles this case with a scoped `pnpm.overrides` entry in the root `package.json` (see `smol-toml@<=1.7.0` from #645). The same pattern here would be an override such as `\"mongoose@>=9.0.0 <9.11.4\": \"^9.11.4\"`, then `pnpm install` to refresh the lockfile. It needs a check that `natural` and `mem0ai` still load with the patched mongoose (the `memory-mem0` tests).\n\n## Acceptance\n\n- `pnpm audit --audit-level=high` on `workspace` reports no high or critical advisory and exits 0.\n- `pnpm --filter @theokit/memory-mem0 test` passes.\n- The `validate (node 22.12)` job's `Quality (dead code, cycles, LoC, duplication)` step passes on `workspace` (assuming the separate duplication-gate failure in the same step is fixed too).\n\n---\nFound while unblocking workspace -> develop (#979), 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "39884275ea95cf5a511120641698d1a2b951b1b9",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "bundle",
+        "command": "pnpm check:bundle"
+      },
+      {
+        "name": "generated-docs",
+        "command": "node tools/generate-error-codes.mjs --check && node tools/generate-capability-map.mjs --check"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm exec turbo run test --filter='[HEAD~1]' --concurrency=3"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 904,
+      "costUsd": 0.15412779999999998,
+      "durationMs": 1442170,
+      "attempts": 1,
+      "mergedSha": "394b9012055b25abed66b4aa1d62ceb16cb2656e"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-ui#175",
+    "repository": "usetheokit/theokit-ui",
+    "issueNumber": 175,
+    "title": "ci: Playwright 1.60.0 cannot install Chromium on the ubuntu-26.04 runner, failing Browser + stories",
+    "body": "## Description\n\nThe `Browser + stories` job fails before running a single test, which makes the CI workflow red and blocks the `workspace -> develop` pull request #174. GitHub's `ubuntu-latest` runner now resolves to Ubuntu 26.04, and the pinned Playwright 1.60.0 refuses to install Chromium there. No code change caused it; a re-run fails the same way.\n\n## Repro\n\n- Run: https://github.com/usetheokit/theokit-ui/actions/runs/42994057404 (attempt 2, job `Browser + stories`, step `Install Playwright Chromium`)\n- Command (`.github/workflows/ci.yml:116-118`, working directory `packages/ui`): `pnpm exec playwright install --with-deps chromium`\n\n```\nRunner Image\nImage: ubuntu-26.04\nVersion: 20261101.186.1\n\nBEWARE: your OS is not officially supported by Playwright; installing dependencies for ubuntu26.04-x64 as a fallback.\nCannot install dependencies for ubuntu26.04-x64 with Playwright 1.60.0!\nFailed to install browsers\nError: ERROR: Playwright does not support chromium on ubuntu26.04-x64\n##[error]Process completed with exit code 1.\n```\n\n## Expected\n\nChromium installs and the job goes on to `quality:a11y`, `quality:visual` and `ladle:build`, as in the last green `develop` run 36186072037, which ran on `Image: ubuntu-24.04`.\n\n## Actual\n\nThe install step exits 1 on attempt 1 and attempt 2.\n\n## Probable cause\n\n- `.github/workflows/ci.yml:103` runs the job on `ubuntu-latest`, which moved from `ubuntu-24.04` to `ubuntu-26.04`.\n- `packages/ui/package.json:574` declares `\"@playwright/test\": \"^1.60.0\"` and `pnpm-lock.yaml` resolves `playwright@1.60.0`, which has no host entry for Ubuntu 26.04.\n- The latest release, `playwright-core@1.65.0`, lists `ubuntu26.04-x64` in its host table (checked in the published package). It has not been run in this repository's CI.\n\nTwo fixes, either one sufficient:\n\n1. Bump `@playwright/test` to a release that supports Ubuntu 26.04 (1.65.0 or later) and refresh the lockfile. Visual snapshots may change with the new Chromium, so `quality:visual` has to pass, and any baseline update must be reviewed rather than accepted blindly.\n2. Pin the job to `runs-on: ubuntu-24.04` until the upgrade lands. This is quicker, and it keeps the visual baselines tied to the image they were taken on.\n\n## Acceptance\n\n- The `Browser + stories` job of the CI workflow passes on `workspace`, including `Install Playwright Chromium`, `quality:a11y`, `quality:visual` and `ladle:build`.\n- The `CI` aggregate check on the `workspace -> develop` pull request is green.\n\n---\nFound while unblocking workspace -> develop (#174), 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "fcd98213b9f7221e4607901d9e4f7dd29836b03d",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "pnpm lint"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 910,
+      "costUsd": 0.1195746,
+      "durationMs": 1036667,
+      "attempts": 1,
+      "mergedSha": "c143208a4efc6800ef649647ab437aa5126b8a63"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit#1725",
+    "repository": "usetheokit/theokit",
+    "issueNumber": 1725,
+    "title": "theoclaw: eslint fails with 8 errors in tests and the parity tools",
+    "body": "**Area:** theoclaw\n**Severity:** high (the TheoClaw job of the standing `workspace -> develop` pull request #1514 fails on it, so nothing reaches `develop`)\n\n## Description\n\n`pnpm --filter theoclaw run lint` (`eslint .` in `apps/theoclaw`) fails with 8 errors on `workspace`, all in files added by recent work:\n\n```\napps/theoclaw/tests/http-api.test.ts          259:114 @typescript-eslint/no-explicit-any\napps/theoclaw/tests/mcp-relay-connector.test.ts 25:53, 30:46, 120:23 @typescript-eslint/no-explicit-any\napps/theoclaw/tests/postgres-start.test.ts       2:10  @typescript-eslint/no-unused-vars ('join')\napps/theoclaw/tools/parity/gate.mjs             37:11  sonarjs/no-inverted-boolean-check\napps/theoclaw/tools/parity/gate.mjs             45:25  sonarjs/no-os-command-from-path\napps/theoclaw/tools/parity/harness.mjs          39:25  sonarjs/no-os-command-from-path\n```\n\nSource: TheoClaw job of run 43070028552 on #1514, 2026-11-11.\n\n## Expected\n\n`pnpm --filter theoclaw run lint` exits 0. The `any` become the real types, the unused import goes, the inverted check is written the direct way, and the commands the parity tools spawn are resolved to a fixed path (or the reason a PATH lookup is safe there is stated with an eslint disable comment on that line, as the repository does elsewhere). No rule is turned off for the whole file or the package.\n\n## Acceptance\n\n- `pnpm --filter theoclaw run lint` exits 0.\n- `pnpm --filter theoclaw run typecheck` and the tests of the touched files pass.\n\n---\nFound while clearing #1514, 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "13bb15a6e2e488c2d6d8c870de773cb3b6891398",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build:packages"
+      },
+      {
+        "name": "tests",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|mjs)$' | tr '\\n' ' '); X=$(grep -rlE 'bwrap|HOST_TOOLS' apps/theoclaw/tests 2>/dev/null | sed 's/^/--exclude /' | tr '\\n' ' '); [ -z \"$F\" ] || THEOKIT_TEST_RUN_ID=1 pnpm exec vitest related --run --passWithNoTests $X $F"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck:only"
+      },
+      {
+        "name": "theoclaw-types",
+        "command": "pnpm --filter theoclaw run typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|cts|js|mjs|cjs)$' | tr '\\n' ' '); A=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | tr '\\n' ' '); { [ -z \"$F\" ] || NODE_OPTIONS=--max-old-space-size=3072 pnpm exec eslint $F; } && { [ -z \"$A\" ] || pnpm exec prettier --check --ignore-unknown $A; }"
+      },
+      {
+        "name": "release-hygiene",
+        "command": "node scripts/check-changeset-coverage.mjs origin/workspace && node apps/theoclaw/tools/check-exact-versions.mjs apps/theoclaw/package.json"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 929,
+      "costUsd": 0.1783539,
+      "durationMs": 759414,
+      "attempts": 1,
+      "mergedSha": "4bfe87220f48b9a81969257d10a1fd3106eebaed"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-gateways#348",
+    "repository": "usetheokit/theokit-gateways",
+    "issueNumber": 348,
+    "title": "gateway-email: the first connect dispatches the whole unread backlog, from inside start()",
+    "body": "**Area:** gateway-email\n**Severity:** high (on a real mailbox the first start dispatches years of unread mail; under an open policy the host answers all of it)\n**Build under test:** `@theokit/gateway-email` 0.3.1 (through theoclaw 0.1.0); the same code is in the published 0.4.0 (`_drainUnseen` in `dist/index.js`)\n**Environment:** a Gmail IMAP mailbox with 22,421 messages, 22,353 of them unseen\n\n## Description\nOn its first connect the adapter fetches every UNSEEN message and dispatches each one to the handler, and it does so before `start()` resolves. A host that bounds its start time gives up on the channel while the adapter keeps dispatching.\n\n## Repro\n1. Start theoclaw with only e-mail configured and `THEOCLAW_DM_POLICY=open` on a mailbox with a large unseen backlog.\n2. After 30 s theoclaw prints `email: start timed out after 30000 ms`.\n3. In the next two minutes the adapter logs 20,662 `[email] dropped automated sender: ...` lines while walking the backlog. I stopped it before it reached human mail, which the open policy would have answered.\n\nReproduced 1/1 on 2026-11-10.\n\n## Expected\nA first connect sets a baseline (the mailbox's current UIDNEXT, with its UIDVALIDITY) and dispatches only mail that arrives after it, as OpenClaw's imap plugin does (`cursor=baseline uidValidity=1761846127 uid=26316`, existing mail not dispatched). Backlog processing, if wanted, is an explicit option with a cap. `start()` resolves once the connection and the baseline are set, not after a drain.\n\n## Actual\nEvery unseen message is dispatched on first connect, from inside `start()`.\n\n## Probable cause\n`_drainUnseen()` calls `fetchUnseen()` and dispatches all results, and the start path awaits it. theokit-gateways#11 fixed re-delivery on reconnect by marking `\\Seen`; it did not add a starting point, and mail the adapter drops (automated senders) is still in the backlog the next time.\n\n## Suggested fix\nPersist a per-mailbox cursor `{uidValidity, uid}` through the adapter's state seam; on first connect without one, take UIDNEXT as the baseline and dispatch nothing older. Reset the cursor when UIDVALIDITY changes. Resolve `start()` before any dispatch. Tests with a fake IMAP client: first connect with 3 unseen dispatches 0; a new message after it dispatches 1; a restart dispatches nothing already past the cursor.\n\n## Related\n- usetheokit/theokit-gateways#11 (re-delivery on reconnect, closed)\n\n---\nFound while measuring theoclaw against OpenClaw side by side (parity OC-14), 2026-11-10.\nNo secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "7eac99aa5d7916f7b36896dd2440bb2be40c7c8e",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "guards",
+        "command": "pnpm quality:dts-typechecks && pnpm quality:dts-parity && pnpm quality:registry-augmentation && pnpm quality:integration-story && pnpm quality:adr-citations && pnpm quality:repository-field && pnpm quality:peer-range && pnpm quality:docs && pnpm --filter @theokit/gateway-integration test:unit && for pkg in packages/*/package.json tools/package.json; do node -e \"process.exit(require('./'+process.argv[1]).scripts?.test ? 0 : 1)\" \"$pkg\" || { echo \"$pkg has no test script\"; exit 1; }; done"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm -r --filter='[HEAD~1]' --filter=@theokit/gateway --filter='!@theokit/gateway-tools' run test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 896,
+      "costUsd": 0.30413779999999996,
+      "durationMs": 755912,
+      "attempts": 1,
+      "mergedSha": "5db4bf0502ea22888f4e306477899caca09befe2"
+    },
+    "quick": true
+  },
+  {
+    "id": "usetheokit/theokit-sdk#975",
+    "repository": "usetheokit/theokit-sdk",
+    "issueNumber": 975,
+    "title": "sdk: the MCP client cannot subscribe to events from an MCP server",
+    "body": "**Area**: Automation / MCP Events\n**Severity**: medium (missing capability)\n**Parity id**: OC-115 (ledger: not-in-ledger)\n\n## Description\n\nOpenClaw 2026.11.3: subscribes to events from configured MCP servers (OpenAI webhook profile, MCP `2026-07-28`, `events/subscribe`) over Streamable HTTP; signed per-subscription HMAC callbacks trigger existing automations; adds an `mcp_events` tool (source `extensions/mcp-events/index.ts:20,29,69 (Observed); docs/automation/mcp-events.md:17-70`, Reported).\nMeasured on OpenClaw: verdict `not-exercised`. needs an MCP server implementing the events profile and a public HTTPS callbackOrigin (Reported).\n\ntheoclaw 0.1.0: verdict `absent`. no match; MCP servers reach only the /control agent as tools (THEOCLAW_EXTERNAL_TOOLS) (Observed).\n\nBoth were measured side by side on 2026-11-10.\n\n## Evidence\n\n- Observed: `@theokit/sdk@5.15.3` : no events/subscribe or MCP event handling (grep: not found); `theoclaw@0.1.0` dist/ MCP servers are tools only\n\n## What to build\n\nSupport MCP event subscription (`events/subscribe`, the MCP `2026-07-28` events profile over Streamable HTTP) in the SDK's MCP client, delivering each event to a callback with its subscription id, and verify signed callbacks (per-subscription HMAC) as OpenClaw does (`extensions/mcp-events/index.ts:20,29,69`, Observed).\n\n## Acceptance\n\nA local MCP server implementing the events profile emits an event, and a program using the SDK's MCP client receives it in its callback with the payload intact; a callback with a wrong signature is rejected.\n\nA unit test with a fake transport or a stubbed model does not satisfy this issue on its own; the check runs against the real service.\n\n## Related\n\n- the TheoClaw trigger issue for OC-115 (blocked by this one)\n\n---\nFound while measuring theoclaw 0.1.0 against OpenClaw 2026.11.3 side by side, 2026-11-10. No secrets in this body.\n",
+    "labels": [
+      "enhancement",
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "b15af2770bdca9b46a8543d82dd85e79d47701aa",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "bundle",
+        "command": "pnpm check:bundle"
+      },
+      {
+        "name": "generated-docs",
+        "command": "node tools/generate-error-codes.mjs --check && node tools/generate-capability-map.mjs --check"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm exec turbo run test --filter='[HEAD~1]' --concurrency=3"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 698,
+      "costUsd": 0.43721499999999996,
+      "durationMs": 938424,
+      "attempts": 1,
+      "mergedSha": "6ab9adaaf54f44477ac548bc050d528797b2383f"
+    },
+    "quick": true
+  },
+  {
+    "id": "usetheokit/theokit-ui#172",
+    "repository": "usetheokit/theokit-ui",
+    "issueNumber": 172,
+    "title": "ui: no i18n layer, so a surface cannot switch language",
+    "body": "**Area**: Chat UX / Swedish locale\n**Severity**: medium (missing capability)\n**Parity id**: OC-125 (ledger: not-in-ledger)\n\n## Description\n\nOpenClaw 2026.11.3: Control UI translation and docs glossary in Swedish (source `ui/src/i18n/locales/sv.ts; docs/.i18n/glossary.sv.json`, Observed).\nMeasured on OpenClaw: verdict `partial`. 200, 453901 bytes, 42 'Inställningar', 36 'Skicka', 1 'Svenska'. Switching the language in a browser was not done. (Observed).\n\ntheoclaw 0.1.0: verdict `absent`. 0 matches for 'Svenska' or 'Inställningar'; WebChat has no locale switch. (Observed).\n\nBoth were measured side by side on 2026-11-10.\n\n## Evidence\n\n- Reported: theokit docs/surfaces/i18n.md (origin/workspace): 'no locale, message, catalogue or formatting module exists'\n- Observed: WebChat has no locale switch (data.json)\n\n## What to build\n\nAn i18n layer in `@theokit/ui`: message catalogues per locale, a locale switch, and formatting helpers. theokit's `docs/surfaces/i18n.md` (origin/workspace) says no locale, message, catalogue or formatting module exists.\n\n## Acceptance\n\nA page built with `@theokit/ui` and a Swedish catalogue switches its settings label to 'Inställningar' when the locale is set to sv, and back when set to en.\n\nA unit test with a fake transport or a stubbed model does not satisfy this issue on its own; the check runs against the real service.\n\n## Related\n\n- the TheoClaw Swedish WebChat issue for OC-125 (blocked by this one)\n\n---\nFound while measuring theoclaw 0.1.0 against OpenClaw 2026.11.3 side by side, 2026-11-10. No secrets in this body.\n",
+    "labels": [
+      "enhancement",
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "4a981626750660ad74d5de1e595d36eebc0dde52",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "pnpm lint"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 859,
+      "costUsd": 0.1799374,
+      "durationMs": 1395767,
+      "attempts": 1,
+      "mergedSha": "9095546bc5ed028fba962d52907c02b486735b21"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit#1690",
+    "repository": "usetheokit/theokit",
+    "issueNumber": 1690,
+    "title": "theoclaw: the paired worker's local send passes no untrusted content options (worker.ts:137)",
+    "body": "**Area:** theoclaw / worker\n**Severity:** high (breaks the TheoClaw and Type tests jobs on `workspace`, one of the failures blocking #1514)\n\n## Description\n\nA paired worker's local model call passes no untrusted content options, so the guard test that keeps every agent send in `src` safe fails on `workspace`.\n\n## Repro\n\nCI run https://github.com/usetheokit/theokit/actions/runs/43012060894, jobs \"TheoClaw (the assistant assembled on this framework)\" and \"Type tests\":\n\n```\nFAIL  theoclaw  tests/untrusted-content-sends.test.ts > every send in src passes the untrusted content options\nAssertionError: expected [ 'worker/worker.ts:137' ] to deeply equal []\n```\n\n## Probable cause\n\n`apps/theoclaw/src/worker/worker.ts:137` is `const run = await agent.send(message)` in `runLocal`, added by 5d18acd1 (#1668, for #1590). It passes no untrusted content options.\n\n## Acceptance\n\n`pnpm --filter theoclaw exec vitest run tests/untrusted-content-sends.test.ts` passes on `workspace`, with `worker/worker.ts` passing the options the way the other agent sends in `src` do, and no entry added to the test's exception list.\n\n## Related\n\n- #1367 (the same guard, earlier sends; done, so this new site gets its own issue)\n- #1514 (`workspace -> develop`)\n\n---\nFound while unblocking workspace -> develop (#1514), 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "5541a65777c3f7ca2f2a58b25f9f717789cfab28",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build:packages"
+      },
+      {
+        "name": "tests",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|mjs)$' | tr '\\n' ' '); X=$(grep -rlE 'bwrap|HOST_TOOLS' apps/theoclaw/tests 2>/dev/null | sed 's/^/--exclude /' | tr '\\n' ' '); [ -z \"$F\" ] || THEOKIT_TEST_RUN_ID=1 pnpm exec vitest related --run --passWithNoTests $X $F"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck:only"
+      },
+      {
+        "name": "theoclaw-types",
+        "command": "pnpm --filter theoclaw run typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|cts|js|mjs|cjs)$' | tr '\\n' ' '); A=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | tr '\\n' ' '); { [ -z \"$F\" ] || NODE_OPTIONS=--max-old-space-size=3072 pnpm exec eslint $F; } && { [ -z \"$A\" ] || pnpm exec prettier --check --ignore-unknown $A; }"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 922,
+      "costUsd": 0.1064466,
+      "durationMs": 737544,
+      "attempts": 1,
+      "mergedSha": "bd4e050dd571aaa1ebafde4432a6bd7551bc0733"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-gateways#347",
+    "repository": "usetheokit/theokit-gateways",
+    "issueNumber": 347,
+    "title": "gateway-matrix: the bot never joins a room or DM it is invited to",
+    "body": "**Area:** gateway-matrix\n**Severity:** high (a bot invited to a room or a DM never joins, so nobody can reach it without an admin call)\n**Build under test:** `@theokit/gateway-matrix` 0.3.0 (through theoclaw 0.1.0); the published 0.5.0 has no invite handling either (no `invite` in `dist/`)\n**Environment:** local Synapse on 127.0.0.1:8008, bot `@theoclaw:localhost`, human `@tester-h:localhost`\n\n## Description\nThe adapter connects and syncs, but never accepts an invite. A user who opens a DM with the bot or invites it to a room waits forever: the bot stays outside the room and receives nothing.\n\n## Repro\n1. Start theoclaw with `THEOCLAW_MATRIX_HOMESERVER_URL`, `THEOCLAW_MATRIX_ACCESS_TOKEN` and `THEOCLAW_MATRIX_USER_ID` for the bot.\n2. As `@tester-h:localhost`, create a room and invite the bot.\n3. After 10 s, `GET /_matrix/client/v3/joined_rooms` with the bot's token returns `{\"joined_rooms\":[]}`.\n4. Join the bot by API (`POST /_matrix/client/v3/join/<room>`); a DM \"Reply with exactly the word PONG-MX\" is then answered \"PONG-MX\". So everything after the join works.\n\nReproduced 1/1 on 2026-11-10.\n\n## Expected\nAn invite from a sender the host would accept is joined, as OpenClaw's matrix channel does (`autoJoin`: it joined a pending invite at start and a live one). An invite from anyone else is left pending or declined, so a stranger cannot pull the bot into a room.\n\n## Actual\nNo invite is ever joined; `joined_rooms` stays empty.\n\n## Probable cause\nThe adapter handles timeline events of joined rooms only, and nothing reacts to `m.room.member` with `membership: invite` for the bot's own user ID.\n\n## Suggested fix\nHandle the bot's invites in the sync loop (both `rooms.invite` in a sync response and the pending ones at start) and join through the client, gated by an option the host passes (for example `acceptInvite(inviter, roomId) => boolean`), so theoclaw can apply its owner and allowlist rules. Unit tests with a stubbed client, plus the existing live Synapse suite.\n\n## Related\n- usetheokit/theokit#1228 (group mention gating), separate.\n\n---\nFound while measuring theoclaw against OpenClaw side by side (parity OC-8), 2026-11-10.\nNo secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "7eac99aa5d7916f7b36896dd2440bb2be40c7c8e",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "guards",
+        "command": "pnpm quality:dts-typechecks && pnpm quality:dts-parity && pnpm quality:registry-augmentation && pnpm quality:integration-story && pnpm quality:adr-citations && pnpm quality:repository-field && pnpm quality:peer-range && pnpm quality:docs && pnpm --filter @theokit/gateway-integration test:unit && for pkg in packages/*/package.json tools/package.json; do node -e \"process.exit(require('./'+process.argv[1]).scripts?.test ? 0 : 1)\" \"$pkg\" || { echo \"$pkg has no test script\"; exit 1; }; done"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm -r --filter='[HEAD~1]' --filter=@theokit/gateway --filter='!@theokit/gateway-tools' run test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 894,
+      "costUsd": 0.6141265999999999,
+      "durationMs": 1046185,
+      "attempts": 2,
+      "mergedSha": "fab612739e53a7a38491d8b7b7559f6535e7e65f"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-sdk#966",
+    "repository": "usetheokit/theokit-sdk",
+    "issueNumber": 966,
+    "title": "llm: nothing bounds the wait for a response's headers, so a request whose response never starts holds the turn for up to 300 s",
+    "body": "**Area:** LLM transport (`internal/llm/sse.ts`, `internal/runtime-fetch.ts`)\n**Severity:** high. A model request whose response never starts holds the turn for up to 300 s with nothing on screen and nothing in the logs; in TheoClaw it makes H-1 fail (usetheokit/theokit#1497).\n**Build under test:** @theokit/sdk 5.15.1 and main at b3998216, Node 22.23.3 (bundled undici 6.28.1), OpenRouter, google/gemini-2.5-flash\n\n## Description\nThe SDK bounds the time between SSE body reads (`readWithIdleTimeout`, `DEFAULT_SSE_IDLE_MS = 60_000`, `stream_idle_timeout`), but nothing bounds the wait for the response headers. `boundFetch` uses `globalThis.fetch` with no dispatcher, so that wait falls to undici's default `headersTimeout`, which undici documents as 300 s (*Reported*, not measured here). Until then the request neither fails nor retries, so `retrying-client` never gets a chance.\n\n## Evidence (*Observed*, a TheoClaw instance running H-1, traced with `diagnostics_channel` and `ss`)\n- Request #1 of the session (a short reply): `sendHeaders`, `bodySent`, `headers 200` about 1 s later.\n- The stalled request: `create`, `sendHeaders`, `bodySent`, then no `headers` and no `error` for 90 s, until the test gave up.\n- During the stall the process has **no TCP socket to openrouter.ai** at all (`ss -tanp`), its main thread is idle in `ep_poll`, and the CPU profile is 93 of 94 s idle. The request is still pending in the SDK's turn.\n- The same prompt sent to OpenRouter directly gets its first content chunk in 0.9 to 1.2 s (6 of 6), and the stall is intermittent (about 1 in 4 H-1 runs locally on develop).\n\nWhy the connection disappeared without an error reaching the request is not established; that part may be an undici or a server-side behaviour. Either way the client has no bound on it.\n\n## Expected\nA request whose response headers do not arrive within a bound fails with a typed, retryable error (for example `NetworkError` with `code: \"response_headers_timeout\"`), and the existing retry policy retries it. Suggested shape (not validated): a `fetch` wrapper that races the `fetch` promise against an `AbortSignal.timeout`-style timer combined with the caller's signal, default about 30 s (OpenRouter answers the headers of a streaming request in about 1 s here), configurable next to the SSE idle bound, and `<= 0` disables it like the idle bound does.\n\nA unit test with a fetch that never resolves should see the typed error after the bound and one retry; it fails today because the request waits forever.\n\n## Related\nusetheokit/theokit#1497 (H-1 in TheoClaw), usetheokit/theokit#1235.\n\n---\nFound while tracing the H-1 failures on TheoClaw develop, 2026-11-10.\nNo secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "bf784d00cfb05bac107127c370a8662cfda393c1",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "bundle",
+        "command": "pnpm check:bundle"
+      },
+      {
+        "name": "generated-docs",
+        "command": "node tools/generate-error-codes.mjs --check && node tools/generate-capability-map.mjs --check"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm exec turbo run test --filter='[HEAD~1]' --concurrency=3"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 671,
+      "costUsd": 0.28699670000000005,
+      "durationMs": 1059422,
+      "attempts": 1,
+      "mergedSha": "2e162cad9b3dcc858536e1fc799f76528132f63f"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit#1686",
+    "repository": "usetheokit/theokit",
+    "issueNumber": 1686,
+    "title": "theoclaw: delegate_all workers receive the custodian skills, failing import-isolation.test.ts",
+    "body": "## Description\n\nThe custodian skills meant only for the owner's `/control` agent now reach every `delegate_all` worker too, which breaks TheoClaw's import-isolation test.\n\n## Repro\n\n- Run: https://github.com/usetheokit/theokit/actions/runs/43012060894, jobs \"TheoClaw (the assistant assembled on this framework)\" (`test`) and \"Type tests\" (`pnpm test:types`), head daa0024.\n- Command: `pnpm --filter theoclaw test`\n- Output:\n\n```\nFAIL  theoclaw  tests/import-isolation.test.ts > the workers of a /control agent that carries an import > builds each delegate_all worker from the import-free factory, without the prompt or the servers\nAssertionError: expected { model: 'openrouter/m', …(8) } to not have property \"skills\"\n+ Received:\n{\n  \"inline\": [\n    { \"name\": \"diagnose-gateway\", \"source\": \"inline://diagnose-gateway\", ... },\n    { \"name\": \"add-model-provider\", ... },\n    { \"name\": \"configure-channel\", ... },\n    { \"name\": \"cloud-image-bake\", ... },\n  ],\n}\n ❯ tests/import-isolation.test.ts:189:24\n```\n\n## Expected\n\nA worker built by the import-free factory has no `skills`, no `mcpServers` and no `delegate_all`. The custodian skills go only to the system agent, as #1577 says.\n\n## Actual\n\nThe worker carries the four custodian skills.\n\n## Probable cause\n\nb1e94458 (#1657, for #1577) set `custodian: true` inside `createAgentFactory` (`apps/theoclaw/src/control-plane/agent-factory.ts:148`), and `apps/theoclaw/src/agent/create-agent.ts:108` merges `custodianSkills()` whenever that flag is set. `createAgentFactory` is also what builds the import-free worker factory (`apps/theoclaw/src/main.ts:115`, used at `apps/theoclaw/src/composition.ts:584`), so every worker becomes a \"system agent\". The flag belongs to the `/control` agent's factory only, not to the shared one.\n\n## Acceptance\n\n- `tests/import-isolation.test.ts` passes unchanged.\n- The `/control` agent still gets the custodian skills (the test #1657 added in `tests/workspace-skills.test.ts` still passes).\n- The \"TheoClaw (the assistant assembled on this framework)\" step passes on `workspace` (together with the other TheoClaw failures tracked in their own issues).\n\n---\nFound while unblocking workspace -> develop (#1514), 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "de3a617872f4a89ce95af4563f6720443ff25cc8",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build:packages"
+      },
+      {
+        "name": "tests",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|mjs)$' | tr '\\n' ' '); X=$(grep -rlE 'bwrap|HOST_TOOLS' apps/theoclaw/tests 2>/dev/null | sed 's/^/--exclude /' | tr '\\n' ' '); [ -z \"$F\" ] || THEOKIT_TEST_RUN_ID=1 pnpm exec vitest related --run --passWithNoTests $X $F"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck:only"
+      },
+      {
+        "name": "theoclaw-types",
+        "command": "pnpm --filter theoclaw run typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|cts|js|mjs|cjs)$' | tr '\\n' ' '); A=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | tr '\\n' ' '); { [ -z \"$F\" ] || NODE_OPTIONS=--max-old-space-size=3072 pnpm exec eslint $F; } && { [ -z \"$A\" ] || pnpm exec prettier --check --ignore-unknown $A; }"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 920,
+      "costUsd": 0.31702600000000003,
+      "durationMs": 1137686,
+      "attempts": 1,
+      "mergedSha": "deb8676e70ca0816602ca79961e8ea87fba70171"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-gateways#343",
+    "repository": "usetheokit/theokit-gateways",
+    "issueNumber": 343,
+    "title": "gateway-x: no adapter turns X (Twitter) mentions into conversations",
+    "body": "**Area**: Channels / X (Twitter)\n**Severity**: medium (missing capability)\n**Parity id**: OC-114 (ledger: not-in-ledger)\n\n## Description\n\nOpenClaw 2026.11.3: mentions of the bot account become group-thread conversations with ancestor and quote context; public replies only to allowlisted authors, optional guest mode with a per-author daily cap; no DMs, likes or media uploads (source `extensions/x/openclaw.plugin.json:6-7; extensions/x/index.ts:10; extensions/x/src/guest-usage.ts:7 (Observed); docs/channels/x.md`, Reported).\nMeasured on OpenClaw: verdict `needs-account`. X (Twitter): installed, not configured, disabled; config keys channels.x.{userId, username, clientId, clientSecret, refreshToken, bearerToken, allowFrom, groupPolicy, dmPolicy, events, costLimits} (Observed).\n\ntheoclaw 0.1.0: verdict `absent`. no X adapter (Observed).\n\nNote from the measurement: Only OpenClaw. Not started with a fake credential (would hit the X API). Needs an X developer app and bot account.\n\nBoth were measured side by side on 2026-11-10.\n\n## Evidence\n\n- Observed: no X/Twitter adapter in theokit-gateways (e8842a1) or on npm\n\n## What to build\n\nA `packages/gateway-x` adapter: mentions of the bot account become thread conversations with ancestor and quote context, public replies only to allowlisted authors, optional guest mode with a per-author daily cap; no DMs, likes or media uploads (OpenClaw's scope, `extensions/x/index.ts:10`, Observed). Uses an X OAuth2 confidential app.\n\n## Acceptance\n\nMentioning the bot from an allowlisted X account delivers the mention to `onMessage` with its thread context, and the reply sent through `deliver()` appears as a public reply; a mention from a non-allowlisted account gets no reply.\n\nA unit test with a fake transport or a stubbed model does not satisfy this issue on its own; the check runs against the real service.\n\n## Related\n\n- the TheoClaw wiring issue for OC-114 (blocked by this one)\n\n---\nFound while measuring theoclaw 0.1.0 against OpenClaw 2026.11.3 side by side, 2026-11-10. No secrets in this body.\n",
+    "labels": [
+      "enhancement",
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "d8648c705c3074009703a882a1595a15ffbec1b8",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "guards",
+        "command": "pnpm quality:dts-typechecks && pnpm quality:dts-parity && pnpm quality:registry-augmentation && pnpm quality:integration-story && pnpm quality:adr-citations && pnpm quality:repository-field && pnpm quality:peer-range && pnpm quality:docs && pnpm --filter @theokit/gateway-integration test:unit && for pkg in packages/*/package.json tools/package.json; do node -e \"process.exit(require('./'+process.argv[1]).scripts?.test ? 0 : 1)\" \"$pkg\" || { echo \"$pkg has no test script\"; exit 1; }; done"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm -r --filter='[HEAD~1]' --filter=@theokit/gateway --filter='!@theokit/gateway-tools' run test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 692,
+      "costUsd": 1.1602184000000002,
+      "durationMs": 1489400,
+      "attempts": 1,
+      "mergedSha": "971efb150ecd1b290cf3cff2b0a01cda7b0651ab"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-sdk#960",
+    "repository": "usetheokit/theokit-sdk",
+    "issueNumber": 960,
+    "title": "packaging: dist imports 'readline/promises' without the node: scheme, so esbuild bundles fail to resolve it",
+    "body": "**Area:** packaging (tsup output)\n**Severity:** high. Any consumer that bundles the SDK with esbuild fails to build; TheoCode's `build` fails on the theokit promotion (usetheokit/theokit#1441).\n**Build under test:** `@theokit/sdk` 5.15.1 from npm (5.14.0 and 5.15.0 ship the same import)\n\n## Description\n\n`src/internal/mcp/oauth.ts` imports `node:readline/promises`, and the published `dist` imports `'readline/promises'`, without the `node:` scheme (`dist/chunk-X7CE7Y5W.js:11` and `dist/chunk-XOU3CL7S.cjs` in 5.15.1). esbuild 0.28.2 with `platform: 'node'` does not treat the bare `readline/promises` as a builtin, so a bundle that reaches that chunk fails:\n\n```\n✘ [ERROR] Could not resolve \"readline/promises\"\n  node_modules/@theokit/sdk/dist/chunk-X7CE7Y5W.js:11:32\n```\n\n`fs/promises`, the other subpath builtin in `dist`, resolves, so this one import is the only one that breaks.\n\n## Repro\n\n1. In usetheokit/theokit at `dee33374` (SDK floor 5.15.1): `cd apps/theocode && node tools/build-cli.mjs`\n2. The build fails with the error above. Reproduced 2/2 locally and in CI (run 42774785431, job `dep-check / suite at the bottom of every declared range`).\n\n## Expected\n\n`dist` keeps the scheme the source wrote (`node:readline/promises`), so bundlers resolve it as a builtin. tsup strips `node:` by default (`removeNodeProtocol`); setting it to `false` in `packages/sdk/tsup.config.ts` should keep the scheme for every builtin. That is a guess I have not tried.\n\nA test that fails on the bug: scan `dist/**/*.{js,cjs}` after the build and fail on any bare import of a Node builtin subpath (`readline/promises`, `stream/promises`, ...).\n\n## Workaround\n\nTheoCode marks `readline/promises` external in `apps/theocode/tools/build-cli.mjs`, citing this issue. Node resolves the bare name at runtime.\n\n---\nFound while promoting usetheokit/theokit `workspace` after the 5.15.1 floor, 2026-11-10.\nNo secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "97886088045ac0734b85da4611c6ab4617bbad5e",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "bundle",
+        "command": "pnpm check:bundle"
+      },
+      {
+        "name": "generated-docs",
+        "command": "node tools/generate-error-codes.mjs --check && node tools/generate-capability-map.mjs --check"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm exec turbo run test --filter='[HEAD~1]' --concurrency=3"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 655,
+      "costUsd": 0.2699176,
+      "durationMs": 2049636,
+      "attempts": 2,
+      "mergedSha": "42ecdab65a78d1a5da26402fede82e3e252acd6c"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit#1685",
+    "repository": "usetheokit/theokit",
+    "issueNumber": 1685,
+    "title": "theoclaw: mammoth and unpdf are declared with caret ranges, failing check-exact-versions",
+    "body": "## Description\n\nTheoClaw's exact-versions test fails because two dependencies were added to `apps/theoclaw/package.json` with caret ranges.\n\n## Repro\n\n- Run: https://github.com/usetheokit/theokit/actions/runs/43012060894, jobs \"TheoClaw (the assistant assembled on this framework)\" (`test`) and \"Type tests\" (`pnpm test:types`), head daa0024.\n- Command: `pnpm --filter theoclaw test`\n- Output:\n\n```\nFAIL  theoclaw  tools/check-exact-versions.test.mjs > the app manifest > the app manifest has no range\nAssertionError: expected 'dependencies mammoth ^1.13.0\\ndepende…' to be '' // Object.is equality\n+ dependencies mammoth ^1.13.0\n+ dependencies unpdf ^2.1.0\n```\n\n## Expected\n\nEvery dependency in `apps/theoclaw/package.json` is pinned to an exact version, as `tools/check-exact-versions.test.mjs` requires.\n\n## Actual\n\n`apps/theoclaw/package.json:75` has `\"mammoth\": \"^1.13.0\"` and `apps/theoclaw/package.json:86` has `\"unpdf\": \"^2.1.0\"`.\n\n## Probable cause\n\nc39b8a9b (#1605, for #1534) added both with a caret. Note that #1534's other licence fallout (`duck` and `pako` arrive through `mammoth`) is tracked separately; if that fix drops `mammoth`, this one shrinks to `unpdf`.\n\n## Acceptance\n\n- `tools/check-exact-versions.test.mjs` passes, with no entry added to an exception list.\n- The \"TheoClaw (the assistant assembled on this framework)\" step passes on `workspace` (together with the other TheoClaw failures tracked in their own issues).\n\n---\nFound while unblocking workspace -> develop (#1514), 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "4ca195a06cd3414828f2e2bf8dca9bf0ea5a426a",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build:packages"
+      },
+      {
+        "name": "tests",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|mjs)$' | tr '\\n' ' '); X=$(grep -rlE 'bwrap|HOST_TOOLS' apps/theoclaw/tests 2>/dev/null | sed 's/^/--exclude /' | tr '\\n' ' '); [ -z \"$F\" ] || THEOKIT_TEST_RUN_ID=1 pnpm exec vitest related --run --passWithNoTests $X $F"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck:only"
+      },
+      {
+        "name": "theoclaw-types",
+        "command": "pnpm --filter theoclaw run typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|cts|js|mjs|cjs)$' | tr '\\n' ' '); A=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | tr '\\n' ' '); { [ -z \"$F\" ] || NODE_OPTIONS=--max-old-space-size=3072 pnpm exec eslint $F; } && { [ -z \"$A\" ] || pnpm exec prettier --check --ignore-unknown $A; }"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 918,
+      "costUsd": 0.09432430000000001,
+      "durationMs": 482845,
+      "attempts": 1,
+      "mergedSha": "d291a3be51cad6d04513b9cc9cbf01e009efa17a"
+    },
+    "quick": true
+  },
+  {
+    "id": "usetheokit/theokit-gateways#341",
+    "repository": "usetheokit/theokit-gateways",
+    "issueNumber": 341,
+    "title": "gateway-discord, gateway-slack, gateway-matrix, gateway-teams: no typing indicator while a turn runs",
+    "body": "**Area**: Chat UX / Typing and reactions\n**Severity**: medium (missing capability)\n**Parity id**: OC-106 (ledger: open)\n\n## Description\n\nOpenClaw 2026.11.3: `typingMode`, per-channel `ackReaction` (source `src/config/zod-schema.core.ts:429`, Observed).\nMeasured on OpenClaw: verdict `works`. 'reaction `@ocbot:localhost` 👀', 'typing ['`@ocbot:localhost`']', 'typing []' around the reply PONG. (Observed).\n\ntheoclaw 0.1.0: verdict `partial`. No typing and no reaction event seen. dist/channels/typing.js renews startTyping every 4 s but catches errors, and no ack-reaction setting exists in README or dist. Telegram (where the adapter may implement typing) needs an account. (Observed).\n\nBoth were measured side by side on 2026-11-10.\n\n## Evidence\n\n- Observed: async startTyping is implemented only in `@theokit/gateway-telegram` among the 11 pinned adapters and the 14 latest ones checked (grep)\n- Observed: `@theokit/gateway@0.14.0` BasePlatformAdapter (index.d.ts:809-812) has startTyping/stopTyping but no reaction method\n\n## What to build\n\nImplement `startTyping`/`stopTyping` in the Discord, Slack, Matrix and Teams adapters (today only gateway-telegram implements it among the 11 adapters TheoClaw pins and the 14 latest ones checked). Refresh the indicator while the turn runs, since Discord and Matrix expire it after a few seconds.\n\n## Acceptance\n\nDuring a turn delivered through `GatewayRunner`, the Discord channel shows '<bot> is typing' until the reply arrives; the same holds on a Matrix room.\n\nA unit test with a fake transport or a stubbed model does not satisfy this issue on its own; the check runs against the real service.\n\n## Related\n\n- usetheokit/theokit#1181 ([B-403], slash commands, typing and reactions)\n\n---\nFound while measuring theoclaw 0.1.0 against OpenClaw 2026.11.3 side by side, 2026-11-10. No secrets in this body.\n",
+    "labels": [
+      "enhancement",
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "00733b8852a0b198bea5502a7e8c3d11202edb42",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "guards",
+        "command": "pnpm quality:dts-typechecks && pnpm quality:dts-parity && pnpm quality:registry-augmentation && pnpm quality:integration-story && pnpm quality:adr-citations && pnpm quality:repository-field && pnpm quality:peer-range && pnpm quality:docs && pnpm --filter @theokit/gateway-integration test:unit && for pkg in packages/*/package.json tools/package.json; do node -e \"process.exit(require('./'+process.argv[1]).scripts?.test ? 0 : 1)\" \"$pkg\" || { echo \"$pkg has no test script\"; exit 1; }; done"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm -r --filter='[HEAD~1]' --filter=@theokit/gateway --filter='!@theokit/gateway-tools' run test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 688,
+      "costUsd": 0.7488437,
+      "durationMs": 1223677,
+      "attempts": 2,
+      "mergedSha": "7eac99aa5d7916f7b36896dd2440bb2be40c7c8e"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-sdk#953",
+    "repository": "usetheokit/theokit-sdk",
+    "issueNumber": 953,
+    "title": "llm: the streaming path emits Gemini's <ctrl42>call text as text_delta before the calls are recovered",
+    "body": "When Gemini writes its tool calls as text (`<ctrl42>call\\nprint(default_api.<tool>(...))`, the form #939 recovers), the streaming path sends that text to the consumer as `text_delta` events before the calls are recovered, so the code shows in the visible answer even though the calls run.\n\nSplit out of #939 on 2026-11-10: two factory runs of #939 ended at the sandbox's 50-minute limit on this part, and the review of each asked for it.\n\n## What happens\n\n`streamToolCallBufferState` and `StreamSuppressionBuffer` in `packages/sdk/src/internal/llm/hermes-tool-extract.ts` hold back only text that starts with the `<function=` marker. A `<ctrl42>call` stream is never held: run through the accumulator with an allowlist of `computer`, it emits the `text_delta` `<ctrl42>call\\nprint(default_api.computer(...))`, while `finish()` recovers the calls (review of the #939 run, round 2).\n\n## Done when\n\n- a streamed response holding the #939 text for a declared tool emits no `text_delta` carrying `<ctrl42>call` or `default_api.`, and the calls still run, shown by an offline test that runs the accumulator with a request-scoped allowlist\n- the same stream for a tool the agent did not declare emits the text unchanged\n- a stream that starts like the marker and turns out to be plain text is emitted in full, in order\n\n## Related\n\n- #939 (recovery of the form when the response is complete)\n- usetheokit/theokit#1235 (TheoClaw Live model red; OC-62 is the case)\n\n---\nNo secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "3be74fb098206f7b6a15da826ff464eff588d044",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "bundle",
+        "command": "pnpm check:bundle"
+      },
+      {
+        "name": "generated-docs",
+        "command": "node tools/generate-error-codes.mjs --check && node tools/generate-capability-map.mjs --check"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm exec turbo run test --filter='[HEAD~1]' --concurrency=3"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 647,
+      "costUsd": 0.37456259999999997,
+      "durationMs": 1496540,
+      "attempts": 1,
+      "mergedSha": "c5c236abd0815b6e4ce9929e4ebd89e36bb04ddd"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit#1684",
+    "repository": "usetheokit/theokit",
+    "issueNumber": 1684,
+    "title": "agents/tools: SearXNG and Tavily re-exports fail subpath-surface.test.ts (invented symbols, stale snapshot)",
+    "body": "## Description\n\nThe `@theokit/agents` subpath-surface test fails, which fails four required jobs and keeps the SonarCloud check from ever reporting on #1514.\n\n## Repro\n\n- Runs on head daa0024:\n  - https://github.com/usetheokit/theokit/actions/runs/43012060894: \"Unit + Type tests (22.12)\" (Tests + coverage thresholds) and \"Type tests\" (`pnpm test:types`)\n  - https://github.com/usetheokit/theokit/actions/runs/43012060571: `surface parity (the layer enriches the SDK, never reduces it — M73)` (`pnpm --filter @theokit/agents test`)\n  - https://github.com/usetheokit/theokit/actions/runs/43012060947: \"dep-check / suite at the bottom of every declared range\"\n- Command: `pnpm --filter @theokit/agents test`\n- Output:\n\n```\nFAIL  @theokit/agents  tests/unit/subpath-surface.test.ts > M90 — the infra subpath surface is locked > test_the_layer_does_not_invent_a_symbol_the_source_lacks\nAssertionError: expected [ …(4) ] to deeply equal []\n+   \"tools: createSearxngWebSearchAdapter\",\n+   \"tools: CreateSearxngWebSearchAdapterOptions\",\n+   \"tools: createTavilyWebSearchAdapter\",\n+   \"tools: CreateTavilyWebSearchAdapterOptions\",\n\nFAIL  @theokit/agents  tests/unit/subpath-surface.test.ts > M90 — the infra subpath surface is locked > test_todays_surface_is_IDENTICAL_to_the_snapshot\nAssertionError: the layer surface changed. If that was intentional, rewrite the snapshot IN THE SAME commit:\n+   \"tools: NEW createSearxngWebSearchAdapter\",\n+   \"tools: NEW CreateSearxngWebSearchAdapterOptions\",\n+   \"tools: NEW createTavilyWebSearchAdapter\",\n+   \"tools: NEW CreateTavilyWebSearchAdapterOptions\",\n```\n\n## Expected\n\nThe `tools` subpath of `@theokit/agents` exports only what its declared source exports, and `tests/unit/__snapshots__/subpath-surface.json` matches the built surface.\n\n## Actual\n\nThe layer exports four symbols that the declared source of the `tools` subpath (`@theokit/sdk-tools`, root entry) does not export, and the snapshot was not regenerated.\n\n## Probable cause\n\nbc007197 (#1603, for #1531) added a re-export at `packages/agents/src/tools-entry.ts:86-94`:\n\n```ts\nexport { createSearxngWebSearchAdapter, createTavilyWebSearchAdapter } from '@theokit/sdk-tools/web-search-adapters'\nexport type { CreateSearxngWebSearchAdapterOptions, CreateTavilyWebSearchAdapterOptions } from '@theokit/sdk-tools/web-search-adapters'\n```\n\nThe test compares the layer against the root entry of `@theokit/sdk-tools`, and these symbols live on the `web-search-adapters` subpath, so they count as invented. The commit also did not rewrite the snapshot. The factory verified the pull request with a subset of checks that did not include the `@theokit/agents` suite.\n\nA fix needs one of: teach the surface check about the `web-search-adapters` source subpath (or give it its own layer subpath), or import the adapters in `apps/theoclaw` from `@theokit/sdk-tools/web-search-adapters` and drop the re-export. Either way, regenerate the snapshot in the same commit with `npx tsx scripts/generate-reexports.mts --json > tests/unit/__snapshots__/subpath-surface.json`.\n\n### Why SonarCloud is missing on #1514\n\n`.github/workflows/ci.yml:928` declares the `sonar` job with `needs: test`. The `test` job (\"Unit + Type tests (22.12)\") fails on this test, so `sonar` was `skipped` in run 43012060894, and \"SonarCloud Code Analysis\" never posts a status. It should come back once this test passes; nothing in the Sonar setup itself looks broken.\n\n## Acceptance\n\n- `pnpm --filter @theokit/agents test` passes, including `tests/unit/subpath-surface.test.ts`.\n- On `workspace`: \"Unit + Type tests (22.12)\", \"Type tests\", \"surface parity\" and \"dep-check / suite at the bottom of every declared range\" pass, and \"SonarCloud Code Analysis\" reports on the promotion pull request.\n\n---\nFound while unblocking workspace -> develop (#1514), 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "d291a3be51cad6d04513b9cc9cbf01e009efa17a",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build:packages"
+      },
+      {
+        "name": "tests",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|mjs)$' | tr '\\n' ' '); X=$(grep -rlE 'bwrap|HOST_TOOLS' apps/theoclaw/tests 2>/dev/null | sed 's/^/--exclude /' | tr '\\n' ' '); [ -z \"$F\" ] || THEOKIT_TEST_RUN_ID=1 pnpm exec vitest related --run --passWithNoTests $X $F"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck:only"
+      },
+      {
+        "name": "theoclaw-types",
+        "command": "pnpm --filter theoclaw run typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|cts|js|mjs|cjs)$' | tr '\\n' ' '); A=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | tr '\\n' ' '); { [ -z \"$F\" ] || NODE_OPTIONS=--max-old-space-size=3072 pnpm exec eslint $F; } && { [ -z \"$A\" ] || pnpm exec prettier --check --ignore-unknown $A; }"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 916,
+      "costUsd": 0.1679084,
+      "durationMs": 926351,
+      "attempts": 1,
+      "mergedSha": "5541a65777c3f7ca2f2a58b25f9f717789cfab28"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-gateways#340",
+    "repository": "usetheokit/theokit-gateways",
+    "issueNumber": 340,
+    "title": "gateway-qq: no adapter answers QQ Bot messages",
+    "body": "**Area**: Channels / Out-of-repo channels\n**Severity**: medium (missing capability)\n**Parity id**: OC-11 (ledger: out)\n\n## Description\n\nOpenClaw 2026.11.3: WeChat, WeCom, Yuanbao, Zalo ClawBot; QQ Bot doc only (source `docs/channels/{wechat,wecom,yuanbao,zaloclawbot,qqbot}.md`, Reported).\nMeasured on OpenClaw: verdict `needs-account`. Weixin: not installed ... WeCom: not installed ... Yuanbao: not installed ... Zalo ClawBot: not installed ... QQ Bot: not installed (all listed as installable) (Observed).\n\ntheoclaw 0.1.0: verdict `absent`. none of WeChat, WeCom, Yuanbao, Zalo ClawBot, QQ Bot appear (Observed).\n\nNote from the measurement: OpenClaw lists them in its catalog; not installed here. Each needs a Chinese/Vietnamese platform account.\n\nBoth were measured side by side on 2026-11-10.\n\n## Evidence\n\n- Observed: no WeChat, WeCom, Yuanbao, Zalo ClawBot or QQ adapter in theokit-gateways/packages (e8842a1)\n- Reported: ledger: out, 'OpenClaw does not ship these channels itself'\n\n## What to build\n\nA `packages/gateway-qq` adapter implementing `BasePlatformAdapter` (connect, inbound messages to `onMessage`, `deliver()` for replies) against the QQ Bot bot platform. OpenClaw lists QQ Bot as an installable channel (`docs/channels/qqbot.md`, Reported) and `openclaw channels list --all` shows it (Observed). Needs a regional platform account to verify.\n\n## Acceptance\n\nWith a QQ Bot bot account configured, a DM to the bot reaches `GatewayRunner` and the reply sent through `deliver()` arrives in the QQ Bot client.\n\nA unit test with a fake transport or a stubbed model does not satisfy this issue on its own; the check runs against the real service.\n\n## Related\n\n- the TheoClaw wiring issue for OC-11 (opened after the adapters)\n- usetheokit/theokit-gateways#207 covers Zalo, the fifth OC-11 platform\n- Opened for the same row: #337\n- Opened for the same row: #338\n- Opened for the same row: #339\n\n---\nFound while measuring theoclaw 0.1.0 against OpenClaw 2026.11.3 side by side, 2026-11-10. No secrets in this body.\n",
+    "labels": [
+      "enhancement",
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "971efb150ecd1b290cf3cff2b0a01cda7b0651ab",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "guards",
+        "command": "pnpm quality:dts-typechecks && pnpm quality:dts-parity && pnpm quality:registry-augmentation && pnpm quality:integration-story && pnpm quality:adr-citations && pnpm quality:repository-field && pnpm quality:peer-range && pnpm quality:docs && pnpm --filter @theokit/gateway-integration test:unit && for pkg in packages/*/package.json tools/package.json; do node -e \"process.exit(require('./'+process.argv[1]).scripts?.test ? 0 : 1)\" \"$pkg\" || { echo \"$pkg has no test script\"; exit 1; }; done"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm -r --filter='[HEAD~1]' --filter=@theokit/gateway --filter='!@theokit/gateway-tools' run test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      },
+      {
+        "name": "changeset",
+        "command": "pnpm exec changeset status --since=origin/workspace"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 686,
+      "costUsd": 0.6646074000000002,
+      "durationMs": 1290235,
+      "attempts": 1,
+      "mergedSha": "6178f72730748a37b869e0cfe8944b4909bc4154"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-sdk#939",
+    "repository": "usetheokit/theokit-sdk",
+    "issueNumber": 939,
+    "title": "tool-call repair: Gemini's text-form calls (<ctrl42>call print(default_api.…)) end the turn as its answer",
+    "body": "A Gemini model behind OpenRouter sometimes answers with its tool calls written as text, and the SDK ends the turn with that text as the final answer instead of running the calls.\n\n**Area:** tool-call repair (`packages/sdk/src/internal/llm/hermes-tool-extract.ts`, `internal/tool-dispatch/repair-middleware.ts`)\n**Severity:** medium (a turn that should run four tool calls runs none and returns code as its answer)\n**Build under test:** `@theokit/sdk` 5.14.0 through usetheokit/theokit `develop`, model `google/gemini-2.5-flash-lite` on OpenRouter\n\n## Evidence\n\nTheoClaw's computer live test (OC-62), one of three runs in a container on the owner's machine on 2026-11-09:\n\n```\nOC-62 live: model=google/gemini-2.5-flash-lite actions=[] typed=\"\" answer=\"<ctrl42>call\\nprint(default_api.computer(action='screenshot', question='Take a screenshot.'))\\nprint(default_api.computer(action='mouse_move', x=300, y=300))\\nprint(default_api.computer(action='type', text='vj38reey'))\\nprint(default_api.computer(action='screenshot', question='Take a screenshot.'))\"\n```\n\nNo `tool_call` event was emitted; the four calls are in the assistant text, in Gemini's `<ctrl42>call` / `print(default_api.<tool>(…))` form.\n\n## Done when\n\n- a fixture with an assistant message holding that exact text, for a tool named `computer` that the agent declares, runs the four calls in order with their keyword arguments as the tool's input, and the turn continues with their results\n- the same text naming a tool the agent did not declare is not run and stays text\n- the repair records a diagnostic naming the format it recovered, as the other repairs do\n\nOut of scope here: holding the text back while streaming. It is #953, split out on 2026-11-10 after two runs of this item ran out of time on it. This item is done when the three points above hold for a complete (non-streamed) response.\n\nIf recovering this form is the wrong call for the SDK, the alternative is to end the turn as failed with a code that says the model wrote its tool calls as text, so a consumer is not handed code as an answer.\n\n## Related\n\n- usetheokit/theokit#1235 (the live model job on `develop`)\n\n---\nFound by reproducing OC-62 in a container on 2026-11-09. No secrets in this body.\n\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "c5c236abd0815b6e4ce9929e4ebd89e36bb04ddd",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "bundle",
+        "command": "pnpm check:bundle"
+      },
+      {
+        "name": "generated-docs",
+        "command": "node tools/generate-error-codes.mjs --check && node tools/generate-capability-map.mjs --check"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm exec turbo run test --filter='[HEAD~1]' --concurrency=3"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 621,
+      "costUsd": 0.2839125,
+      "durationMs": 1188614,
+      "attempts": 1,
+      "mergedSha": "2604fa9e54454ac8b50dfbfb8dcd02dfc57d0d01"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit#1683",
+    "repository": "usetheokit/theokit",
+    "issueNumber": 1683,
+    "title": "theoclaw: duck, pako and qrcode-terminal fail the production licence gate",
+    "body": "## Description\n\nThe production-tree licence gate fails because two dependencies added to `apps/theoclaw` pull in three packages whose licence strings are not on the allowlist.\n\n## Repro\n\n- Run: https://github.com/usetheokit/theokit/actions/runs/43012060894 (job \"License compliance (production tree)\", head daa0024). Same on head 24b4d70, run https://github.com/usetheokit/theokit/actions/runs/43014422878.\n- Command: `pnpm check:licenses` (runs `node scripts/check-licenses.mjs`)\n- Output:\n\n```\n✗ 3 production package(s) with an unacceptable licence:\n    duck: BSD — not on the allowlist\n    pako: (MIT AND Zlib) — not on the allowlist\n    qrcode-terminal: Apache 2.0 — not on the allowlist\n```\n\n## Expected\n\nEvery package in the production tree has a licence string that `scripts/check-licenses.mjs` accepts, either through `ALLOWED` or through an `ALLOWED_WITH_REASON` entry that states the obligation.\n\n## Actual\n\nThree packages are refused and the step exits 1.\n\n## Probable cause\n\nTwo merged commits, both from the factory:\n\n- c39b8a9b (#1605, for #1534) added `\"mammoth\": \"^1.13.0\"` to `apps/theoclaw/package.json:75`. The lockfile diff of that commit adds `mammoth@1.13.0 -> lop@0.4.2 -> duck@0.1.12` (licence field `BSD`) and `mammoth -> jszip@3.10.2 -> pako@1.0.11` (licence field `(MIT AND Zlib)`).\n- e74537ff (#1593, for #1520) added `\"qrcode-terminal\": \"0.12.0\"` at `apps/theoclaw/package.json:78`. Its licence field is `Apache 2.0`, which is not the SPDX id `Apache-2.0`.\n\nNot verified: the actual licence texts of `duck` and `qrcode-terminal`. `BSD` without a clause count is ambiguous, so it needs a look at the tarball before it goes on any list. The script's own hint applies: verify the terms, then add the exact string to `ALLOWED` or `ALLOWED_WITH_REASON` with the obligation written down, or drop the dependency.\n\n## Acceptance\n\n- The \"License compliance (production tree)\" step passes on `workspace`.\n- Each of the three strings is either accepted by an entry whose comment names the package and the terms checked, or no longer present in the production tree.\n\n---\nFound while unblocking workspace -> develop (#1514), 2026-11-11. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "c7b0f45ceb344cc2bc2932812fe86dce9a6f7aa7",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build:packages"
+      },
+      {
+        "name": "tests",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|mjs)$' | tr '\\n' ' '); X=$(grep -rlE 'bwrap|HOST_TOOLS' apps/theoclaw/tests 2>/dev/null | sed 's/^/--exclude /' | tr '\\n' ' '); [ -z \"$F\" ] || THEOKIT_TEST_RUN_ID=1 pnpm exec vitest related --run --passWithNoTests $X $F"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck:only"
+      },
+      {
+        "name": "theoclaw-types",
+        "command": "pnpm --filter theoclaw run typecheck"
+      },
+      {
+        "name": "lint",
+        "command": "F=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | grep -E '\\.(ts|tsx|mts|cts|js|mjs|cjs)$' | tr '\\n' ' '); A=$(git diff --name-only --diff-filter=d HEAD~1 HEAD | tr '\\n' ' '); { [ -z \"$F\" ] || NODE_OPTIONS=--max-old-space-size=3072 pnpm exec eslint $F; } && { [ -z \"$A\" ] || pnpm exec prettier --check --ignore-unknown $A; }"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 914,
+      "costUsd": 0.13938250000000002,
+      "durationMs": 596972,
+      "attempts": 1,
+      "mergedSha": "241439d02201313abf0182677026faeaaff655ee"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-gateways#339",
+    "repository": "usetheokit/theokit-gateways",
+    "issueNumber": 339,
+    "title": "gateway-yuanbao: no adapter answers Yuanbao messages",
+    "body": "**Area**: Channels / Out-of-repo channels\n**Severity**: medium (missing capability)\n**Parity id**: OC-11 (ledger: out)\n\n## Description\n\nOpenClaw 2026.11.3: WeChat, WeCom, Yuanbao, Zalo ClawBot; QQ Bot doc only (source `docs/channels/{wechat,wecom,yuanbao,zaloclawbot,qqbot}.md`, Reported).\nMeasured on OpenClaw: verdict `needs-account`. Weixin: not installed ... WeCom: not installed ... Yuanbao: not installed ... Zalo ClawBot: not installed ... QQ Bot: not installed (all listed as installable) (Observed).\n\ntheoclaw 0.1.0: verdict `absent`. none of WeChat, WeCom, Yuanbao, Zalo ClawBot, QQ Bot appear (Observed).\n\nNote from the measurement: OpenClaw lists them in its catalog; not installed here. Each needs a Chinese/Vietnamese platform account.\n\nBoth were measured side by side on 2026-11-10.\n\n## Evidence\n\n- Observed: no WeChat, WeCom, Yuanbao, Zalo ClawBot or QQ adapter in theokit-gateways/packages (e8842a1)\n- Reported: ledger: out, 'OpenClaw does not ship these channels itself'\n\n## What to build\n\nA `packages/gateway-yuanbao` adapter implementing `BasePlatformAdapter` (connect, inbound messages to `onMessage`, `deliver()` for replies) against the Yuanbao bot platform. OpenClaw lists Yuanbao as an installable channel (`docs/channels/yuanbao.md`, Reported) and `openclaw channels list --all` shows it (Observed). Needs a regional platform account to verify.\n\n## Acceptance\n\nWith a Yuanbao bot account configured, a DM to the bot reaches `GatewayRunner` and the reply sent through `deliver()` arrives in the Yuanbao client.\n\nA unit test with a fake transport or a stubbed model does not satisfy this issue on its own; the check runs against the real service.\n\n## Related\n\n- the TheoClaw wiring issue for OC-11 (opened after the adapters)\n- usetheokit/theokit-gateways#207 covers Zalo, the fifth OC-11 platform\n- Opened for the same row: #337\n- Opened for the same row: #338\n\n---\nFound while measuring theoclaw 0.1.0 against OpenClaw 2026.11.3 side by side, 2026-11-10. No secrets in this body.\n",
+    "labels": [
+      "enhancement",
+      "factory"
+    ],
+    "kind": "feature",
+    "integrationBranch": "workspace",
+    "baseSha": "00733b8852a0b198bea5502a7e8c3d11202edb42",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "guards",
+        "command": "pnpm quality:dts-typechecks && pnpm quality:dts-parity && pnpm quality:registry-augmentation && pnpm quality:integration-story && pnpm quality:adr-citations && pnpm quality:repository-field && pnpm quality:peer-range && pnpm quality:docs && pnpm --filter @theokit/gateway-integration test:unit && for pkg in packages/*/package.json tools/package.json; do node -e \"process.exit(require('./'+process.argv[1]).scripts?.test ? 0 : 1)\" \"$pkg\" || { echo \"$pkg has no test script\"; exit 1; }; done"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm -r --filter='[HEAD~1]' --filter=@theokit/gateway --filter='!@theokit/gateway-tools' run test"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [],
+    "original": {
+      "taskId": 684,
+      "costUsd": 0.7162340999999999,
+      "durationMs": 1267172,
+      "attempts": 1,
+      "mergedSha": "d7ed3abfc4f422e37c0870d5107b587ab8781d73"
+    },
+    "quick": false
+  },
+  {
+    "id": "usetheokit/theokit-sdk#938",
+    "repository": "usetheokit/theokit-sdk",
+    "issueNumber": 938,
+    "title": "hooks: The postRun hook that the 5.12.0 changelog says still fires on a failed run cannot be registered by a consumer: hooks.json skips 'postRun' as not fired",
+    "body": "Found by the loop-surface-closure audit of the S-004 release range (`@theokit/sdk@5.11.1` to `@theokit/sdk@5.12.1`, revision `9e337031`), finding `F-fc7517a4`, severity low.\n\n- **Category / persona:** documentation · none\n- **Confidence:** confirmed · **Status:** new\n- **Steps:** 1. Create .theokit/hooks.json in local.cwd with {hooks:{postRun:[{hooks:[{type:'command',command:'echo fired >> marker'}]}]}} and settingSources ['project']. 2. Agent.create({throwOnError:true}) against a provider answering 401; await run.wait() (rejects). 3. Count marker lines.\n- **Expected:** The changelog sentence 'the postRun hook still fires on a failed run' is observable by a consumer: a configured postRun hook runs once\n- **Observed:** stderr: `[theokit-sdk] hooks: event \"postRun\" is not fired by the SDK runtime (supported: PreToolUse, PostToolUse, UserPromptSubmit, Stop) — skipping`; marker has 0 lines. The nearest public event, Stop, also fires 0 times on a failed run (it fires once on a finished run), in 5.12.1 and in 5.11.1 alike.\n- **Impact:** A consumer reading the changelog or the public HookEvent type ('The five lifecycle events the runtime actually fires', including postRun) expects a run-end hook on failures and has no way to register one; the repo's own test only observes postRun through an internal spy. No consumer-visible run-end hook fires on a failed run.\n- **Suspected cause (hypothesis):** postRun is fired by post-run-lifecycle.ts to the internal hook runner but CLAUDE_CODE_EVENT_MAP has no entry for it and the loader rejects the raw name\n- **Retest criterion:** Either a consumer-registrable hook fires once on a failed run (postRun or Stop), or the changelog/HookEvent doc states postRun is internal-only\n\n---\nFound via loop-surface-closure 0.3.5 (release profile, tmpdir isolation) on 2026-11-09, as part of usetheokit/theokit#1234. The audit's case scripts and evidence are on the owner's machine. No secrets in this body.\n",
+    "labels": [
+      "bug",
+      "factory"
+    ],
+    "kind": "bug",
+    "integrationBranch": "workspace",
+    "baseSha": "259b706a986f4bf625283a8878c34f8642a250ae",
+    "checks": [
+      {
+        "name": "install",
+        "command": "corepack enable && pnpm install --frozen-lockfile && NODE_OPTIONS=--max-old-space-size=3072 pnpm build"
+      },
+      {
+        "name": "bundle",
+        "command": "pnpm check:bundle"
+      },
+      {
+        "name": "generated-docs",
+        "command": "node tools/generate-error-codes.mjs --check && node tools/generate-capability-map.mjs --check"
+      },
+      {
+        "name": "tests",
+        "command": "pnpm exec turbo run test --filter='[HEAD~1]' --concurrency=3"
+      },
+      {
+        "name": "types",
+        "command": "pnpm typecheck"
+      },
+      {
+        "name": "check",
+        "command": "pnpm check"
+      }
+    ],
+    "egress": [
+      "release-assets.githubusercontent.com"
+    ],
+    "original": {
+      "taskId": 617,
+      "costUsd": 0.156223,
+      "durationMs": 1035147,
+      "attempts": 1,
+      "mergedSha": "f4f87f0382796e539a2a4e682ac3c2c567e653cc"
+    },
+    "quick": false
+  }
+]

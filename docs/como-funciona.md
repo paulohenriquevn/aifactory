@@ -546,6 +546,32 @@ Três gates rodam no job `quality` do CI, ao lado do `check`. Localmente: `pnpm 
   confere se algum teste falha. A nota mínima é 90; hoje é 97. Textos (literais de string) ficam de fora, para
   o gate cobrar lógica e não redação. Só os testes de unidade desses módulos rodam por mutante, sem banco.
 
+## Avaliação dos agentes
+
+Os testes de unidade usam agentes falsos, então não dizem se uma mudança de prompt, de harness, de modelo ou
+da imagem do sandbox deixou os agentes piores. Para isso existe uma suíte de casos reais, rodada pelos agentes
+de verdade (ADR 0008).
+
+- **Os casos** estão em `evals/cases.json`: 30 tarefas que a fábrica entregou, em seis repositórios, metade
+  bug e metade feature. Cada um tem a issue, o commit de partida e as checagens que aceitaram o trabalho.
+  `pnpm evals:cases` os escreve de novo a partir do banco e do GitHub, sem mudar nada em nenhum dos dois.
+- **Um caso roda como uma tarefa**: sandbox, construtor, checagens, guardas do diff, revisor e até três
+  tentativas, com os agentes e modelos escolhidos no painel. O construtor não pode perguntar nada. Nada sai
+  do sandbox: o GitHub é alcançável sem credencial, então o clone funciona e um push não tem como passar. O
+  caso passa quando as checagens passam, o revisor aprova e nenhuma guarda bloqueia.
+- **`pnpm evals`** roda os cinco casos marcados como rápidos (`EVALS_SET=all` roda todos, `EVALS_CASES` escolhe
+  pelo id) e compara com `evals/baseline.json`. Cada rodada fica em `.evals/`. `EVALS_BASELINE=1` grava a
+  rodada como a nova baseline. Nenhum caso começa depois que o gasto chega a `EVALS_BUDGET_USD` (padrão
+  US$ 15).
+- **No deploy**, `scripts/deploy.sh` chama `pnpm evals:check` antes do build. Se nenhum arquivo da
+  configuração dos agentes mudou desde o commit da baseline, e o agente, o modelo e o esforço de cada papel
+  são os mesmos, a checagem não roda nada. Senão, roda os casos rápidos, e o deploy para sem build e sem
+  restart quando a taxa de aprovação cai mais de 20 pontos (um caso de cinco) ou o custo médio por caso sobe
+  mais de 25%.
+
+A baseline de 2026-11-11 passou cinco de cinco casos, com custo médio de US$ 0,35 por caso nos agentes, e
+levou 32 minutos. Somando o sandbox, a rodada custou US$ 1,98.
+
 ## O painel
 
 Uma interface local para ver e conduzir a fábrica. Abre em `http://localhost:3000`.

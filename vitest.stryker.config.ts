@@ -7,6 +7,9 @@ export default defineConfig({
     setupFiles: ['src/test/no-real-docker.ts'],
     include: [
       'src/server/factory/clone.test.ts',
+      'src/server/evals/compare.test.ts',
+      'src/server/evals/cases.test.ts',
+      'src/server/evals/suite.test.ts',
       'src/server/factory/auto-retry.test.ts',
       'src/server/factory/changesets.test.ts',
       'src/server/factory/ci-wait.test.ts',
