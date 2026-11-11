@@ -67,6 +67,12 @@ export const task = pgTable(
      * nothing, the checks passed there and the reviewer confirmed it. Such a task has no pull request.
      */
     resolvedSha: text('resolved_sha'),
+    /**
+     * The verified commit whose pull request waits for the integration branch's required checks: GitHub
+     * merges it through auto-merge, and the `integrate-after-ci` cron finishes the integration. Null once
+     * it is merged, sent back or handed to a person.
+     */
+    awaitingCiSha: text('awaiting_ci_sha'),
     /** What the run has spent so far, agents included. It grows while the run is going. */
     costUsd: real('cost_usd').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

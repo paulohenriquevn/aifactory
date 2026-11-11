@@ -32,7 +32,8 @@
     "src/app/lib/transcript.ts",
     "src/server/factory/recipe.ts",
     "src/server/factory/auto-retry.ts",
-    "src/server/factory/changesets.ts"
+    "src/server/factory/changesets.ts",
+    "src/server/factory/ci-wait.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

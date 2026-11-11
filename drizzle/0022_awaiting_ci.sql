@@ -1,0 +1,1 @@
+ALTER TABLE "task" ADD COLUMN "awaiting_ci_sha" text;
