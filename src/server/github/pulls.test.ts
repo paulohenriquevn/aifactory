@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createGithubApi } from './pulls'
+import { AutoMergeRefused, createGithubApi } from './pulls'
 
 type Call = { method: string; url: string; body?: unknown; auth?: string }
 
@@ -650,5 +650,229 @@ describe('what a release with changesets needs to read', () => {
       (await createGithubApi(fetch).findPullRequest('o/r', 't', 'changeset-release/main'))
         ?.mergedAt,
     ).toEqual(new Date('2026-09-25T21:12:10Z'))
+  })
+})
+
+describe('what integrating through the repository CI needs', () => {
+  it('names the checks the integration branch requires, from its protection and its rulesets', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /branches/workspace': {
+        status: 200,
+        body: {
+          protected: true,
+          protection: {
+            enabled: true,
+            required_status_checks: {
+              contexts: ['CI', 'Lint'],
+              checks: [{ context: 'CI', app_id: 15368 }],
+            },
+          },
+        },
+      },
+      'GET /rules/branches/workspace': {
+        status: 200,
+        body: [
+          { type: 'deletion' },
+          {
+            type: 'required_status_checks',
+            parameters: { required_status_checks: [{ context: 'Types' }, { context: 'Lint' }] },
+          },
+        ],
+      },
+    })
+
+    expect(await createGithubApi(fetch).requiredChecks('o/r', 't', 'workspace')).toEqual([
+      'CI',
+      'Lint',
+      'Types',
+    ])
+    expect(calls.map((c) => c.url)).toEqual(['/branches/workspace', '/rules/branches/workspace'])
+  })
+
+  it('requires nothing of a branch with no protection and no rulesets', async () => {
+    const { fetch } = fakeFetch({
+      'GET /branches/workspace': {
+        status: 200,
+        body: {
+          protected: false,
+          protection: {
+            enabled: false,
+            required_status_checks: { contexts: [], checks: [], enforcement_level: 'off' },
+          },
+        },
+      },
+      'GET /rules/branches/workspace': { status: 200, body: [] },
+    })
+
+    expect(await createGithubApi(fetch).requiredChecks('o/r', 't', 'workspace')).toEqual([])
+  })
+
+  it('throws when the integration branch cannot be read, rather than merging past its rules', async () => {
+    const { fetch } = fakeFetch({ 'GET /branches/workspace': { status: 404 } })
+    await expect(createGithubApi(fetch).requiredChecks('o/r', 't', 'workspace')).rejects.toThrow(
+      /404 reading the branch workspace of o\/r/,
+    )
+  })
+
+  it('reads a pull request by number, with its merge commit and whether auto-merge is on', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': {
+        status: 200,
+        body: {
+          number: 12,
+          html_url: 'https://github.com/o/r/pull/12',
+          state: 'closed',
+          merged: true,
+          merge_commit_sha: 'm1',
+          head: { sha: 'h1' },
+          auto_merge: { merge_method: 'merge' },
+          mergeable_state: 'clean',
+        },
+      },
+    })
+
+    expect(await createGithubApi(fetch).readPullRequest('o/r', 't', 12)).toEqual({
+      number: 12,
+      url: 'https://github.com/o/r/pull/12',
+      state: 'closed',
+      merged: true,
+      mergeCommitSha: 'm1',
+      headSha: 'h1',
+      autoMerge: true,
+      mergeableState: 'clean',
+    })
+  })
+
+  it('has no merge commit for a pull request that is not merged', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': {
+        status: 200,
+        body: {
+          number: 12,
+          html_url: 'u',
+          state: 'open',
+          merged: false,
+          merge_commit_sha: 'test-merge',
+          head: { sha: 'h1' },
+          auto_merge: null,
+          mergeable_state: 'dirty',
+        },
+      },
+    })
+
+    expect(await createGithubApi(fetch).readPullRequest('o/r', 't', 12)).toMatchObject({
+      merged: false,
+      mergeCommitSha: undefined,
+      autoMerge: false,
+      mergeableState: 'dirty',
+    })
+  })
+
+  it('turns auto-merge on as a merge commit, pinned to the verified head', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { data: { enablePullRequestAutoMerge: { pullRequest: { number: 12 } } } },
+      },
+    })
+
+    await createGithubApi(fetch).enableAutoMerge('o/r', 'tok', 12, 'abc')
+
+    const graphql = calls.find((c) => c.url.includes('graphql'))!
+    expect(graphql.auth).toBe('Bearer tok')
+    expect((graphql.body as { variables: object }).variables).toEqual({
+      id: 'PR_12',
+      sha: 'abc',
+    })
+    expect(JSON.stringify(graphql.body)).toContain('enablePullRequestAutoMerge')
+    expect(JSON.stringify(graphql.body)).toContain('mergeMethod: MERGE')
+    expect(JSON.stringify(graphql.body)).toContain('expectedHeadOid: $sha')
+  })
+
+  it('says what to configure when GitHub will not turn auto-merge on', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { errors: [{ message: 'Auto merge is not allowed for this repository' }] },
+      },
+    })
+
+    const refused = createGithubApi(fetch).enableAutoMerge('o/r', 't', 12, 'abc')
+
+    await expect(refused).rejects.toBeInstanceOf(AutoMergeRefused)
+    await expect(refused).rejects.toThrow(
+      /o\/r#12.*Auto merge is not allowed for this repository.*Allow auto-merge.*merge commits/,
+    )
+  })
+
+  it('turns auto-merge off', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { data: { disablePullRequestAutoMerge: { pullRequest: { number: 12 } } } },
+      },
+    })
+
+    await createGithubApi(fetch).disableAutoMerge('o/r', 't', 12)
+
+    const graphql = calls.find((c) => c.url.includes('graphql'))!
+    expect(JSON.stringify(graphql.body)).toContain('disablePullRequestAutoMerge')
+    expect((graphql.body as { variables: object }).variables).toEqual({ id: 'PR_12' })
+  })
+
+  it('throws when auto-merge cannot be turned off', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': { status: 502, body: {} },
+    })
+    await expect(createGithubApi(fetch).disableAutoMerge('o/r', 't', 12)).rejects.toThrow(
+      /could not turn auto-merge off on o\/r#12: HTTP 502/,
+    )
+  })
+
+  it('reports each check on a commit with what it said and where to read it', async () => {
+    const { fetch } = fakeFetch({
+      'GET /commits/abc/check-runs': {
+        status: 200,
+        body: {
+          check_runs: [
+            {
+              name: 'CI',
+              status: 'completed',
+              conclusion: 'failure',
+              html_url: 'https://github.com/o/r/runs/1',
+              output: { title: 't', summary: 'two tests failed', text: 'at foo.test.ts:3' },
+            },
+            { name: 'Lint', status: 'in_progress', conclusion: null, html_url: 'l', output: {} },
+            { name: 'Skip', status: 'completed', conclusion: 'skipped', html_url: 's', output: {} },
+          ],
+        },
+      },
+      'GET /commits/abc/status': {
+        status: 200,
+        body: {
+          state: 'failure',
+          total_count: 1,
+          statuses: [
+            { context: 'socket', state: 'error', description: 'down', target_url: 'https://x' },
+          ],
+        },
+      },
+    })
+
+    expect(await createGithubApi(fetch).checkReports('o/r', 't', 'abc')).toEqual([
+      {
+        name: 'CI',
+        state: 'failure',
+        detail: 'two tests failed\nat foo.test.ts:3',
+        url: 'https://github.com/o/r/runs/1',
+      },
+      { name: 'Lint', state: 'pending', detail: '', url: 'l' },
+      { name: 'Skip', state: 'success', detail: '', url: 's' },
+      { name: 'socket', state: 'failure', detail: 'down', url: 'https://x' },
+    ])
   })
 })

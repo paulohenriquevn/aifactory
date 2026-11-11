@@ -52,6 +52,42 @@ export type CommitChecks = {
 
 export type PullRequest = { number: number; url: string }
 
+/** A pull request read by its number, as the wait for the repository's checks needs it. */
+export type PullRequestDetail = {
+  number: number
+  url: string
+  state: 'open' | 'closed'
+  merged: boolean
+  /** The commit the merge made on the base, for a merged one. */
+  mergeCommitSha?: string
+  headSha: string
+  /** Whether GitHub will merge it on its own once the required checks pass. */
+  autoMerge: boolean
+  /** GitHub's word for whether it can merge: `dirty` is a conflict with the base. */
+  mergeableState: string
+}
+
+/**
+ * One check on a commit, a check run or a commit status, reduced to what decides a merge. A skipped or
+ * neutral run passes, as GitHub counts it for a required check. `detail` is what the check said about itself.
+ */
+export type CheckReport = {
+  name: string
+  state: 'success' | 'failure' | 'pending'
+  detail: string
+  url: string
+}
+
+/** GitHub would not turn auto-merge on, so the pull request would never merge on its own. */
+export class AutoMergeRefused extends Error {
+  constructor(repo: string, number: number, why: string) {
+    super(
+      `GitHub would not turn auto-merge on for ${repo}#${number}: ${why}. The integration branch requires status checks, so the factory waits for them through auto-merge: enable "Allow auto-merge" and "Allow merge commits" in the repository settings, and let the GitHub App write pull requests.`,
+    )
+    this.name = 'AutoMergeRefused'
+  }
+}
+
 export type GithubApi = {
   createCheckRun(repo: string, token: string, check: CheckRun): Promise<void>
   /**
@@ -91,6 +127,20 @@ export type GithubApi = {
     sha: string,
     merge: PullRequestMerge,
   ): Promise<{ sha: string }>
+  /**
+   * The status checks a branch requires before anything merges into it, from its branch protection and
+   * its rulesets, each named once. Empty when it requires none.
+   */
+  requiredChecks(repo: string, token: string, branch: string): Promise<string[]>
+  readPullRequest(repo: string, token: string, number: number): Promise<PullRequestDetail>
+  /**
+   * Has GitHub merge the pull request (a merge commit) once the base's required checks pass, and only if
+   * its head is still `sha`. Throws `AutoMergeRefused` when GitHub will not.
+   */
+  enableAutoMerge(repo: string, token: string, number: number, sha: string): Promise<void>
+  disableAutoMerge(repo: string, token: string, number: number): Promise<void>
+  /** Every check run and commit status on a commit, with what each said. */
+  checkReports(repo: string, token: string, sha: string): Promise<CheckReport[]>
   /** The check runs and commit statuses a commit has so far. */
   commitChecks(repo: string, token: string, sha: string): Promise<CommitChecks>
   /**
@@ -160,6 +210,21 @@ const MERGE_RETRY_MS = 3_000
 const mergeMayPassLater = (status: number, message: string) =>
   status >= 500 || (status === 405 && /base branch was modified/i.test(message))
 
+/** Conclusions GitHub counts as passing for a required check. */
+const PASSING = new Set(['success', 'neutral', 'skipped'])
+
+const runState = (status: string, conclusion: string | null): CheckReport['state'] => {
+  if (status !== 'completed' || conclusion === null) return 'pending'
+  return PASSING.has(conclusion) ? 'success' : 'failure'
+}
+
+const statusState = (state: string): CheckReport['state'] => {
+  if (state === 'success') return 'success'
+  return state === 'pending' ? 'pending' : 'failure'
+}
+
+type GraphqlAnswer<T> = { data?: T; errors?: { message: string }[] }
+
 export function createGithubApi(
   fetchImpl: FetchLike = (url, init) => fetch(url, init),
   wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
@@ -181,6 +246,32 @@ export function createGithubApi(
       throw new Error(`GitHub answered ${response.status} ${action}: ${detail}`)
     }
     return response
+  }
+
+  /** Runs a GraphQL mutation on a pull request, by its node id. Returns the answer and what went wrong. */
+  async function onPullRequest<T>(
+    repo: string,
+    token: string,
+    number: number,
+    query: string,
+    variables: Record<string, unknown> = {},
+  ): Promise<{ data?: T; why?: string }> {
+    const pull = (await (
+      await ensure(await call(repo, token, `/pulls/${number}`), `reading ${repo}#${number}`, [200])
+    ).json()) as { node_id: string }
+    const response = await fetchImpl('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ query, variables: { id: pull.node_id, ...variables } }),
+    })
+    const result = (await response.json().catch(() => ({}))) as GraphqlAnswer<T>
+    if (result.errors?.length) return { why: result.errors.map((e) => e.message).join('; ') }
+    if (!response.ok || !result.data) return { why: `HTTP ${response.status}` }
+    return { data: result.data }
   }
 
   return {
@@ -465,36 +556,157 @@ export function createGithubApi(
     },
 
     async revertPullRequest(repo, token, number, revert) {
-      const pull = (await (
+      const answer = await onPullRequest<{
+        revertPullRequest?: { revertPullRequest?: { number: number; url: string } }
+      }>(
+        repo,
+        token,
+        number,
+        'mutation($id: ID!, $title: String, $body: String) { revertPullRequest(input: { pullRequestId: $id, title: $title, body: $body }) { revertPullRequest { number url } } }',
+        { title: revert.title, body: revert.body },
+      )
+      const made = answer.data?.revertPullRequest?.revertPullRequest
+      if (!made) {
+        throw new Error(
+          `GitHub would not open a revert of ${repo}#${number}: ${answer.why ?? 'no pull request came back'}`,
+        )
+      }
+      return { number: made.number, url: made.url }
+    },
+
+    async requiredChecks(repo, token, branch) {
+      const path = branch.split('/').map(encodeURIComponent).join('/')
+      const protection = (await (
+        await ensure(
+          await call(repo, token, `/branches/${path}`),
+          `reading the branch ${branch} of ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        protection?: {
+          required_status_checks?: { contexts?: string[]; checks?: { context: string }[] }
+        }
+      }
+      const rules = await call(repo, token, `/rules/branches/${path}`)
+      const ruleset =
+        rules.status === 404
+          ? []
+          : ((await (
+              await ensure(rules, `reading the rules of the branch ${branch} of ${repo}`, [200])
+            ).json()) as {
+              type: string
+              parameters?: { required_status_checks?: { context: string }[] }
+            }[])
+      const required = protection.protection?.required_status_checks
+      return [
+        ...new Set([
+          ...(required?.contexts ?? []),
+          ...(required?.checks ?? []).map((c) => c.context),
+          ...ruleset
+            .filter((rule) => rule.type === 'required_status_checks')
+            .flatMap((rule) => rule.parameters?.required_status_checks ?? [])
+            .map((c) => c.context),
+        ]),
+      ]
+    },
+
+    async readPullRequest(repo, token, number) {
+      const pr = (await (
         await ensure(
           await call(repo, token, `/pulls/${number}`),
           `reading ${repo}#${number}`,
           [200],
         )
-      ).json()) as { node_id: string }
-      const response = await fetchImpl('https://api.github.com/graphql', {
-        method: 'POST',
-        headers: {
-          accept: 'application/vnd.github+json',
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          query:
-            'mutation($id: ID!, $title: String, $body: String) { revertPullRequest(input: { pullRequestId: $id, title: $title, body: $body }) { revertPullRequest { number url } } }',
-          variables: { id: pull.node_id, title: revert.title, body: revert.body },
-        }),
-      })
-      const result = (await response.json()) as {
-        data?: { revertPullRequest?: { revertPullRequest?: { number: number; url: string } } }
-        errors?: { message: string }[]
+      ).json()) as {
+        number: number
+        html_url: string
+        state: 'open' | 'closed'
+        merged: boolean
+        merge_commit_sha: string | null
+        head: { sha: string }
+        auto_merge: object | null
+        mergeable_state: string
       }
-      const made = result.data?.revertPullRequest?.revertPullRequest
-      if (!response.ok || result.errors?.length || !made) {
-        const why = result.errors?.map((e) => e.message).join('; ') ?? `HTTP ${response.status}`
-        throw new Error(`GitHub would not open a revert of ${repo}#${number}: ${why}`)
+      return {
+        number: pr.number,
+        url: pr.html_url,
+        state: pr.state,
+        merged: pr.merged,
+        // An open pull request's merge_commit_sha is GitHub's test merge, not anything on the base.
+        mergeCommitSha: pr.merged ? (pr.merge_commit_sha ?? undefined) : undefined,
+        headSha: pr.head.sha,
+        autoMerge: pr.auto_merge !== null,
+        mergeableState: pr.mergeable_state,
       }
-      return { number: made.number, url: made.url }
+    },
+
+    async enableAutoMerge(repo, token, number, sha) {
+      const answer = await onPullRequest(
+        repo,
+        token,
+        number,
+        'mutation($id: ID!, $sha: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $sha }) { pullRequest { number } } }',
+        { sha },
+      )
+      if (answer.why) throw new AutoMergeRefused(repo, number, answer.why)
+    },
+
+    async disableAutoMerge(repo, token, number) {
+      const answer = await onPullRequest(
+        repo,
+        token,
+        number,
+        'mutation($id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: $id }) { pullRequest { number } } }',
+      )
+      if (answer.why) {
+        throw new Error(`GitHub could not turn auto-merge off on ${repo}#${number}: ${answer.why}`)
+      }
+    },
+
+    async checkReports(repo, token, sha) {
+      const runs = (await (
+        await ensure(
+          await call(repo, token, `/commits/${sha}/check-runs?per_page=100`),
+          `reading the check runs of ${sha.slice(0, 7)} on ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        check_runs: {
+          name: string
+          status: string
+          conclusion: string | null
+          html_url: string | null
+          output?: { summary?: string | null; text?: string | null }
+        }[]
+      }
+      const combined = (await (
+        await ensure(
+          await call(repo, token, `/commits/${sha}/status`),
+          `reading the statuses of ${sha.slice(0, 7)} on ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        statuses?: {
+          context: string
+          state: string
+          description: string | null
+          target_url: string | null
+        }[]
+      }
+      return [
+        ...runs.check_runs.map((r) => ({
+          name: r.name,
+          state: runState(r.status, r.conclusion),
+          detail: [r.output?.summary, r.output?.text].filter(Boolean).join('\n'),
+          url: r.html_url ?? '',
+        })),
+        ...(combined.statuses ?? []).map((s) => ({
+          name: s.context,
+          state: statusState(s.state),
+          detail: s.description ?? '',
+          url: s.target_url ?? '',
+        })),
+      ]
     },
 
     async deleteBranch(repo, token, branch) {

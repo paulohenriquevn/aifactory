@@ -28,6 +28,7 @@ import type {
   PullRequestState,
   ReleaseInput,
 } from '../github/pulls'
+import { AutoMergeRefused } from '../github/pulls'
 
 import { retryableFailure } from '../../shared/panel'
 import { FakeBranches } from '../../test/fake-branches'
@@ -121,7 +122,16 @@ const githubApi: GithubApi & {
   openFailsFor: string | undefined
   /** What `.changeset` on the pre-release branch holds; undefined when the repository has none. */
   changesets: string[] | undefined
+  /** The status checks the integration branch requires. */
+  required: string[]
+  /** The pull requests auto-merge was turned on for, with the head it is pinned to. */
+  autoMerges: { number: number; sha: string }[]
+  /** GitHub refuses to turn auto-merge on. */
+  autoMergeRefused: boolean
 } = {
+  required: [],
+  autoMerges: [],
+  autoMergeRefused: false,
   openFailsFor: undefined,
   changesets: undefined,
   branches: FakeBranches.prepared(),
@@ -183,6 +193,23 @@ const githubApi: GithubApi & {
   async findPullRequest() {
     return this.pullRequest
   },
+  async requiredChecks() {
+    return this.required
+  },
+  async readPullRequest() {
+    throw new Error('a run never reads a pull request by number')
+  },
+  async enableAutoMerge(repo, _token, number, sha) {
+    if (this.autoMergeRefused)
+      throw new AutoMergeRefused(repo, number, 'Auto merge is not allowed for this repository')
+    this.autoMerges.push({ number, sha })
+  },
+  async disableAutoMerge() {
+    throw new Error('a run never turns auto-merge off')
+  },
+  async checkReports() {
+    return []
+  },
   async mergePullRequest(_repo, _token, number, sha, merge) {
     if (this.mergeFails) throw new Error('GitHub answered 405 merging paulo/app#12: conflicts')
     this.merges.push({ number, sha })
@@ -231,6 +258,9 @@ beforeEach(() => {
   githubApi.branchMergeFails = false
   githubApi.openFailsFor = undefined
   githubApi.changesets = undefined
+  githubApi.required = []
+  githubApi.autoMerges = []
+  githubApi.autoMergeRefused = false
   githubApi.branches = FakeBranches.prepared()
   dirty = true
 })
