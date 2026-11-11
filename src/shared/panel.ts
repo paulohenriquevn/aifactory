@@ -29,11 +29,12 @@ export const COLUMNS: { id: Column; title: string }[] = [
 ]
 
 /**
- * Why a failed task is not waiting for a person: the agent's usage limit, or the environment (GitHub, the
- * network, the sandbox, a restart). Both pass, and the factory runs the task again once they have. A failure
- * of the work itself is neither, and stays with a person.
+ * Why a failed task is not waiting for a person: the agent's usage limit, the environment (GitHub, the
+ * network, the sandbox, a restart), or an issue it is blocked by that is still open. Each passes, and the
+ * factory runs the task again once it has. A failure of the work itself is none of them, and stays with a
+ * person.
  */
-export type Retryable = 'quota' | 'environment' | null
+export type Retryable = 'quota' | 'environment' | 'blocked' | null
 
 const ENVIRONMENT =
   /Internal Server Error|remote rejected|GitHub answered 5\d\d|\b50[234]\b|\b429\b|ECONN|ETIMEDOUT|ENOTFOUND|socket|fetch failed|out of memory|OOM|heap|is not running|killed \(most likely out of memory|was restarted|usage limit exceeded|Status code 402|timed out after \d+ ms|clone failed/i
@@ -50,6 +51,7 @@ const AGENT_OUT_OF_TIME = /^the agent did not finish\b.*\btimed out\b/is
 export function retryableFailure(detail: Record<string, unknown> | null | undefined): Retryable {
   if (!detail) return null
   if (detail.quota === true) return 'quota'
+  if (Array.isArray(detail.blockedBy) && detail.blockedBy.length > 0) return 'blocked'
   if (typeof detail.error !== 'string' || AGENT_OUT_OF_TIME.test(detail.error)) return null
   return ENVIRONMENT.test(detail.error) ? 'environment' : null
 }

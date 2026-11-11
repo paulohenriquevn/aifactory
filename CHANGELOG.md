@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A task whose issue says it is blocked by issues still open no longer runs and lands in Needs a person: it waits in Will retry itself, before any sandbox, and checks again every half hour until each of them is closed (#21)
 - A deploy now starts every enabled worker, a stopped one included, so the factory runs as many tasks at once as it has workers; before, a worker that stopped once stayed stopped through every later deploy (#20)
 
 ## [0.2.0] - 2026-11-10

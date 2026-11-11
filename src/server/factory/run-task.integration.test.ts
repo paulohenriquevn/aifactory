@@ -1,5 +1,5 @@
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { getStorageManager } from 'theokit/server/storage'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -28,6 +28,7 @@ import type {
   ReleaseInput,
 } from '../github/pulls'
 
+import { retryableFailure } from '../../shared/panel'
 import { FakeBranches } from '../../test/fake-branches'
 import { knowledgeRules } from '../knowledge/prompt'
 import type { KnowledgeSource } from '../knowledge/source'
@@ -618,6 +619,52 @@ describe('runTask', () => {
 
     expect(result).toMatchObject({ status: 'failed', stage: 'sandbox' })
     expect(sandbox.specs).toHaveLength(0)
+  })
+
+  it('starts no sandbox while an issue the task is blocked by is open, and waits for it', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const read: string[] = []
+    const fetchIssue: RunTaskDeps['fetchIssue'] = async (repo, number) => {
+      read.push(`${repo}#${number}`)
+      if (number === 7) {
+        return {
+          number,
+          title: 'T',
+          body: 'Blocked by o/gateways#3, #5.',
+          labels: [],
+          state: 'open',
+        }
+      }
+      return { number, title: 'X', body: '', labels: [], state: number === 3 ? 'open' : 'closed' }
+    }
+
+    const result = await runTask(deps(sandbox, { fetchIssue }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'sandbox' })
+    expect(sandbox.specs).toHaveLength(0)
+    expect(read).toEqual(['paulo/app#7', 'o/gateways#3', 'paulo/app#5'])
+    const [last] = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, id))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
+    expect(last!.detail).toMatchObject({ blockedBy: ['o/gateways#3'] })
+    expect(retryableFailure(last!.detail as Record<string, unknown>)).toBe('blocked')
+  })
+
+  it('runs once every issue it is blocked by is closed', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const fetchIssue: RunTaskDeps['fetchIssue'] = async (_repo, number) =>
+      number === 7
+        ? { number, title: 'T', body: 'Blocked by #5.', labels: [], state: 'open' }
+        : { number, title: 'X', body: '', labels: [], state: 'closed' }
+
+    await runTask(deps(sandbox, { fetchIssue }), id)
+
+    expect(sandbox.specs).toHaveLength(1)
   })
 
   it('stops the sandbox and says why when the job lease expires mid-run', async () => {

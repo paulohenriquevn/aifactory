@@ -72,6 +72,15 @@ describe('a failure that passes by itself', () => {
     expect(retryableFailure(undefined)).toBeNull()
   })
 
+  it('waits, rather than going to a person, while an issue the task is blocked by is open', () => {
+    const detail = { error: 'blocked by o/a#1, still open; …', blockedBy: ['o/a#1'] }
+
+    expect(retryableFailure(detail)).toBe('blocked')
+    expect(columnOf('failed', 'blocked')).toBe('retrying')
+    expect(retryableFailure({ error: 'x', blockedBy: [] })).toBeNull()
+    expect(retryableFailure({ error: 'x', blockedBy: 'o/a#1' })).toBeNull()
+  })
+
   it('leaves with a person an agent that used all its time, and still retries a command of the environment that timed out', () => {
     expect(
       retryableFailure({

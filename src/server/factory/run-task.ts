@@ -1,7 +1,8 @@
 import { and, eq, isNotNull, isNull } from 'drizzle-orm'
 
 import { question as questionTable, task } from '../db/schema'
-import { fetchIssue as defaultFetchIssue } from '../github/issues'
+import { fetchIssue as defaultFetchIssue, type Issue } from '../github/issues'
+import { BlockedByOpenIssues, declaredBlockers, openBlockers } from './blockers'
 import { withRecipe } from './recipe'
 import { createGithubApi } from '../github/pulls'
 
@@ -81,11 +82,9 @@ async function execute(
     // One token, limited to this task's repository. It is used here and in the firewall rule,
     // and nothing below hands it to the sandbox.
     const { token } = await deps.github.installationToken(row.repository)
-    const issue = await (deps.fetchIssue ?? defaultFetchIssue)(
-      row.repository,
-      row.issueNumber,
-      token,
-    )
+    const readIssue = deps.fetchIssue ?? defaultFetchIssue
+    const issue = await readIssue(row.repository, row.issueNumber, token)
+    await refuseWhileBlocked(deps, row.repository, issue, readIssue)
 
     const run = await Run.open({
       deps,
@@ -114,6 +113,26 @@ async function execute(
   }
 }
 
+/**
+ * Throws `BlockedByOpenIssues` when the issue declares a blocker that is still open, before any sandbox
+ * exists: the work it waits for has not shipped, and an agent started now finds nothing to build on. Each
+ * blocker is read with a token for its own repository. One whose state is unknown counts as open.
+ */
+async function refuseWhileBlocked(
+  deps: RunTaskDeps,
+  repository: string,
+  issue: Issue,
+  readIssue: NonNullable<RunTaskDeps['fetchIssue']>,
+): Promise<void> {
+  const blockers = declaredBlockers(issue.body, repository)
+  if (blockers.length === 0) return
+  const open = await openBlockers(blockers, async (ref) => {
+    const { token } = await deps.github.installationToken(ref.repository)
+    return (await readIssue(ref.repository, ref.number, token)).state !== 'closed'
+  })
+  if (open.length > 0) throw new BlockedByOpenIssues(open)
+}
+
 /** Records how a run ended when it did not finish: parked on a question, or failed at a stage. */
 async function fail(
   deps: RunTaskDeps,
@@ -132,6 +151,7 @@ async function fail(
     failedAt: state.current,
     error: message,
     ...(error instanceof QuotaStop ? quotaDetail(error, new Date()) : {}),
+    ...(error instanceof BlockedByOpenIssues ? { blockedBy: error.blockedBy } : {}),
   })
   return { status: 'failed', stage: state.current, error: message }
 }

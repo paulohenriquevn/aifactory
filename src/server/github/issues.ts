@@ -1,6 +1,13 @@
 import type { FetchLike } from './app'
 
-export type Issue = { number: number; title: string; body: string; labels: string[] }
+export type Issue = {
+  number: number
+  title: string
+  body: string
+  labels: string[]
+  /** Whether it is still open. A reader that does not say is taken as not knowing, never as closed. */
+  state?: 'open' | 'closed'
+}
 
 /** Reads an issue with an installation token. Runs on the factory host, never in the sandbox. */
 export async function fetchIssue(
@@ -24,11 +31,13 @@ export async function fetchIssue(
     title: string
     body: string | null
     labels?: { name: string }[]
+    state?: string
   }
   return {
     number: data.number,
     title: data.title,
     body: data.body ?? '',
     labels: (data.labels ?? []).map((l) => l.name),
+    ...(data.state === 'open' || data.state === 'closed' ? { state: data.state } : {}),
   }
 }

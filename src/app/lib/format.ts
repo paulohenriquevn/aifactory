@@ -1,4 +1,4 @@
-import type { Stage, TimelineEvent } from '../../shared/panel'
+import type { Retryable, Stage, TimelineEvent } from '../../shared/panel'
 
 export const money = (usd: number) => (usd < 0.005 ? '$0.00' : `$${usd.toFixed(2)}`)
 
@@ -46,13 +46,14 @@ export function stageLabel(
   extra: {
     integrated?: boolean
     resolved?: boolean
-    retryable?: 'quota' | 'environment' | null
+    retryable?: Retryable
   } = {},
 ): string {
   if (stage === 'done' && extra.resolved) return 'already resolved'
   if (stage === 'done' && extra.integrated) return 'integrated'
   if (stage === 'failed' && extra.retryable === 'quota') return 'waiting for the limit'
   if (stage === 'failed' && extra.retryable === 'environment') return 'will retry'
+  if (stage === 'failed' && extra.retryable === 'blocked') return 'waiting for another issue'
   return LABELS[stage]
 }
 
