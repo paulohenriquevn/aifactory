@@ -423,10 +423,20 @@ npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio r
 O cron `publish-changesets` olha cada `publication` esperando, a cada minuto. Ele acha o PR "Version
 Packages" e o mergeia quando os checks dele estão verdes, fixado ao commit que viu, em nome de quem decidiu o
 release. Checks vermelhos, pendentes ou ausentes, rascunho ou PR fechado: ele espera e registra o motivo na
-`publication`. É o único PR que esse passo mergeia. Depois que o workflow publica, ele lê as releases novas
+`publication`. Depois que o workflow publica, ele lê as releases novas
 do GitHub, grava uma entrega `release` com cada tag, e cada task cujo trabalho está no commit promovido (a
 do release e toda task `done` integrada antes dela, conferido pela API de comparação) vai para `released`,
 ganha o comentário "Available in <tags>" na issue e tem a issue fechada.
+
+Depois do release, o workflow do repositório abre o back-merge: o PR da branch de release para a branch de
+integração (`main → workspace`). Enquanto ele não entra, `workspace` fica com as versões de antes do release,
+e um check que compara as duas coisas (o `check-changelog-current` do theokit) reprova todo PR da fábrica, que
+então devolve trabalho já aprovado ao agente. Por isso o mesmo cron, a cada passada, procura em cada
+repositório habilitado que já teve uma `publication` um PR aberto cuja head é a branch de release do próprio
+repositório (nunca a de um fork) e cuja base é a branch de integração. Com os checks verdes, ele mergeia com
+merge commit, fixado ao commit da head que viu. Checks vermelhos, pendentes ou ausentes, ou rascunho: o PR
+fica aberto e a próxima passada tenta de novo. Esses são os dois únicos PRs que esse passo mergeia: o
+"Version Packages" e o back-merge.
 
 Nesses repositórios a verificação ganha um check a mais, `changeset`
 (`pnpm exec changeset status --since=origin/<branch de integração>`): mudar um pacote sem changeset reprova

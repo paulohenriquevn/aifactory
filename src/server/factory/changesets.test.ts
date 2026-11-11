@@ -4,6 +4,7 @@ import {
   CHANGESET_CHECK,
   changesetsOn,
   isPackageTag,
+  pickBackMerge,
   versionBranchFor,
   withChangesetCheck,
 } from './changesets'
@@ -65,5 +66,44 @@ describe('withChangesetCheck', () => {
   it('does not add it twice when the owner already lists a check of that name', () => {
     const own = [...checks, { name: CHANGESET_CHECK, command: 'pnpm changeset status' }]
     expect(withChangesetCheck(own, true, 'workspace')).toBe(own)
+  })
+})
+
+describe('pickBackMerge', () => {
+  const branches = { repo: 'usetheokit/theokit', release: 'main', integration: 'workspace' }
+  const backMerge = {
+    number: 1738,
+    url: 'https://github.com/usetheokit/theokit/pull/1738',
+    headSha: 'main-head',
+    headRef: 'main',
+    headRepo: 'usetheokit/theokit',
+    baseRef: 'workspace',
+    draft: false,
+  }
+
+  it('takes the pull request from the release branch into the integration branch of the same repository', () => {
+    expect(pickBackMerge([backMerge], branches)).toBe(backMerge)
+  })
+
+  it('finds it among other open pull requests', () => {
+    const other = { ...backMerge, number: 1, headRef: 'factory/7' }
+    expect(pickBackMerge([other, backMerge], branches)).toBe(backMerge)
+  })
+
+  it('never takes a pull request from another head into the integration branch', () => {
+    expect(pickBackMerge([{ ...backMerge, headRef: 'factory/7' }], branches)).toBeUndefined()
+    expect(pickBackMerge([{ ...backMerge, headRef: 'develop' }], branches)).toBeUndefined()
+  })
+
+  it('never takes the release branch into another base', () => {
+    expect(pickBackMerge([{ ...backMerge, baseRef: 'develop' }], branches)).toBeUndefined()
+  })
+
+  it('never takes a release branch of the same name pushed to a fork', () => {
+    expect(pickBackMerge([{ ...backMerge, headRepo: 'someone/theokit' }], branches)).toBeUndefined()
+  })
+
+  it('is nothing when no pull request is open', () => {
+    expect(pickBackMerge([], branches)).toBeUndefined()
   })
 })

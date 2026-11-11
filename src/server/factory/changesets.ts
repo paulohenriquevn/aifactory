@@ -1,3 +1,5 @@
+import type { OpenPullRequest } from '../github/pulls'
+
 import type { CheckSpec } from './evidence'
 
 /**
@@ -21,6 +23,25 @@ export function changesetsOn(names: string[] | undefined): ChangesetState {
 
 /** The branch changesets/action opens its Version Packages pull request from. */
 export const versionBranchFor = (releaseBranch: string) => `changeset-release/${releaseBranch}`
+
+/**
+ * The back-merge a repository's own workflow opens after a release: from the release branch into the
+ * integration branch, in the repository itself. Until it lands, the integration branch holds the versions
+ * before the release, and a check that compares them with what was published fails on every pull request
+ * into it (theokit on 2026-11-11, #37). It is the one pull request into the integration branch the factory
+ * merges that is not its own, so anything else, a fork's branch of the same name included, is never it.
+ */
+export function pickBackMerge(
+  open: OpenPullRequest[],
+  branches: { repo: string; release: string; integration: string },
+): OpenPullRequest | undefined {
+  return open.find(
+    (pr) =>
+      pr.headRef === branches.release &&
+      pr.baseRef === branches.integration &&
+      pr.headRepo === branches.repo,
+  )
+}
 
 /** A tag changesets makes for a published package: `name@version`, with an optional `@scope/`. */
 const PACKAGE_TAG = /^(@[^/@\s]+\/)?[^/@\s]+@\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/

@@ -651,6 +651,58 @@ describe('what a release with changesets needs to read', () => {
         ?.mergedAt,
     ).toEqual(new Date('2026-09-25T21:12:10Z'))
   })
+  it('lists the open pull requests from a branch of the repository into a base, with where each comes from', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls': {
+        status: 200,
+        body: [
+          {
+            number: 1738,
+            html_url: 'u',
+            draft: false,
+            head: { sha: 'abc', ref: 'main', repo: { full_name: 'o/r' } },
+            base: { ref: 'workspace' },
+          },
+          {
+            number: 5,
+            html_url: 'v',
+            draft: true,
+            head: { sha: 'def', ref: 'main', repo: null },
+            base: { ref: 'workspace' },
+          },
+        ],
+      },
+    })
+
+    const found = await createGithubApi(fetch).openPullRequestsBetween(
+      'o/r',
+      't',
+      'main',
+      'workspace',
+    )
+
+    expect(found).toEqual([
+      {
+        number: 1738,
+        url: 'u',
+        headSha: 'abc',
+        headRef: 'main',
+        headRepo: 'o/r',
+        baseRef: 'workspace',
+        draft: false,
+      },
+      {
+        number: 5,
+        url: 'v',
+        headSha: 'def',
+        headRef: 'main',
+        headRepo: undefined,
+        baseRef: 'workspace',
+        draft: true,
+      },
+    ])
+    expect(calls[0].url).toBe('/pulls?state=open&head=o:main&base=workspace&per_page=100')
+  })
 })
 
 describe('what integrating through the repository CI needs', () => {

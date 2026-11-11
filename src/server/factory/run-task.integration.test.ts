@@ -199,6 +199,9 @@ const githubApi: GithubApi & {
   async findPullRequest() {
     return this.pullRequest
   },
+  async openPullRequestsBetween() {
+    throw new Error('the pipeline never looks for a back-merge')
+  },
   async requiredChecks() {
     return this.required
   },

@@ -5,11 +5,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
-import { delivery, ingress, publication, stageEvent, task } from '../db/schema'
+import { delivery, ingress, publication, repository, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type {
   CommitChecks,
   GithubApi,
+  OpenPullRequest,
   PublishedRelease,
   PullRequestMerge,
   PullRequestState,
@@ -32,6 +33,8 @@ const green: CommitChecks = {
 /** GitHub as the publication step sees it, scripted per test. */
 const gh = {
   versionPr: undefined as PullRequestState | undefined,
+  /** The open pull requests GitHub answers for a head and a base. */
+  open: [] as OpenPullRequest[],
   checks: green,
   published: [] as PublishedRelease[],
   /** Commits that are not in the promoted history. */
@@ -43,10 +46,11 @@ const gh = {
 }
 beforeEach(async () => {
   await getPool().query(
-    'truncate table publication, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table repository, publication, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
   Object.assign(gh, {
     versionPr: undefined,
+    open: [],
     checks: green,
     published: [],
     outside: new Set<string>(),
@@ -61,6 +65,10 @@ const api = {
   findPullRequest: async (_repo: string, _token: string, head: string) => {
     gh.asked.push(head)
     return gh.versionPr
+  },
+  openPullRequestsBetween: async (_repo: string, _token: string, head: string, base: string) => {
+    gh.asked.push(`${head} -> ${base}`)
+    return gh.open
   },
   commitChecks: async () => gh.checks,
   mergePullRequest: async (
@@ -298,5 +306,105 @@ describe('publishing a changesets release', () => {
     expect(result.errors).toEqual([expect.stringMatching(/502/)])
     expect((await row()).detail).toMatch(/502/)
     expect((await row()).status).toBe('waiting')
+  })
+})
+
+describe('merging the back-merge after a changesets release', () => {
+  const backMerge = (fields: Partial<OpenPullRequest> = {}): OpenPullRequest => ({
+    number: 1738,
+    url: 'https://github.com/usetheokit/ui/pull/1738',
+    headSha: 'main-head',
+    headRef: 'main',
+    headRepo: 'usetheokit/ui',
+    baseRef: 'workspace',
+    draft: false,
+    ...fields,
+  })
+  async function publishedRelease() {
+    await getDb().insert(repository).values({ fullName: 'usetheokit/ui', enabled: true })
+    await waitingPublication()
+    await getDb().update(publication).set({ status: 'published', versionPullRequest: 180 })
+  }
+
+  it('merges the open pull request from the release branch into the integration branch, with a merge commit pinned to its head', async () => {
+    await publishedRelease()
+    gh.open = [backMerge()]
+
+    const result = await pollPublications(deps())
+
+    expect(gh.asked).toContain('main -> workspace')
+    expect(gh.merges).toEqual([{ number: 1738, sha: 'main-head', merge: { method: 'merge' } }])
+    expect(result.backMerged).toEqual(['usetheokit/ui#1738'])
+  })
+
+  it('looks for it in the integration branch the owner chose', async () => {
+    await publishedRelease()
+    await getDb().update(repository).set({ baseBranch: 'next' })
+    gh.open = [backMerge({ baseRef: 'next' })]
+
+    await pollPublications(deps())
+
+    expect(gh.asked).toContain('main -> next')
+    expect(gh.merges).toEqual([{ number: 1738, sha: 'main-head', merge: { method: 'merge' } }])
+  })
+
+  it('leaves it open while its checks fail or run, and merges it on a later pass once they pass', async () => {
+    await publishedRelease()
+    gh.open = [backMerge()]
+    const failing: CommitChecks = {
+      checkRuns: [{ name: 'CI', status: 'completed', conclusion: 'failure' }],
+      statuses: 'none',
+    }
+    const running: CommitChecks = {
+      checkRuns: [{ name: 'CI', status: 'in_progress', conclusion: null }],
+      statuses: 'none',
+    }
+    for (const checks of [failing, running, { checkRuns: [], statuses: 'none' } as CommitChecks]) {
+      gh.checks = checks
+      expect((await pollPublications(deps())).backMerged).toEqual([])
+    }
+    expect(gh.merges).toEqual([])
+
+    gh.checks = green
+    expect((await pollPublications(deps())).backMerged).toEqual(['usetheokit/ui#1738'])
+  })
+
+  it('never merges a draft, a pull request from another head, or one from a fork', async () => {
+    await publishedRelease()
+    gh.open = [
+      backMerge({ draft: true }),
+      backMerge({ number: 7, headRef: 'factory/7' }),
+      backMerge({ number: 8, headRepo: 'someone/ui' }),
+    ]
+
+    const result = await pollPublications(deps())
+
+    expect(gh.merges).toEqual([])
+    expect(result.backMerged).toEqual([])
+  })
+
+  it('does not look in a repository that was disabled after its release', async () => {
+    await publishedRelease()
+    await getDb().update(repository).set({ enabled: false })
+    gh.open = [backMerge()]
+
+    await pollPublications(deps())
+
+    expect(gh.asked).not.toContain('main -> workspace')
+    expect(gh.merges).toEqual([])
+  })
+
+  it('records why the back-merge could not be looked at, and goes on', async () => {
+    await publishedRelease()
+    const broken = {
+      ...api,
+      openPullRequestsBetween: async () => {
+        throw new Error('GitHub answered 502 listing pull requests of usetheokit/ui')
+      },
+    } as unknown as GithubApi
+
+    const result = await pollPublications({ ...deps(), api: broken })
+
+    expect(result.errors).toEqual([expect.stringMatching(/usetheokit\/ui: .*502/)])
   })
 })

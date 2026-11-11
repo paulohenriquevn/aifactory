@@ -41,6 +41,18 @@ export type PullRequestState = {
   mergedAt?: Date
 }
 
+/** An open pull request, with the branch and repository it comes from and the branch it goes into. */
+export type OpenPullRequest = {
+  number: number
+  url: string
+  headSha: string
+  headRef: string
+  /** `owner/name` of the repository the head branch lives in; undefined when that fork was deleted. */
+  headRepo: string | undefined
+  baseRef: string
+  draft: boolean
+}
+
 /** A full release a repository published, as its own release workflow names it. */
 export type PublishedRelease = { tag: string; url: string; publishedAt: Date }
 
@@ -119,6 +131,13 @@ export type GithubApi = {
   contains(repo: string, token: string, descendant: string, ancestor: string): Promise<boolean>
   /** The pull request opened from `head`, open or not, if there is one. */
   findPullRequest(repo: string, token: string, head: string): Promise<PullRequestState | undefined>
+  /** The open pull requests from the branch `head` of the repository's owner into `base`. */
+  openPullRequestsBetween(
+    repo: string,
+    token: string,
+    head: string,
+    base: string,
+  ): Promise<OpenPullRequest[]>
   /** Merges a pull request only if its head is still `sha`. Returns the merge commit. */
   mergePullRequest(
     repo: string,
@@ -405,6 +424,33 @@ export function createGithubApi(
             mergedAt: pr.merged_at ? new Date(pr.merged_at) : undefined,
           }
         : undefined
+    },
+
+    async openPullRequestsBetween(repo, token, head, base) {
+      const owner = repo.split('/')[0]
+      const query = `state=open&head=${owner}:${encodeURIComponent(head)}&base=${encodeURIComponent(base)}&per_page=100`
+      const found = (await (
+        await ensure(
+          await call(repo, token, `/pulls?${query}`),
+          `listing the pull requests of ${repo} from ${head} into ${base}`,
+          [200],
+        )
+      ).json()) as {
+        number: number
+        html_url: string
+        draft: boolean
+        head: { sha: string; ref: string; repo: { full_name: string } | null }
+        base: { ref: string }
+      }[]
+      return found.map((pr) => ({
+        number: pr.number,
+        url: pr.html_url,
+        headSha: pr.head.sha,
+        headRef: pr.head.ref,
+        headRepo: pr.head.repo?.full_name,
+        baseRef: pr.base.ref,
+        draft: pr.draft,
+      }))
     },
 
     async listDirectory(repo, token, path, ref) {

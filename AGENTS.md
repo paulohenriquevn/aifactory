@@ -3,13 +3,13 @@
 Software factory that turns GitHub issues into verified pull requests. The plan, milestones and
 current state are in `docs/PLAN.md`; the decisions behind it are in `docs/adr/`.
 
-Context for coding agents working **on this repository** — Cursor, Copilot, Claude Code and
+Context for coding agents working **on this repository**: Cursor, Copilot, Claude Code and
 TheoKit itself all read this file. It sits at the root and is discovered from any subdirectory, so
 it is the right place for what someone needs to know before changing code here.
 
 > **Not the same file as `.theokit/THEO.md`.** This one describes the codebase, for agents that
 > write it. That one describes your product, for the agent that talks to your users. Two audiences,
-> two files — see the table at the bottom.
+> two files. See the table at the bottom.
 
 ## Commands
 
@@ -54,7 +54,7 @@ src/shared/         contracts both sides import (`panel.ts` is what the panel AP
 .theokit/           agent context read at runtime (no rebuild)
 ```
 
-The paths are declared in `theo.config.ts`. Move them there if you move them at all — the framework
+The paths are declared in `theo.config.ts`. Move them there if you move them at all: the framework
 reads that file, not a convention.
 
 ## Conventions
@@ -104,7 +104,10 @@ reads that file, not a convention.
   request there, pinned to the verified commit, once the checks pass and the review approves. When the
   integration branch requires status checks, the factory merges nothing itself: it turns on auto-merge pinned
   to the verified commit (`task.awaiting_ci_sha`), and the `integrate-after-ci` cron finishes the integration
-  after GitHub merges, or sends the work back when a required check fails. Nothing else may merge there. `develop` is
+  after GitHub merges, or sends the work back when a required check fails. Nothing else may merge there, with one
+  exception: after a changesets release, `publish-changesets` merges the repository's back-merge, the open pull
+  request from the release branch into the integration branch of the same repository (never a fork), with a
+  merge commit pinned to its head once its checks are green (`pickBackMerge` in `factory/changesets.ts`). `develop` is
   the pre-release: it advances to each integration, which gets a pre-release tag. The default branch
   (`main`) is the release. The factory never merges into it on its own account: a release is a promotion of
   `develop`, goes through `release()` in `factory/deliver.ts` with its refusals, and only a person or, in
@@ -134,11 +137,11 @@ reads that file, not a convention.
 
 ## The two context files
 
-|          | `AGENTS.md` (this file)                     | `.theokit/THEO.md`                   |
-| -------- | ------------------------------------------- | ------------------------------------ |
-| Audience | agents that **write** this code             | the agent your **users** talk to     |
-| Content  | commands, layout, conventions               | product facts, domain vocabulary     |
-| Read by  | many tools (root, walks up to the git root) | TheoKit only, this directory         |
-| Priority | 10 — anything else can override it          | 60 — the strongest file-layer source |
+|          | `AGENTS.md` (this file)                     | `.theokit/THEO.md`                  |
+| -------- | ------------------------------------------- | ----------------------------------- |
+| Audience | agents that **write** this code             | the agent your **users** talk to    |
+| Content  | commands, layout, conventions               | product facts, domain vocabulary    |
+| Read by  | many tools (root, walks up to the git root) | TheoKit only, this directory        |
+| Priority | 10, anything else can override it           | 60, the strongest file-layer source |
 
 Because `THEO.md` wins conflicts, keep facts there and preferences here.

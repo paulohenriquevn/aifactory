@@ -1,11 +1,12 @@
-import { and, eq, isNotNull, or } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, or } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { delivery, publication, task } from '../db/schema'
+import { delivery, publication, repository, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { GithubApi, PublishedRelease } from '../github/pulls'
 
-import { isPackageTag, versionBranchFor } from './changesets'
+import { integrationBranch } from './branches'
+import { isPackageTag, pickBackMerge, versionBranchFor } from './changesets'
 import { enterStage } from './stages'
 import { classify } from './watch'
 
@@ -17,6 +18,8 @@ export type PublishResult = {
   /** Publications whose packages are out, with their tasks released. */
   published: number[]
   waiting: number
+  /** Back-merges from the release branch into the integration branch merged on this pass, as `repo#number`. */
+  backMerged: string[]
   /** What stopped a publication on this pass; it is looked at again on the next one. */
   errors: string[]
 }
@@ -48,13 +51,28 @@ async function mergeVersionPullRequest(
     return after ? { merged: pr.number } : { wait: NOT_OPENED }
   }
   if (pr.state === 'closed') return { wait: `${name} was closed without being merged` }
+  return mergeWhenGreen(deps, p.repository, token, pr, name)
+}
+
+/**
+ * Merges an open pull request with a merge commit once the checks on its head are green, pinned to that
+ * head, so a push between the look and the merge makes GitHub refuse it. A draft, or checks that failed,
+ * still run or are missing, leave it open for a later pass.
+ */
+async function mergeWhenGreen(
+  deps: PublishDeps,
+  repo: string,
+  token: string,
+  pr: { number: number; headSha: string; draft: boolean },
+  name: string,
+): Promise<VersionStep> {
   if (pr.draft) return { wait: `${name} is a draft` }
-  const seen = classify(await deps.api.commitChecks(p.repository, token, pr.headSha))
+  const seen = classify(await deps.api.commitChecks(repo, token, pr.headSha))
   if (seen.state === 'red') {
     return { wait: `checks failed on ${name}: ${seen.failing.join(', ')}` }
   }
   if (seen.state !== 'green') return { wait: `the checks on ${name} are not green yet` }
-  await deps.api.mergePullRequest(p.repository, token, pr.number, pr.headSha, { method: 'merge' })
+  await deps.api.mergePullRequest(repo, token, pr.number, pr.headSha, { method: 'merge' })
   return { merged: pr.number }
 }
 
@@ -162,11 +180,69 @@ async function advance(deps: PublishDeps, p: Publication, result: PublishResult)
 }
 
 /**
+ * The repositories a back-merge is looked for in: each enabled one that has had a changesets release, with
+ * the release branch of its latest publication and its integration branch.
+ */
+async function releasedRepositories(db: Database) {
+  const rows = await db
+    .select({
+      repo: publication.repository,
+      release: publication.releaseBranch,
+      baseBranch: repository.baseBranch,
+    })
+    .from(publication)
+    .innerJoin(repository, eq(repository.fullName, publication.repository))
+    .where(eq(repository.enabled, true))
+    .orderBy(desc(publication.startedAt))
+  const latest = new Map<string, { repo: string; release: string; integration: string }>()
+  for (const r of rows) {
+    if (latest.has(r.repo)) continue
+    latest.set(r.repo, { repo: r.repo, release: r.release, integration: integrationBranch(r) })
+  }
+  return [...latest.values()]
+}
+
+/**
+ * Merges the back-merge of each released repository once its checks pass; while they fail or run it stays
+ * open, and the next pass looks again. The owner's decision to release covers it: the release already put
+ * those commits on the release branch, and the integration branch has to hold them for its checks to pass.
+ */
+async function mergeBackMerges(deps: PublishDeps, result: PublishResult) {
+  for (const branches of await releasedRepositories(deps.db)) {
+    try {
+      const { token } = await deps.github.installationToken(branches.repo)
+      const open = await deps.api.openPullRequestsBetween(
+        branches.repo,
+        token,
+        branches.release,
+        branches.integration,
+      )
+      const pr = pickBackMerge(open, branches)
+      if (!pr) continue
+      const name = `the back-merge #${pr.number} from ${branches.release} into ${branches.integration}`
+      const step = await mergeWhenGreen(deps, branches.repo, token, pr, name)
+      if ('merged' in step) result.backMerged.push(`${branches.repo}#${step.merged}`)
+    } catch (error) {
+      result.errors.push(
+        `${branches.repo}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+}
+
+/**
  * Looks at every publication still waiting. A failure on one is recorded on it and the others go on; the
- * next pass tries it again. Nothing here merges anything but a Version Packages pull request.
+ * next pass tries it again. Then it merges each released repository's back-merge whose checks pass. Those
+ * are the only two pull requests this step merges: a Version Packages one and a back-merge.
  */
 export async function pollPublications(deps: PublishDeps): Promise<PublishResult> {
-  const result: PublishResult = { merged: [], published: [], waiting: 0, errors: [] }
+  const result: PublishResult = {
+    merged: [],
+    published: [],
+    waiting: 0,
+    backMerged: [],
+    errors: [],
+  }
   const waiting = await deps.db.select().from(publication).where(eq(publication.status, 'waiting'))
   for (const p of waiting) {
     try {
@@ -177,5 +253,6 @@ export async function pollPublications(deps: PublishDeps): Promise<PublishResult
       await note(deps.db, p.id, message)
     }
   }
+  await mergeBackMerges(deps, result)
   return result
 }

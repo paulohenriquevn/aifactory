@@ -9,7 +9,8 @@ import { createGithubApi } from '../github/pulls'
 /**
  * Carries a release in a repository that publishes with changesets to npm, every minute: merges the Version
  * Packages pull request once its checks are green, then, when the repository's workflow has published,
- * releases the tasks that shipped and closes their issues with the versions.
+ * releases the tasks that shipped and closes their issues with the versions. It also merges the back-merge
+ * the repository opens from the release branch into the integration branch, once its checks are green.
  */
 export default defineCron('publish-changesets', {
   schedule: '* * * * *',
@@ -29,7 +30,8 @@ export default defineCron('publish-changesets', {
       github: deps.github,
       api: createGithubApi(),
     })
-    if (result.merged.length > 0 || result.published.length > 0 || result.errors.length > 0) {
+    const changed = result.merged.length + result.published.length + result.backMerged.length
+    if (changed > 0 || result.errors.length > 0) {
       console.log(JSON.stringify({ event: 'publish_changesets', ...result }))
     }
   }),
