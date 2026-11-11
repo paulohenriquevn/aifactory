@@ -1912,7 +1912,11 @@ describe('release', () => {
 
     const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
 
-    expect(result).toMatchObject({ tag: undefined, mergeSha: 'merge0001', publishing: true })
+    expect(result).toMatchObject({
+      tag: undefined,
+      mergeSha: 'merge0001',
+      publishing: 'changesets',
+    })
     expect(githubApi.merges).toHaveLength(2)
     expect(githubApi.releases.filter((r) => !r.prerelease)).toEqual([])
     expect(await getDb().select().from(publication)).toMatchObject([

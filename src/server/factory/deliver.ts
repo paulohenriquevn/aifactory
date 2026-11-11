@@ -129,7 +129,14 @@ export type ReleaseResult = {
   /** The merge happened but the release object could not be created. */
   releaseError?: string
   /** The repository publishes with changesets: its own workflow tags the release, and a publication waits. */
-  publishing?: boolean
+  publishing?: 'changesets'
+}
+
+/** What came of the promotion: the factory's own release, or a publication left to changesets. */
+type Published = {
+  created?: { tag: string; url: string }
+  releaseError?: string
+  publishing?: 'changesets'
 }
 
 /**
@@ -179,14 +186,7 @@ export async function release(
     .from(repository)
     .where(sql`lower(${repository.fullName}) = lower(${row.repository})`)
   const target = await releaseBranchOf(deps.api, row.repository, token, saved ?? {})
-  const changesets = changesetsOn(
-    await deps.api.listDirectory(row.repository, token, '.changeset', PRE_RELEASE_BRANCH),
-  )
-  if (changesets.uses && changesets.pending.length === 0) {
-    throw new ReleaseRefused(
-      `${PRE_RELEASE_BRANCH} has no changeset, so nothing would be published: this repository releases with changesets, and its release workflow publishes only what a .changeset/*.md file describes`,
-    )
-  }
+  const usesChangesets = await changesetsToShip(deps, row.repository, token)
   let opened: { number: number; url: string }
   try {
     opened = await deps.api.openPullRequest(row.repository, token, {
@@ -232,18 +232,10 @@ export async function release(
     )
   }
 
-  const { created, releaseError } = changesets.uses
-    ? { created: undefined, releaseError: undefined }
+  const published: Published = usesChangesets
+    ? await handToChangesets(deps, { row, target, mergeSha: merged.sha, actor: options.actor })
     : await createOwnRelease(deps, { row, pre, pr, token, mergeSha: merged.sha, ...options })
-  if (changesets.uses) {
-    await deps.db.insert(publication).values({
-      taskId,
-      repository: row.repository,
-      releaseBranch: target,
-      promotedSha: merged.sha,
-      actor: options.actor,
-    })
-  }
+  const { created, releaseError, publishing } = published
 
   // The merge is on the default branch now, so its checks are watched from here on.
   await deps.db.insert(watch).values({
@@ -257,7 +249,7 @@ export async function release(
     taskId,
     kind: 'release',
     sha,
-    note: `${options.actor}${created ? ` -> ${created.tag}` : ''}${changesets.uses ? ' -> changesets' : ''}`,
+    note: [options.actor, created?.tag, publishing].filter(Boolean).join(' -> '),
   })
   if (created) {
     await deps.db.insert(delivery).values({
@@ -275,15 +267,47 @@ export async function release(
     sha,
     ...(created ? { tag: created.tag, url: created.url } : {}),
     ...(releaseError ? { releaseError } : {}),
-    ...(changesets.uses ? { publishing: 'changesets' } : {}),
+    publishing,
   })
-  return {
-    tag: created?.tag,
-    url: created?.url,
-    mergeSha: merged.sha,
-    releaseError,
-    ...(changesets.uses ? { publishing: true } : {}),
+  return { tag: created?.tag, url: created?.url, mergeSha: merged.sha, releaseError, publishing }
+}
+
+/**
+ * Whether the repository publishes with changesets, read on the pre-release branch. Such a release with no
+ * changeset waiting is refused: the promotion would land and nothing would be published.
+ */
+async function changesetsToShip(
+  deps: Pick<DeliverDeps, 'api'>,
+  repo: string,
+  token: string,
+): Promise<boolean> {
+  const state = changesetsOn(
+    await deps.api.listDirectory(repo, token, '.changeset', PRE_RELEASE_BRANCH),
+  )
+  if (state.uses && state.pending.length === 0) {
+    throw new ReleaseRefused(
+      `${PRE_RELEASE_BRANCH} has no changeset, so nothing would be published: this repository releases with changesets, and its release workflow publishes only what a .changeset/*.md file describes`,
+    )
   }
+  return state.uses
+}
+
+/**
+ * Leaves the version to the repository's release workflow and records the publication the
+ * `publish-changesets` cron carries on: the Version Packages merge, then the published tags.
+ */
+async function handToChangesets(
+  deps: Pick<DeliverDeps, 'db'>,
+  input: { row: typeof task.$inferSelect; target: string; mergeSha: string; actor: string },
+): Promise<Published> {
+  await deps.db.insert(publication).values({
+    taskId: input.row.id,
+    repository: input.row.repository,
+    releaseBranch: input.target,
+    promotedSha: input.mergeSha,
+    actor: input.actor,
+  })
+  return { publishing: 'changesets' }
 }
 
 /**
@@ -301,7 +325,7 @@ async function createOwnRelease(
     bump: Bump
     actor: string
   },
-): Promise<{ created?: { tag: string; url: string }; releaseError?: string }> {
+): Promise<Published> {
   const { row, pre, pr, token } = input
   try {
     const latest = await deps.api.latestReleaseTag(row.repository, token)

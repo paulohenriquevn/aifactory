@@ -40,8 +40,8 @@ src/app/            frontend — the only half that reaches a browser
 src/server/         backend — never leaves the machine
   agents/           the agent, its tools, prompts, skills and hooks (empty until M2)
   panel/            what the panel shows and does: queries, actions, owner session, event stream
-  crons/            defineCron files (`poll-answers`, `watch-main`, `supervise`, `catch-up`, `retry-due`,
-                    `knowledge-sync`, `prune-transcripts`)
+  crons/            defineCron files (`poll-answers`, `watch-main`, `publish-changesets`, `supervise`,
+                    `catch-up`, `retry-due`, `knowledge-sync`, `prune-transcripts`)
   knowledge/        the owner's knowledge repository: mirror, sync, the slice each agent gets, notes
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
@@ -106,6 +106,12 @@ reads that file, not a convention.
   `develop`, goes through `release()` in `factory/deliver.ts` with its refusals, and only a person or, in
   `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it. `ensureBranches` creates the two missing
   branches, never touches one that exists, and refuses the default branch as the integration branch.
+- **A repository that publishes with changesets tags its own releases.** When `.changeset/config.json` is on
+  `develop`, `release()` makes no tag: it refuses when no changeset waits (nothing would be published),
+  promotes, and records a `publication`. The `publish-changesets` cron merges the Version Packages pull
+  request (`changeset-release/<release branch>`) once its checks are green, under the same decision, and
+  only that pull request; when the workflow has published, it releases the tasks in the promoted commit and
+  closes their issues with the versions. Such a repository also gets a `changeset` check.
 - **The factory opens a revert and never merges it.** `watch-main` may open a pull request that
   reverts a release when its merge commit goes red. Nothing in `factory/watch.ts` calls a merge, and a
   test fails if it does.
