@@ -89,7 +89,9 @@ export function describeEvent(event: TimelineEvent): string {
         ? `${d.automatic ? 'the factory' : 'a person'} ${text(d.decision).replace('_', ' ')}${d.note ? `: ${text(d.note)}` : ''}`
         : ''
     case 'sandbox':
-      return text(d.provider)
+      return d.renewed
+        ? `${text(d.provider)}, new session: the last one had run ${text(d.sessionMinutes)} minutes, the disk moved over`
+        : text(d.provider)
     case 'build':
       return [
         text(d.harness),

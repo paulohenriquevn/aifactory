@@ -132,6 +132,9 @@ describe('describeEvent', () => {
 
   it('names the sandbox, the branch and the review', () => {
     expect(line('sandbox', { provider: 'vercel-sandbox' })).toBe('vercel-sandbox')
+    expect(line('sandbox', { provider: 'e2b', renewed: true, sessionMinutes: 36 })).toBe(
+      'e2b, new session: the last one had run 36 minutes, the disk moved over',
+    )
     expect(line('push', { branch: 'factory/7' })).toBe('factory/7')
     expect(line('review', { reviewer: 'codex', sha: 'abcdef123456' })).toBe('codex, abcdef1')
     expect(line('review', { reviewer: 'codex' })).toBe('codex')

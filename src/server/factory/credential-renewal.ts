@@ -29,7 +29,8 @@ export type CredentialRenewal = {
 /**
  * Renews the GitHub token of a running sandbox every `CREDENTIAL_RENEWAL_MS`: the firewall first, then the
  * run, so the run never holds a token the sandbox's git does not. This is what lets a run last longer than
- * the hour a token does (paulohenriquevn/aifactory#4). Stopping the returned sandbox stops the renewals.
+ * the hour a token does (paulohenriquevn/aifactory#4). Stopping the returned sandbox, or saving it to a
+ * snapshot, stops the renewals.
  */
 export function renewGithubCredential(
   sandbox: IsolatedSandbox,
@@ -64,11 +65,19 @@ export function renewGithubCredential(
   }
   const timer = setInterval(() => void renew(), CREDENTIAL_RENEWAL_MS)
   timer.unref?.()
+  const snapshot = sandbox.snapshot?.bind(sandbox)
   return {
     ...sandbox,
     stop: async () => {
       clearInterval(timer)
       await sandbox.stop()
     },
+    // Saving the disk stops the sandbox too, so nothing is left to renew.
+    ...(snapshot && {
+      snapshot: async () => {
+        clearInterval(timer)
+        return snapshot()
+      },
+    }),
   }
 }

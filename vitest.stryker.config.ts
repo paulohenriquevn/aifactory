@@ -10,6 +10,7 @@ export default defineConfig({
       'src/server/factory/auto-retry.test.ts',
       'src/server/factory/changesets.test.ts',
       'src/server/factory/ci-wait.test.ts',
+      'src/server/factory/agent-time.test.ts',
       'src/server/factory/evidence.test.ts',
       'src/server/factory/release.test.ts',
       'src/server/factory/review.test.ts',

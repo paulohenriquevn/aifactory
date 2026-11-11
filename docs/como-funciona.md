@@ -141,9 +141,14 @@ no proxy de saída dele, fora do sandbox. A renovação do token do GitHub troca
 rodando (`updateNetwork`). O E2B não aplica as linhas `ENV` do Dockerfile, então o adapter passa as
 variáveis na criação, entre elas `NODE_EXTRA_CA_CERTS`, sem a qual o Node recusa o certificado do proxy.
 
-O plano gratuito para um sandbox depois de uma hora, e a execução se planeja para isso: o limite de 90
-minutos vira 60, e o primeiro passe do agente fica com 35 (60 menos 15 dos checks e 10 da revisão).
-`E2B_MAX_SESSION_MS` aumenta o limite num plano que permita mais. Um sandbox restaurado de um snapshot apaga
+O plano gratuito para um sandbox depois de uma hora, e a execução se planeja para isso: cada passe do
+agente cabe na sessão em que começa, e o primeiro fica com 35 minutos (60 menos 15 dos checks e 10 da
+revisão). Quando um retrabalho não cabe no que sobra da sessão, mas cabe nos 90 minutos da execução, o
+`Run` salva o disco num snapshot, restaura numa sessão nova com as mesmas regras de rede e o mesmo token
+renovado, apaga o snapshot e continua. O histórico da task mostra a sessão nova no estágio `sandbox`. O
+limite de 90 minutos, as tentativas e o custo continuam valendo para a execução inteira, e um provedor que
+não sabe salvar o disco recusa o passe como antes. `E2B_MAX_SESSION_MS` aumenta o limite num plano que
+permita mais. Um sandbox restaurado de um snapshot apaga
 o snapshot quando para, porque o E2B recusa apagar um snapshot em uso. O teste
 `e2b-sandbox.e2e.test.ts` roda contra o E2B de verdade (`npm run test:e2e`).
 

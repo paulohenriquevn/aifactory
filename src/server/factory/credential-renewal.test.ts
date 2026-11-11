@@ -75,6 +75,25 @@ describe('renewing the GitHub credential of a running sandbox', () => {
     expect(updates).toEqual([])
   })
 
+  it('stops renewing once the sandbox is saved to a snapshot, which stops it, and returns the snapshot', async () => {
+    const { box, updates } = sandbox()
+    const saved = { count: 0 }
+    box.snapshot = async () => {
+      saved.count += 1
+      return 'snap-1'
+    }
+    const renewing = renewGithubCredential(box, egress, {
+      mint: async () => 'second',
+      onToken: () => {},
+    })
+
+    expect(await renewing.snapshot!()).toBe('snap-1')
+    await vi.advanceTimersByTimeAsync(2 * CREDENTIAL_RENEWAL_MS)
+
+    expect(saved.count).toBe(1)
+    expect(updates).toEqual([])
+  })
+
   it('keeps the token it has and says so when a renewal fails, and tries again at the next interval', async () => {
     const { box, updates } = sandbox()
     const tokens: string[] = []

@@ -33,7 +33,8 @@
     "src/server/factory/recipe.ts",
     "src/server/factory/auto-retry.ts",
     "src/server/factory/changesets.ts",
-    "src/server/factory/ci-wait.ts"
+    "src/server/factory/ci-wait.ts",
+    "src/server/factory/agent-time.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

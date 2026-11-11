@@ -44,3 +44,39 @@ export function fitToSession<T extends { sandboxMs: number }>(limits: T, maxSess
     ? { ...limits, sandboxMs: maxSessionMs }
     : limits
 }
+
+/** What the next agent pass gets: a time limit, or a new session first because this one is too far gone. */
+export type AgentPlan = { kind: 'pass'; timeoutMs: number } | { kind: 'renew' }
+
+/** A provider whose sandboxes live at most `maxSessionMs`, and whether a run can move its disk to a new one. */
+export type SessionCap = { maxSessionMs: number; renewable: boolean }
+
+/**
+ * How long the next agent pass may take, on two clocks: the run's own limits since it started, and the
+ * provider's session cap since the current sandbox started. When the session has no room left but a new one
+ * would, and the provider can save the disk, the plan is to renew: E2B's free hour stopped tasks that still
+ * had most of their budget after one review asked for changes (paulohenriquevn/aifactory#29). The run's
+ * budget is never extended by a renewal.
+ */
+export function planAgentPass(
+  limits: Limits,
+  clock: { runElapsedMs: number; sessionElapsedMs: number },
+  session?: SessionCap,
+): AgentPlan {
+  const overall = agentTimeLeft(limits, clock.runElapsedMs)
+  if (session === undefined) {
+    return { kind: 'pass', timeoutMs: overall }
+  }
+  const inSession = { ...limits, sandboxMs: session.maxSessionMs }
+  try {
+    return {
+      kind: 'pass',
+      timeoutMs: Math.min(overall, agentTimeLeft(inSession, clock.sessionElapsedMs)),
+    }
+  } catch (error) {
+    if (!session.renewable) throw error
+    // A new session that could not hold a pass either would only renew again.
+    agentTimeLeft(inSession, 0)
+    return { kind: 'renew' }
+  }
+}

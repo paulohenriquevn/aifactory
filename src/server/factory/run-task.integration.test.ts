@@ -36,6 +36,7 @@ import { knowledgeRules } from '../knowledge/prompt'
 import type { KnowledgeSource } from '../knowledge/source'
 import type { NewNote } from '../knowledge/store'
 
+import { githubEgress } from './credential-renewal'
 import { FakeSandbox, type Reply } from './fake-sandbox'
 import { eventsOf } from './transcript-store'
 import { parseRecipe } from './recipe'
@@ -2915,5 +2916,94 @@ describe('runTask agent time', () => {
     expect((failed.detail as { error: string }).error).toMatch(
       /no time left for another agent pass: 31 of the sandbox's 60 minutes/,
     )
+  })
+
+  it('refuses as before when the provider has a session cap but cannot save a sandbox', async () => {
+    const id = await seedTask()
+    const start = Date.now()
+    const sandbox = new FakeSandbox(changed())
+    const create = sandbox.create.bind(sandbox)
+    Object.assign(sandbox, { maxSessionMs: 60 * MIN })
+    sandbox.create = async (spec) => ({ ...(await create(spec)), snapshot: undefined })
+    const builder = resumableBuilder()
+    const first = builder.run
+    builder.run = async (backend, input) => {
+      vi.spyOn(Date, 'now').mockReturnValue(start + 36.5 * MIN)
+      return first(backend, input)
+    }
+    const reviewer = reviewerSaying(verdictJson('changes', [finding], 'max=0 slips through'))
+
+    const result = await runTask(
+      deps(sandbox, {
+        harness: builder,
+        reviewer,
+        timeouts: { sandboxMs: 90 * MIN, agentMs: 45 * MIN },
+      }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'failed' })
+    expect(builder.resumed).toHaveLength(0)
+    expect(sandbox.restored).toEqual([])
+    const [failed] = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, id))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
+    expect((failed.detail as { error: string }).error).toMatch(/36 of the sandbox's 60 minutes/)
+  })
+
+  it("moves the disk to a new session when the provider's hour has no room for a rework", async () => {
+    const id = await seedTask()
+    const start = Date.now()
+    const sandbox = new FakeSandbox(changed())
+    Object.assign(sandbox, { maxSessionMs: 60 * MIN })
+    const builder = resumableBuilder()
+    const first = builder.run
+    builder.run = async (backend, input) => {
+      // The first build took 36 of the session's 60 minutes; the run's 90 still leave room.
+      vi.spyOn(Date, 'now').mockReturnValue(start + 36 * MIN)
+      return first(backend, input)
+    }
+    const given: number[] = []
+    const resume = builder.resume!
+    builder.resume = async (backend, sessionId, input) => {
+      given.push(input.timeoutMs ?? 0)
+      return resume(backend, sessionId, input)
+    }
+    const reviewer = reviewerSaying(
+      verdictJson('changes', [finding], 'max=0 slips through'),
+      verdictJson('approve'),
+    )
+
+    const result = await runTask(
+      deps(sandbox, {
+        harness: builder,
+        reviewer,
+        timeouts: { sandboxMs: 90 * MIN, agentMs: 45 * MIN },
+      }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(builder.resumed).toHaveLength(1)
+    expect(sandbox.snapshots).toEqual(['snap-1'])
+    expect(sandbox.restored).toEqual(['snap-1'])
+    expect(sandbox.deleted).toEqual(['snap-1'])
+    // The new session has the same egress policy as the first one, with the token the run holds now.
+    expect(sandbox.specs[1]!.egress).toEqual(sandbox.specs[0]!.egress)
+    expect(sandbox.specs[1]!.egress).toContainEqual(githubEgress(TOKEN))
+    // The run's own budget still bounds the rework: 90 - 36 - (15 + 10) = 29 minutes. The run's clock
+    // started a few milliseconds after `start`.
+    expect(given[0]).toBeLessThanOrEqual(29 * MIN + 1_000)
+    expect(given[0]).toBeGreaterThan(28 * MIN)
+    const events = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, id))
+      .orderBy(stageEvent.id)
+    const renewed = events.find((e) => (e.detail as { renewed?: boolean } | null)?.renewed)
+    expect(renewed).toMatchObject({ stage: 'sandbox', detail: { provider: 'fake', renewed: true } })
   })
 })

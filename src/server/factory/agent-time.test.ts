@@ -6,6 +6,7 @@ import {
   fitToSession,
   MIN_AGENT_MS,
   NoTimeForAgent,
+  planAgentPass,
 } from './agent-time'
 
 const MIN = 60_000
@@ -59,5 +60,57 @@ describe('fitToSession', () => {
     expect(agentTimeLeft(fitToSession({ sandboxMs: 90 * MIN, agentMs }, 60 * MIN), 0)).toBe(
       35 * MIN,
     )
+  })
+})
+
+describe('planAgentPass', () => {
+  const hour = { maxSessionMs: 60 * MIN, renewable: true }
+  const at = (runElapsedMs: number, sessionElapsedMs = runElapsedMs) => ({
+    runElapsedMs,
+    sessionElapsedMs,
+  })
+
+  it('plans a pass as before when the provider has no session cap', () => {
+    expect(planAgentPass(timeouts, at(60 * MIN))).toEqual({ kind: 'pass', timeoutMs: 10 * MIN })
+  })
+
+  it('cuts a pass to what is left of the session when that is less than the run has', () => {
+    // 60 - 20 - (10 + 10) = 20 in the session; the run's 90 would allow the whole 45.
+    expect(planAgentPass(timeouts, at(20 * MIN), hour)).toEqual({
+      kind: 'pass',
+      timeoutMs: 20 * MIN,
+    })
+  })
+
+  it('renews a session that has no room for the pass, when the run still has time', () => {
+    // 36 minutes into the hour leave 60 - 36 - 20 = 4, under the minimum; the run has 90 - 36 - 20 = 34.
+    expect(planAgentPass(timeouts, at(36 * MIN), hour)).toEqual({ kind: 'renew' })
+  })
+
+  it('cuts a pass in a renewed session to what the run as a whole has left', () => {
+    // The session just started (60 - 0 - 20 = 40), but the run is 60 minutes in: 90 - 60 - 20 = 10.
+    expect(planAgentPass(timeouts, at(60 * MIN, 0), hour)).toEqual({
+      kind: 'pass',
+      timeoutMs: 10 * MIN,
+    })
+  })
+
+  it('refuses when the run as a whole is out of time, renewable or not', () => {
+    expect(() => planAgentPass(timeouts, at(68 * MIN, 0), hour)).toThrow(
+      /68 of the sandbox's 90 minutes/,
+    )
+  })
+
+  it("refuses as before when the provider cannot save a sandbox, naming the session's minutes", () => {
+    expect(() => planAgentPass(timeouts, at(36 * MIN), { ...hour, renewable: false })).toThrow(
+      /36 of the sandbox's 60 minutes/,
+    )
+  })
+
+  it('refuses rather than renews when even a new session could not hold a pass', () => {
+    // A 20-minute session keeps 20 for the checks and the review and never has room for an agent.
+    expect(() =>
+      planAgentPass(timeouts, at(1 * MIN), { maxSessionMs: 20 * MIN, renewable: true }),
+    ).toThrow(NoTimeForAgent)
   })
 })

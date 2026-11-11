@@ -66,8 +66,8 @@ import {
   type StoredCheck,
 } from './run-support'
 import {
-  agentTimeLeft,
   fitToSession,
+  planAgentPass,
   DEFAULT_CHECK_MS,
   DEFAULT_REVIEW_MS,
   NoTimeForAgent,
@@ -142,16 +142,21 @@ export class Run {
   /** What the agents of this task do, written while they work. Opened by the first agent run. */
   private transcript: Transcript | undefined
 
+  /** When the current sandbox started; a renewed session starts its provider's clock again. */
+  private sessionStartedAt: number
+
   private constructor(
     private readonly c: RunContext,
     private readonly builder: CodingHarness,
     private readonly reviewer: CodingHarness,
-    private readonly sandbox: IsolatedSandbox,
+    private sandbox: IsolatedSandbox,
+    private readonly spec: SandboxSpec,
     private readonly repoDir: string,
     private readonly baseSha: string,
-    /** When the sandbox started, which is when its time began to run out. */
+    /** When the first sandbox started, which is when the run's time began to run out. */
     private readonly startedAt: number,
   ) {
+    this.sessionStartedAt = startedAt
     this.cost = c.resuming?.costUsd ?? 0
     this.sessionId = c.resuming?.sessionId
   }
@@ -168,14 +173,100 @@ export class Run {
   private get timeouts(): Timeouts {
     return fitToSession(this.c.deps.timeouts ?? DEFAULT_TIMEOUTS, this.c.deps.sandbox.maxSessionMs)
   }
-  /** How long the next agent pass may take; throws when the sandbox has too little time left for one. */
-  private agentTimeout(): number {
+  /**
+   * How long the next agent pass may take. When the provider's session has no room for it but the run does,
+   * the disk moves to a new session first. Throws when the run has too little time left for a pass.
+   */
+  private async agentTimeout(): Promise<number> {
+    const plan = this.planPass()
+    if (plan.kind === 'pass') return plan.timeoutMs
+    await this.renewSession()
+    const renewed = this.planPass()
+    if (renewed.kind === 'pass') return renewed.timeoutMs
+    throw new StageFailure('a new sandbox session still had no room for an agent pass')
+  }
+  private planPass() {
+    const { deps } = this.c
+    const now = Date.now()
+    const limits = deps.timeouts ?? DEFAULT_TIMEOUTS
+    const cap = deps.sandbox.maxSessionMs
     try {
-      return agentTimeLeft(this.timeouts, Date.now() - this.startedAt)
+      return planAgentPass(
+        limits,
+        { runElapsedMs: now - this.startedAt, sessionElapsedMs: now - this.sessionStartedAt },
+        cap === undefined
+          ? undefined
+          : { maxSessionMs: cap, renewable: !!this.sandbox.snapshot && !!deps.sandbox.restore },
+      )
     } catch (error) {
       if (error instanceof NoTimeForAgent) throw new StageFailure(error.message)
       throw error
     }
+  }
+
+  /**
+   * Moves the run to a new sandbox session: the disk goes to a snapshot (which stops the sandbox), comes back
+   * in a new sandbox under the same egress policy, and the snapshot is deleted. The checkout, the agent's
+   * session files and the knowledge base come with the disk, so the next pass continues where it was.
+   */
+  private async renewSession(): Promise<void> {
+    const { deps, taskId, state } = this.c
+    const minutes = Math.floor((Date.now() - this.sessionStartedAt) / 60_000)
+    state.current = 'sandbox'
+    // The same rules, with the token the run holds now rather than the one it started with.
+    const spec = {
+      ...this.spec,
+      egress: this.spec.egress.map((rule) =>
+        rule.domain === 'github.com' ? githubEgress(this.c.token) : rule,
+      ),
+    }
+    this.feed?.stop()
+    const snapshotId = await this.sandbox.snapshot!()
+    let restored: IsolatedSandbox
+    try {
+      restored = await restoreIsolatedSandbox(deps.sandbox, snapshotId, spec)
+    } catch (error) {
+      await deps.sandbox.deleteSnapshot?.(snapshotId).catch(() => {})
+      throw error
+    }
+    this.sessionStartedAt = Date.now()
+    const sandbox = Run.withCredentials(this.c, restored, spec.egress)
+    state.sandbox = sandbox
+    // The snapshot did its job; keeping it only costs storage.
+    await deps.sandbox.deleteSnapshot?.(snapshotId).catch(() => {})
+    this.feed = await KnowledgeFeed.open(deps.knowledge, sandbox.backend, this.c.row.repository, {
+      taskId,
+    })
+    this.sandbox = this.feed.attachTo(sandbox)
+    state.sandbox = this.sandbox
+    await enterStage(deps.db, taskId, 'sandbox', {
+      provider: deps.sandbox.name,
+      renewed: true,
+      sessionMinutes: minutes,
+    })
+  }
+
+  /** The sandbox with its GitHub token renewed while the run works, since a run may outlast a token. */
+  private static withCredentials(
+    c: RunContext,
+    started: IsolatedSandbox,
+    egress: SandboxSpec['egress'],
+  ): IsolatedSandbox {
+    return renewGithubCredential(started, egress, {
+      mint: async () => (await c.deps.github.installationToken(c.row.repository)).token,
+      onToken: (token) => {
+        c.token = token
+      },
+      onFailure: (error) =>
+        console.warn(
+          JSON.stringify({
+            event: 'credential_renewal_failed',
+            taskId: c.taskId,
+            repository: c.row.repository,
+            error: String(error),
+          }),
+        ),
+    })
   }
   private get title() {
     return `${oneLine(this.c.issue.title)} (#${this.c.row.issueNumber})`
@@ -225,26 +316,14 @@ export class Run {
       ? await restoreIsolatedSandbox(deps.sandbox, resuming.snapshotId, spec)
       : await createIsolatedSandbox(deps.sandbox, spec)
     c.state.sandbox = started
-    // A run may outlast the hour its first token lasts, so the token is renewed while it works.
-    const sandbox = renewGithubCredential(started, spec.egress, {
-      mint: async () => (await deps.github.installationToken(c.row.repository)).token,
-      onToken: (token) => {
-        c.token = token
-      },
-      onFailure: (error) =>
-        console.warn(
-          JSON.stringify({
-            event: 'credential_renewal_failed',
-            taskId: c.taskId,
-            repository: c.row.repository,
-            error: String(error),
-          }),
-        ),
-    })
+    const sandbox = Run.withCredentials(c, started, spec.egress)
     c.state.sandbox = sandbox
     // The snapshot did its job; keeping it only costs storage.
     if (resuming) await deps.sandbox.deleteSnapshot?.(resuming.snapshotId).catch(() => {})
-    c.signal?.addEventListener('abort', () => void sandbox.stop().catch(() => {}), { once: true })
+    // A renewed session replaces the sandbox, so an abort stops the one the run is in when it comes.
+    c.signal?.addEventListener('abort', () => void c.state.sandbox?.stop().catch(() => {}), {
+      once: true,
+    })
 
     const { repoDir, baseSha } = await Run.checkout(c, sandbox.backend)
     for (const agent of agents) await agent.prepare?.(sandbox.backend)
@@ -253,7 +332,7 @@ export class Run {
     })
     // Stopping the sandbox stops the feed first, so no copy goes into a sandbox that is gone.
     c.state.sandbox = feed.attachTo(sandbox)
-    const run = new Run(c, builder, reviewer, sandbox, repoDir, baseSha, startedAt)
+    const run = new Run(c, builder, reviewer, c.state.sandbox, spec, repoDir, baseSha, startedAt)
     run.feed = feed
     run.remoteHead = await Run.remoteHeadOf(sandbox.backend, repoDir, c.branch)
     run.usesChangesets = await Run.publishesWithChangesets(sandbox.backend, repoDir)
@@ -483,6 +562,7 @@ export class Run {
   /** The first pass of the builder: a new one, or the session resumed with the answer it was waiting for. */
   private async firstPass(): Promise<HarnessResult> {
     const { deps, taskId, row, issue, branch, resuming, continuation } = this.c
+    const timeoutMs = await this.agentTimeout()
     const { builder, backend, repoDir } = this
     if (resuming) {
       if (!builder.resume) throw new StageFailure(`${builder.name} cannot resume a session`)
@@ -500,7 +580,7 @@ export class Run {
         builder.resume!(backend, resuming.sessionId, {
           onEvent,
           cwd: repoDir,
-          timeoutMs: this.agentTimeout(),
+          timeoutMs,
           prompt,
         }),
       )
@@ -514,7 +594,7 @@ export class Run {
       builder.run(backend, {
         onEvent,
         cwd: repoDir,
-        timeoutMs: this.agentTimeout(),
+        timeoutMs,
         prompt: buildPrompt({
           repo: row.repository,
           issueNumber: row.issueNumber,
@@ -673,6 +753,7 @@ export class Run {
     outcome: ReviewVerdict,
   ): Promise<{ changed: boolean; summary: string }> {
     const { deps, taskId, state } = this.c
+    const timeoutMs = await this.agentTimeout()
     state.current = 'build'
     await enterStage(deps.db, taskId, 'build', {
       harness: this.builder.name,
@@ -683,7 +764,7 @@ export class Run {
       this.builder.resume!(this.backend, this.sessionId!, {
         onEvent,
         cwd: this.repoDir,
-        timeoutMs: this.agentTimeout(),
+        timeoutMs,
         prompt: notResolvedPrompt({
           summary: outcome.summary,
           findings: outcome.findings,
@@ -779,6 +860,7 @@ export class Run {
     failed: CheckResult[],
   ): Promise<string> {
     const { deps, taskId, state } = this.c
+    const timeoutMs = await this.agentTimeout()
     state.current = 'build'
     await enterStage(deps.db, taskId, 'build', {
       harness: this.builder.name,
@@ -789,7 +871,7 @@ export class Run {
       this.builder.resume!(this.backend, this.sessionId!, {
         onEvent,
         cwd: this.repoDir,
-        timeoutMs: this.agentTimeout(),
+        timeoutMs,
         prompt: reworkPrompt({ findings, failedChecks: failed, checks: this.checks }),
       }),
     )
