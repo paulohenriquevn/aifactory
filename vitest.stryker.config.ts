@@ -13,6 +13,7 @@ export default defineConfig({
       'src/server/factory/agent-time.test.ts',
       'src/server/factory/test-weakening.test.ts',
       'src/server/factory/change-plan.test.ts',
+      'src/server/factory/promotion.test.ts',
       'src/server/factory/evidence.test.ts',
       'src/server/factory/release.test.ts',
       'src/server/factory/review.test.ts',

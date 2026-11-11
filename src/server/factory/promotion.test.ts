@@ -120,6 +120,54 @@ describe('logEvidence', () => {
   it('finds nothing in a log with no error line', () => {
     expect(logEvidence([stamp('ok'), stamp('done')].join('\n'))).toEqual([])
   })
+
+  it('strips a timestamp without fractions or a space after it, and keeps one in the middle', () => {
+    expect(logEvidence('2026-11-11T17:30:19Z FAIL a')).toEqual(['FAIL a'])
+    expect(logEvidence('2026-11-11T17:30:19.5ZFAIL b')).toEqual(['FAIL b'])
+    expect(logEvidence('FAIL at 2026-11-11T17:30:19.5Z c')).toEqual([
+      'FAIL at 2026-11-11T17:30:19.5Z c',
+    ])
+  })
+
+  it('keeps an error named by its class, such as a TypeError', () => {
+    expect(logEvidence(stamp('TypeError: cannot read x'))).toEqual(['TypeError: cannot read x'])
+  })
+
+  it('keeps a cross only when the line starts with it', () => {
+    expect(logEvidence(stamp('✖ 3 problems'))).toEqual(['✖ 3 problems'])
+    expect(logEvidence(stamp('built ✖ nothing'))).toEqual([])
+  })
+
+  it('reads a lint error with wide line and column numbers and any spacing', () => {
+    const log = [stamp('/home/runner/work/r/r/src/a.ts'), stamp('120:45   error   no-x  rule')]
+    expect(logEvidence(log.join('\n'))).toEqual(['src/a.ts', '120:45   error   no-x  rule'])
+  })
+
+  it('does not take a lint position in the middle of a line for a lint error', () => {
+    expect(logEvidence(stamp('see 12:30 error codes'))).toEqual([])
+    const log = [stamp('/x/src/a.ts'), stamp('FAIL near 12:30 error y')]
+    expect(logEvidence(log.join('\n'))).toEqual(['FAIL near 12:30 error y'])
+  })
+
+  it('takes as a file only a line that is a path and nothing else', () => {
+    const lint = stamp('1:2  error  rule')
+    expect(logEvidence([stamp('at /x/a.ts'), lint].join('\n'))).toEqual(['1:2  error  rule'])
+    expect(logEvidence([stamp('/x/a.ts extra'), lint].join('\n'))).toEqual(['1:2  error  rule'])
+  })
+
+  it('removes the runner checkout only at the start of a path', () => {
+    const log = [stamp('/tmp/home/runner/work/r/r/a.ts'), stamp('1:2  error  rule')]
+    expect(logEvidence(log.join('\n'))[0]).toBe('/tmp/home/runner/work/r/r/a.ts')
+  })
+
+  it('takes as a list heading only a whole line ending in its count', () => {
+    expect(logEvidence(['Unused files (12)', 'a.ts', ''].join('\n'))).toEqual([
+      'Unused files (12)',
+      'a.ts',
+    ])
+    expect(logEvidence(['Unused files (1) found', 'a.ts', ''].join('\n'))).toEqual([])
+    expect(logEvidence(['the Unused files (1)', 'a.ts', ''].join('\n'))).toEqual([])
+  })
 })
 
 describe('checkEvidence', () => {
@@ -175,6 +223,26 @@ describe('findingSignature', () => {
     expect(findingSignature('CI', lines)).not.toBe(
       findingSignature('CI', ['FAIL tests/a.test.ts > two']),
     )
+  })
+
+  it('ignores what a quoted string says, in single or double quotes', () => {
+    expect(findingSignature('CI', ["expected 'foo'"])).toBe(
+      findingSignature('CI', ["expected 'bar'"]),
+    )
+    expect(findingSignature('CI', ['expected "foo"'])).toBe(
+      findingSignature('CI', ['expected "bar"']),
+    )
+  })
+
+  it('ignores how many digits a number has', () => {
+    expect(findingSignature('CI', ['took 5 ms'])).toBe(findingSignature('CI', ['took 12 ms']))
+  })
+
+  it('keeps short words and words that are not hexadecimal', () => {
+    expect(findingSignature('CI', ['miss in bad'])).not.toBe(
+      findingSignature('CI', ['miss in fed']),
+    )
+    expect(findingSignature('CI', ['ZZZZZZ'])).not.toBe(findingSignature('CI', ['YYYYYY']))
   })
 
   it('ignores the order the lines came in', () => {
@@ -240,6 +308,12 @@ describe('the issue', () => {
     expect(body).toContain('onnxruntime-node  packages/sdk/package.json:455:6')
     expect(body).toContain('after a rerun')
     expect(body).not.toContain('a person decides')
+  })
+
+  it('goes from the description straight to the evidence when the factory can fix it', () => {
+    const lines = issueBody(check, at).split('\n')
+    const description = lines.findIndex((line) => line.startsWith('The check '))
+    expect(lines.slice(description + 1, description + 3)).toEqual(['', '## Evidence'])
   })
 
   it('says a check it could not rerun was not rerun', () => {
