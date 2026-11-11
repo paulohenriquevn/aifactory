@@ -117,6 +117,10 @@ async function execute(
  * Throws `BlockedByOpenIssues` when the issue declares a blocker that is still open, before any sandbox
  * exists: the work it waits for has not shipped, and an agent started now finds nothing to build on. Each
  * blocker is read with a token for its own repository. One whose state is unknown counts as open.
+ *
+ * A blocker in the task's own repository stops blocking once the factory has integrated its fix: the run
+ * starts from the integration branch, where that code already is. Its issue stays open until the release,
+ * which can take hours, and a chain of dependent issues would otherwise wait a release per link.
  */
 async function refuseWhileBlocked(
   deps: RunTaskDeps,
@@ -127,10 +131,32 @@ async function refuseWhileBlocked(
   const blockers = declaredBlockers(issue.body, repository)
   if (blockers.length === 0) return
   const open = await openBlockers(blockers, async (ref) => {
+    if (ref.repository === repository && (await integrated(deps, ref.repository, ref.number)))
+      return false
     const { token } = await deps.github.installationToken(ref.repository)
     return (await readIssue(ref.repository, ref.number, token)).state !== 'closed'
   })
   if (open.length > 0) throw new BlockedByOpenIssues(open)
+}
+
+/** Whether a task for this issue has been merged into the repository's integration branch. */
+async function integrated(
+  deps: RunTaskDeps,
+  repository: string,
+  issueNumber: number,
+): Promise<boolean> {
+  const [merged] = await deps.db
+    .select({ id: task.id })
+    .from(task)
+    .where(
+      and(
+        eq(task.repository, repository),
+        eq(task.issueNumber, issueNumber),
+        isNotNull(task.mergedSha),
+      ),
+    )
+    .limit(1)
+  return merged !== undefined
 }
 
 /** Records how a run ended when it did not finish: parked on a question, or failed at a stage. */

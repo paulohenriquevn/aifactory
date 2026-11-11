@@ -720,6 +720,40 @@ describe('runTask', () => {
     expect(sandbox.specs).toHaveLength(1)
   })
 
+  it('runs when an open blocker in the same repository is already integrated', async () => {
+    const id = await seedTask()
+    const blocker = await seedTask(5)
+    await getDb().update(task).set({ mergedSha: 'abc123' }).where(eq(task.id, blocker))
+    const sandbox = new FakeSandbox(changed())
+    const fetchIssue: RunTaskDeps['fetchIssue'] = async (_repo, number) =>
+      number === 7
+        ? { number, title: 'T', body: 'Blocked by #5.', labels: [], state: 'open' }
+        : { number, title: 'X', body: '', labels: [], state: 'open' }
+
+    await runTask(deps(sandbox, { fetchIssue }), id)
+
+    expect(sandbox.specs).toHaveLength(1)
+  })
+
+  it('still waits for an open blocker in another repository, even one that is integrated there', async () => {
+    const id = await seedTask()
+    const blocker = await seedTask(5)
+    await getDb()
+      .update(task)
+      .set({ repository: 'o/gateways', mergedSha: 'abc123' })
+      .where(eq(task.id, blocker))
+    const sandbox = new FakeSandbox(changed())
+    const fetchIssue: RunTaskDeps['fetchIssue'] = async (_repo, number) =>
+      number === 7
+        ? { number, title: 'T', body: 'Blocked by o/gateways#5.', labels: [], state: 'open' }
+        : { number, title: 'X', body: '', labels: [], state: 'open' }
+
+    const result = await runTask(deps(sandbox, { fetchIssue }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'sandbox' })
+    expect(sandbox.specs).toHaveLength(0)
+  })
+
   it('stops the sandbox and says why when the job lease expires mid-run', async () => {
     const id = await seedTask()
     const abort = new AbortController()
