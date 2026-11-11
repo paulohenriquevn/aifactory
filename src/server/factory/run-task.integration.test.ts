@@ -7,6 +7,7 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import {
   agentRun,
+  changePlan,
   decision,
   delivery,
   evidence,
@@ -98,6 +99,8 @@ const PR_URL = 'https://github.com/paulo/app/pull/12'
 const githubApi: GithubApi & {
   checkRuns: CheckRun[]
   pulls: string[]
+  /** The body of each pull request the factory opened. */
+  bodies: string[]
   /** The base each pull request asked for; undefined is the default branch. */
   bases: (string | undefined)[]
   drafts: boolean[]
@@ -141,6 +144,7 @@ const githubApi: GithubApi & {
   branchMergeFails: false,
   checkRuns: [],
   pulls: [],
+  bodies: [],
   bases: [],
   drafts: [],
   comments: [],
@@ -159,6 +163,7 @@ const githubApi: GithubApi & {
     if (pull.head === this.openFailsFor)
       throw new Error('GitHub answered 422 opening a pull request')
     this.pulls.push(pull.head)
+    this.bodies.push(pull.body)
     this.bases.push(pull.base)
     this.drafts.push(pull.draft ?? false)
     return { number: 12, url: PR_URL }
@@ -243,6 +248,7 @@ let dirty = true
 beforeEach(() => {
   githubApi.checkRuns = []
   githubApi.pulls = []
+  githubApi.bodies = []
   githubApi.bases = []
   githubApi.drafts = []
   githubApi.comments = []
@@ -327,6 +333,8 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
     sandbox,
     harness: okHarness,
     reviewer: approving(),
+    // The tests of the plan turn it on; the rest measure what follows it.
+    planFirst: false,
     pushRetryDelayMs: 0,
     author: { name: 'aifactory[bot]', email: 'bot@users.noreply.github.com' },
     fetchIssue: async () => ({
@@ -1179,6 +1187,38 @@ describe('runTask review loop', () => {
     expect(githubApi.drafts).toEqual([true])
   })
 
+  it('does not accept an approval when the change takes an assertion out of a test that was there', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (c.includes('diff -U0') && c.includes("':(glob)**/*.test.*'")) {
+          return {
+            stdout: [
+              'diff --git a/src/truncate.test.js b/src/truncate.test.js',
+              '--- a/src/truncate.test.js',
+              '+++ b/src/truncate.test.js',
+              '@@ -4 +3,0 @@',
+              "-  assert.equal(truncate('abcdef', 3), 'abc')",
+            ].join('\n'),
+          }
+        }
+        return undefined
+      }),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'handoff' })
+    const [stored] = await reviewsOf(id)
+    expect(stored.verdict).toBe('changes')
+    expect(stored.findings).toContainEqual(
+      expect.objectContaining({
+        file: 'src/truncate.test.js',
+        issue: expect.stringContaining('1 assertion fewer'),
+      }),
+    )
+  })
+
   it('throws away anything the reviewer wrote to the checkout', async () => {
     const id = await seedTask()
     const sandbox = new FakeSandbox(changed())
@@ -1276,6 +1316,166 @@ describe('runTask review loop', () => {
       await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
     )[0]
     expect(failed.detail).toMatchObject({ quota: true, resetsAt: 'tomorrow' })
+  })
+})
+
+describe('runTask planning before it builds', () => {
+  const plan = {
+    files: [{ path: 'src/truncate.js', why: 'the function' }],
+    order: ['write the test', 'make it pass'],
+    risks: [],
+    proof: ['npm test'],
+    outOfScope: ['the CLI flag'],
+  }
+
+  /**
+   * A builder that answers the planning turn from a script and leaves work on every later turn. `edits`
+   * says whether the planning turn left files changed, as an agent that ignores the rule would.
+   */
+  function planningBuilder(answers: string[], edits = false) {
+    const resumed: string[] = []
+    let turn = 0
+    const builder: CodingHarness & { resumed: string[] } = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      resumed,
+      run: async () => {
+        if (turn >= answers.length) {
+          dirty = true
+          return { ok: true, summary: 'did the work', costUsd: 0.1, sessionId: 'sess-1' }
+        }
+        dirty = edits
+        return { ok: true, summary: answers[turn++], costUsd: 0.05, sessionId: 'sess-1' }
+      },
+      resume: async (_backend, sessionId, input) => {
+        resumed.push(input.prompt)
+        if (turn < answers.length)
+          return { ok: true, summary: answers[turn++], costUsd: 0.01, sessionId }
+        dirty = true
+        return { ok: true, summary: 'implemented the plan', costUsd: 0.1, sessionId }
+      },
+    }
+    return builder
+  }
+
+  /** A sandbox whose diff touches the planned file and one more. */
+  const twoFiles = () =>
+    new FakeSandbox(
+      changed((c) =>
+        c.includes('diff --name-status')
+          ? { stdout: 'M\tsrc/truncate.js\nM\tsrc/other.js\n' }
+          : undefined,
+      ),
+    )
+
+  it('stores the plan and builds in the session that wrote it', async () => {
+    const id = await seedTask()
+    const builder = planningBuilder([`Read it.\n${JSON.stringify(plan)}`])
+
+    const result = await runTask(deps(twoFiles(), { harness: builder, planFirst: true }), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    const stages = await stagesOf(id)
+    expect(stages.indexOf('plan')).toBeGreaterThan(-1)
+    expect(stages.indexOf('plan')).toBeLessThan(stages.indexOf('build'))
+    const [stored] = await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))
+    expect(stored).toMatchObject({ baseSha: 'abc123def', harness: 'fake-agent', plan })
+    expect(builder.resumed).toHaveLength(1)
+    expect(builder.resumed[0]).toContain('Implement the plan')
+    expect(builder.resumed[0]).not.toContain('discarded')
+  })
+
+  it('gives the reviewer the plan and records a file changed outside it', async () => {
+    const id = await seedTask()
+    const reviewer = approving()
+
+    await runTask(
+      deps(twoFiles(), {
+        harness: planningBuilder([JSON.stringify(plan)]),
+        reviewer,
+        planFirst: true,
+      }),
+      id,
+    )
+
+    expect(reviewer.prompts[0]).toContain("# The builder's plan")
+    expect(reviewer.prompts[0]).toContain('- `src/other.js`')
+    expect(reviewer.prompts[0]).toContain('implemented the plan')
+    const [stored] = await reviewsOf(id)
+    expect(stored.findings).toContainEqual({
+      severity: 'minor',
+      file: 'src/other.js',
+      issue: 'changed outside the plan',
+    })
+    expect(githubApi.bodies[0]).toContain('<summary>Plan</summary>')
+    expect(githubApi.bodies[0]).toContain('`src/truncate.js`: the function')
+  })
+
+  it('throws away what the planning turn changed, and tells the builder', async () => {
+    const id = await seedTask()
+    const sandbox = twoFiles()
+    const builder = planningBuilder([JSON.stringify(plan)], true)
+
+    await runTask(deps(sandbox, { harness: builder, planFirst: true }), id)
+
+    const commands = sandbox.backend.commands
+    const reset = commands.findIndex((c) => c.includes('reset --hard abc123def'))
+    expect(reset).toBeGreaterThan(-1)
+    expect(commands[reset + 1]).toContain('clean -fd')
+    expect(commands.findIndex((c) => c.includes('commit -F'))).toBeGreaterThan(reset)
+    expect(builder.resumed[0]).toContain('discarded')
+  })
+
+  it('asks once more for a plan it could not read, and fails at the plan when there is still none', async () => {
+    const id = await seedTask()
+    const builder = planningBuilder(['I will look around.', 'Still thinking.'])
+
+    const result = await runTask(deps(twoFiles(), { harness: builder, planFirst: true }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'plan' })
+    expect(result.status === 'failed' && result.error).toContain('the agent wrote no plan')
+    expect(builder.resumed).toHaveLength(1)
+    expect(builder.resumed[0]).toContain('one JSON object')
+    expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toEqual([])
+  })
+
+  it('takes the plan from the second answer when the first had none', async () => {
+    const id = await seedTask()
+    const builder = planningBuilder(['I will look around.', JSON.stringify(plan)])
+
+    const result = await runTask(deps(twoFiles(), { harness: builder, planFirst: true }), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(builder.resumed[1]).toContain('Implement the plan')
+  })
+
+  it('plans nothing with a builder that cannot resume a session', async () => {
+    const id = await seedTask()
+
+    const result = await runTask(deps(twoFiles(), { planFirst: true }), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(await stagesOf(id)).not.toContain('plan')
+    expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toEqual([])
+  })
+
+  it('keeps the plan the task has when a person sends the work back', async () => {
+    const id = await seedTask()
+    await getDb().insert(changePlan).values({ taskId: id, baseSha: 'old', harness: 'codex', plan })
+    const builder = planningBuilder([])
+    const reviewer = approving()
+
+    const result = await runTask(
+      deps(twoFiles(), { harness: builder, reviewer, planFirst: true }),
+      id,
+      undefined,
+      { feedback: 'Rename the helper to cut.' },
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(await stagesOf(id)).not.toContain('plan')
+    expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toHaveLength(1)
+    expect(reviewer.prompts[0]).toContain('- `src/other.js`')
   })
 })
 

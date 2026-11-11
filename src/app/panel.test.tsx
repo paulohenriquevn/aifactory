@@ -90,6 +90,7 @@ const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
       at: '2026-11-04T10:04:00Z',
     },
   ],
+  plans: [],
   questions: [],
   decisions: [],
   deliveries: [],
@@ -392,6 +393,47 @@ describe('releasing from the panel', () => {
     render(<TaskActions detail={detail()} onDone={noop} />)
     fireEvent.click(screen.getByRole('button', { name: 'Release' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/is a draft/))
+  })
+
+  it('shows the latest plan the builder wrote, with its files and what it left out', async () => {
+    const plan = {
+      id: 1,
+      baseSha: 'base000111',
+      harness: 'codex',
+      files: [{ path: 'src/old.js', why: 'x' }],
+      order: [],
+      risks: [],
+      proof: [],
+      outOfScope: [],
+      at: '2026-11-04T10:01:00Z',
+    }
+    serve({
+      'GET /api/panel/tasks/5': detail({
+        plans: [
+          plan,
+          {
+            ...plan,
+            id: 2,
+            files: [{ path: 'src/truncate.js', why: 'the function' }],
+            order: ['test first'],
+            outOfScope: ['the CLI flag'],
+          },
+        ],
+      }),
+    })
+    renderTask()
+    const region = await waitFor(() => screen.getByRole('region', { name: 'Plan' }))
+    expect(region.textContent).toContain('src/truncate.js: the function')
+    expect(region.textContent).toContain('the CLI flag')
+    expect(region.textContent).toContain('the latest of 2')
+    expect(region.textContent).not.toContain('src/old.js')
+  })
+
+  it('says when a task has no plan', async () => {
+    serve({ 'GET /api/panel/tasks/5': detail() })
+    renderTask()
+    const region = await waitFor(() => screen.getByRole('region', { name: 'Plan' }))
+    expect(region.textContent).toContain('No plan was written')
   })
 
   it('shows the pre-release and the release on the task page, with who made each', async () => {

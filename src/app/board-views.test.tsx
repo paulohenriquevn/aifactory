@@ -37,6 +37,7 @@ const detailOf = (id: number): TaskDetail => ({
   timeline: [],
   evidence: [],
   reviews: [],
+  plans: [],
   questions: [],
   decisions: [],
   deliveries: [],

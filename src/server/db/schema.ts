@@ -15,6 +15,7 @@ import {
 export const TASK_STAGES = [
   'intake',
   'sandbox',
+  'plan',
   'build',
   'push',
   'verify',
@@ -127,6 +128,22 @@ export const review = pgTable('review', {
   verdict: text('verdict', { enum: ['approve', 'changes', 'invalid'] }).notNull(),
   summary: text('summary').notNull(),
   findings: jsonb('findings').notNull(),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * The plan the builder wrote before it changed anything (`ChangePlan`): the files, the order, the risks,
+ * the proof and what it left out. The reviewer measures the diff against the latest one of the task, and a
+ * run that continues the task (an answer, a person's changes) keeps it instead of planning again.
+ */
+export const changePlan = pgTable('change_plan', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  baseSha: text('base_sha').notNull(),
+  harness: text('harness').notNull(),
+  plan: jsonb('plan').notNull(),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })
 

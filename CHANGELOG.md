@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Before it changes anything in a new task, the builder writes a plan: the files it will change and why, the order, the risks, the tests that prove it and what it leaves out. The plan is stored, shown in the pull request and on the task page, and given to the reviewer, together with the changed files the plan does not name; the build continues the session that wrote it, and a task sent back keeps its plan instead of planning again (#33)
+- The review no longer approves a change that weakens a test that was there before it: a test case removed, fewer assertions, or a skip, `only` or todo added. It is a blocker in an issue labelled `bug` and major otherwise; when the issue names the file or the test, the reviewer decides (#34)
 - Sandboxes can run on E2B with `FACTORY_SANDBOX=e2b` and `E2B_API_KEY`, under the same domain allowlist, with credentials attached outside the sandbox and renewed while a run works; a run plans its agent passes for the hour E2B's free plan allows, or for `E2B_MAX_SESSION_MS` (#26)
 
 ### Changed

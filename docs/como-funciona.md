@@ -62,6 +62,7 @@ Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `
 | ---------- | ----------------------------------------------------------------------------------------------------------------- |
 | `intake`   | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                         |
 | `sandbox`  | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.           |
+| `plan`     | Numa task nova, o agente lê o código e escreve um plano, sem mudar nada. O plano é gravado em `change_plan`.      |
 | `build`    | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                              |
 | `push`     | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).           |
 | `verify`   | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.           |
@@ -228,12 +229,31 @@ firewall dos dois agentes, e dois agentes não podem assinar o mesmo domínio de
 `changes`, ou uma aprovação que lista um achado `blocker` ou `major`, vale como `invalid`: sem
 aprovação. Quando o revisor se contradiz, a fábrica não escolhe a leitura mais gentil.
 
-**Fatos do diff.** Duas coisas que um agente pode entortar e um revisor pode deixar passar são
+**Fatos do diff.** Algumas coisas que um agente pode entortar e um revisor pode deixar passar são
 checadas sem modelo e valem como achados que impedem a aprovação:
 
 - o script `test` do `package.json` mudou entre a base e o commit (os checks passariam a rodar outra
   coisa), ou o diff toca `.github/`: achado `blocker`;
 - um arquivo de teste foi apagado: achado `major`.
+
+- numa issue com label `bug`, um teste que já existia na base perdeu casos ou asserções, ou ganhou um
+  `.skip`, `.only`, `.todo`, `xit`, `@pytest.mark.skip` ou `t.Skip`: achado `blocker`. Fora de uma
+  correção de bug, o mesmo achado é `major`. Quando o texto da issue cita o arquivo ou o caso removido,
+  ele vira `minor` e a decisão fica com o revisor, porque a remoção pode ser o que a issue pede. Um caso
+  que muda de arquivo com o mesmo nome não conta como perda.
+
+**Plano antes do código.** Numa task nova, antes de editar, o construtor recebe a issue e as regras do
+build e escreve um plano em JSON: os arquivos que vai mudar e por quê, a ordem, os riscos, a prova
+(testes ou comandos) e o que fica fora do escopo. Nesse turno ele não muda arquivo nem faz pergunta; o
+que ele mudar mesmo assim é descartado. Um plano ilegível ganha uma segunda chance, e sem plano a task
+falha em `plan`. O turno tem teto de 15 minutos. O build continua a mesma sessão, com a instrução de
+seguir o plano e de explicar no resumo final qualquer arquivo fora dele. O plano vai no corpo do PR, na
+seção "Plan" da task no painel e no prompt do revisor, junto com a lista dos arquivos do diff que o plano
+não cita (calculada sem modelo; lockfiles ficam de fora). O revisor trata cada um como achado, salvo
+motivo que a issue sustente, e a fábrica registra cada um como achado `minor`. Uma task retomada
+(resposta a uma pergunta, mudanças pedidas, checks obrigatórios que devolveram o trabalho) usa o último
+plano gravado. Não há aprovação humana do plano: quem confere é o revisor, contra o diff
+([ADR 0008](adr/0008-plano-antes-do-codigo-e-testes-que-nao-enfraquecem.md)).
 
 **Tentativas.** São no máximo 3, contadas juntas para checks e review.
 

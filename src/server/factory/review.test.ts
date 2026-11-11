@@ -92,6 +92,41 @@ describe('prompts', () => {
     expect(prompt).toContain('git diff abc...HEAD')
     expect(prompt).toContain('Do not edit, create or delete files')
     expect(prompt).toContain('"verdict"')
+    expect(prompt).not.toContain("# The builder's plan")
+  })
+
+  it('gives the reviewer the plan, the files changed outside it, and what the builder said', () => {
+    const prompt = reviewPrompt({
+      repo: 'o/r',
+      issueNumber: 3,
+      title: 'T',
+      body: 'B',
+      branch: 'factory/3',
+      baseSha: 'abc',
+      plan: '**Files**\n\n- `src/a.ts`',
+      unplanned: ['src/lint-only.ts', '.prettierrc'],
+      builderSummary: 'changed a.ts',
+    })
+    expect(prompt).toContain("# The builder's plan")
+    expect(prompt).toContain('- `src/a.ts`')
+    expect(prompt).toContain('- `src/lint-only.ts`')
+    expect(prompt).toContain('- `.prettierrc`')
+    expect(prompt).toContain('changed a.ts')
+    expect(prompt).toContain('outside the plan')
+  })
+
+  it('says when every changed file is in the plan', () => {
+    const prompt = reviewPrompt({
+      repo: 'o/r',
+      issueNumber: 3,
+      title: 'T',
+      body: 'B',
+      branch: 'factory/3',
+      baseSha: 'abc',
+      plan: 'p',
+      unplanned: [],
+    })
+    expect(prompt).toContain('Every file the diff changes is in the plan.')
   })
 
   it('gives the builder the failing output and the findings, and forbids committing', () => {
@@ -156,6 +191,32 @@ describe('diffGuards', () => {
       headTestScript: 'node --test',
     })
     expect(findings).toHaveLength(1)
+  })
+
+  it('flags a deleted Python or Go test file too', () => {
+    const findings = diffGuards({
+      ...clean,
+      changes: [
+        { status: 'D', path: 'pkg/test_parse.py' },
+        { status: 'D', path: 'pkg/parse_test.go' },
+      ],
+    })
+    expect(findings.map((f) => f.file)).toEqual(['pkg/test_parse.py', 'pkg/parse_test.go'])
+  })
+
+  it('adds what the change took from the tests, as a blocker in a bug fix', () => {
+    const patch = [
+      'diff --git a/src/x.test.js b/src/x.test.js',
+      '--- a/src/x.test.js',
+      '+++ b/src/x.test.js',
+      '@@ -3 +2,0 @@',
+      '-  expect(x()).toBe(1)',
+    ].join('\n')
+    const findings = diffGuards({
+      ...clean,
+      tests: { patch, issue: { labels: ['bug'], title: 'x is wrong', body: '' } },
+    })
+    expect(findings.map((f) => [f.severity, f.file])).toEqual([['blocker', 'src/x.test.js']])
   })
 })
 

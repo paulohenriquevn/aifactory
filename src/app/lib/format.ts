@@ -25,6 +25,7 @@ export function runsAgain(iso: string, now = Date.now()): string {
 const LABELS: Record<Stage, string> = {
   intake: 'queued',
   sandbox: 'starting sandbox',
+  plan: 'planning',
   build: 'building',
   push: 'pushing',
   verify: 'running checks',
@@ -92,12 +93,15 @@ export function describeEvent(event: TimelineEvent): string {
       return d.renewed
         ? `${text(d.provider)}, new session: the last one had run ${text(d.sessionMinutes)} minutes, the disk moved over`
         : text(d.provider)
+    case 'plan':
+      return text(d.harness)
     case 'build':
       return [
         text(d.harness),
         d.attempt ? `attempt ${text(d.attempt)}` : '',
         d.resumed ? 'resumed after an answer' : '',
         d.rework ? 'rework' : '',
+        d.planned ? 'following its plan' : '',
       ]
         .filter(Boolean)
         .join(', ')

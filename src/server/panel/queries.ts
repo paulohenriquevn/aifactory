@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import type { Database } from '../db'
 import {
   agentRun,
+  changePlan,
   decision,
   delivery,
   evidence,
@@ -17,6 +18,7 @@ import { retryAt } from '../factory/auto-retry'
 import {
   columnOf,
   retryableFailure,
+  type ChangePlanView,
   type DecisionView,
   type Retryable,
   type DeliveryView,
@@ -164,7 +166,7 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
   const [row] = await db.select().from(task).where(eq(task.id, id))
   if (!row) return undefined
   const [card] = await cards(db, [row])
-  const [events, checks, reviews, questions, decisions, deliveries, watches, runs] =
+  const [events, checks, reviews, questions, decisions, deliveries, watches, runs, plans] =
     await Promise.all([
       db.select().from(stageEvent).where(eq(stageEvent.taskId, id)).orderBy(asc(stageEvent.id)),
       db.select().from(evidence).where(eq(evidence.taskId, id)).orderBy(asc(evidence.id)),
@@ -174,6 +176,7 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
       db.select().from(delivery).where(eq(delivery.taskId, id)).orderBy(asc(delivery.id)),
       db.select().from(watch).where(eq(watch.taskId, id)).orderBy(asc(watch.id)),
       db.select().from(agentRun).where(eq(agentRun.taskId, id)).orderBy(asc(agentRun.id)),
+      db.select().from(changePlan).where(eq(changePlan.taskId, id)).orderBy(asc(changePlan.id)),
     ])
   return {
     task: card,
@@ -204,6 +207,13 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
       summary: r.summary,
       findings: r.findings as ReviewView['findings'],
       at: iso(r.at),
+    })),
+    plans: plans.map((p): ChangePlanView => ({
+      id: p.id,
+      baseSha: p.baseSha,
+      harness: p.harness,
+      ...(p.plan as Omit<ChangePlanView, 'id' | 'baseSha' | 'harness' | 'at'>),
+      at: iso(p.at),
     })),
     questions: questions.map((q): QuestionView => ({
       id: q.id,

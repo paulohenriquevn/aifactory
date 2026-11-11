@@ -1,8 +1,9 @@
 import { type SandboxBackend } from '@theokit/agents/sandbox'
-import { asc, eq } from 'drizzle-orm'
+import { asc, desc, eq } from 'drizzle-orm'
 
 import {
   agentRun,
+  changePlan,
   evidence,
   question as questionTable,
   review as reviewTable,
@@ -35,6 +36,16 @@ import {
   type Verdict,
 } from './evidence'
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
+import { TEST_PATHSPECS } from './test-weakening'
+import {
+  changePlanPrompt,
+  implementPlanPrompt,
+  parseChangePlan,
+  planAgainPrompt,
+  renderChangePlan,
+  unplannedFiles,
+  type ChangePlan,
+} from './change-plan'
 import { buildPrompt, type CodingHarness, type HarnessResult } from './harness'
 import {
   MAX_ATTEMPTS,
@@ -117,6 +128,9 @@ type Timeouts = NonNullable<RunTaskDeps['timeouts']>
  */
 export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 90 * 60_000, agentMs: 45 * 60_000 }
 
+/** The longest the planning turn may take: it reads and writes a plan, it does not build or test. */
+export const PLAN_MS = 15 * 60_000
+
 /** The result of running the checks on a commit: what ran, what it adds up to, and what to show. */
 type Checked = { results: CheckResult[]; here: StoredCheck[]; verdict: Verdict }
 
@@ -139,6 +153,10 @@ export class Run {
   remoteHead = ''
   /** The clone holds `.changeset/config.json`: the repository publishes with changesets. */
   usesChangesets = false
+  /** What the builder meant to change, written before it changed anything; the reviewer measures the diff by it. */
+  plan: ChangePlan | undefined
+  /** This run wrote the plan, so the first build pass continues the planning session. */
+  private planned: { discarded: boolean } | undefined
   /** What the agents of this task do, written while they work. Opened by the first agent run. */
   private transcript: Transcript | undefined
 
@@ -161,6 +179,10 @@ export class Run {
     this.sessionId = c.resuming?.sessionId
   }
 
+  /** The plan as markdown, for the pull request; nothing when the task has none. */
+  private get renderedPlan(): string | undefined {
+    return this.plan ? renderChangePlan(this.plan) : undefined
+  }
   private get backend(): SandboxBackend {
     return this.sandbox.backend
   }
@@ -561,7 +583,7 @@ export class Run {
 
   /** The first pass of the builder: a new one, or the session resumed with the answer it was waiting for. */
   private async firstPass(): Promise<HarnessResult> {
-    const { deps, taskId, row, issue, branch, resuming, continuation } = this.c
+    const { deps, taskId, resuming } = this.c
     const timeoutMs = await this.agentTimeout()
     const { builder, backend, repoDir } = this
     if (resuming) {
@@ -589,26 +611,115 @@ export class Run {
       harness: builder.name,
       attempt: 1,
       ...(this.feed?.delivered ? { knowledge: this.feed.delivered } : {}),
+      ...(this.planned ? { planned: true } : {}),
     })
+    if (this.planned && this.sessionId) {
+      const prompt = implementPlanPrompt(this.planned)
+      const sessionId = this.sessionId
+      return this.settle(builder, 'builder', 1, (onEvent) =>
+        builder.resume!(backend, sessionId, { onEvent, cwd: repoDir, timeoutMs, prompt }),
+      )
+    }
     return this.settle(builder, 'builder', 1, (onEvent) =>
       builder.run(backend, {
         onEvent,
         cwd: repoDir,
         timeoutMs,
-        prompt: buildPrompt({
-          repo: row.repository,
-          issueNumber: row.issueNumber,
-          title: issue.title,
-          body: issue.body,
-          branch,
-          feedback: continuation?.feedback,
-          feedbackFrom: continuation?.fromChecks ? 'checks' : 'person',
-          askQuestions: this.c.repo.askQuestions,
-          knowledgeDir: this.feed?.dir,
-          checks: this.checks,
-        }),
+        prompt: buildPrompt(this.buildInput()),
       }),
     )
+  }
+
+  /** What the builder is told about the issue and its rules, the same for the plan and the work. */
+  private buildInput(): Parameters<typeof buildPrompt>[0] {
+    const { row, issue, branch, continuation } = this.c
+    return {
+      repo: row.repository,
+      issueNumber: row.issueNumber,
+      title: issue.title,
+      body: issue.body,
+      branch,
+      feedback: continuation?.feedback,
+      feedbackFrom: continuation?.fromChecks ? 'checks' : 'person',
+      askQuestions: this.c.repo.askQuestions,
+      knowledgeDir: this.feed?.dir,
+      checks: this.checks,
+    }
+  }
+
+  /**
+   * Before it changes anything, the builder writes what it will change: the files, the order, the risks,
+   * the proof and what it leaves out. The plan is stored and the build continues the same session. A run
+   * that continues the task (an answer, a person's changes, the repository's checks) keeps the plan the
+   * task has, and so does a builder that cannot resume a session, which plans nothing here.
+   */
+  private async planChange(): Promise<void> {
+    const { deps, taskId, resuming, continuation, state } = this.c
+    if (resuming || continuation) {
+      this.plan = await this.storedPlan()
+      return
+    }
+    if (!(deps.planFirst ?? true) || !this.builder.resume) return
+    // Reading and planning is short; the rest of the pass is left to the work.
+    const timeoutMs = Math.min(await this.agentTimeout(), PLAN_MS)
+    state.current = 'plan'
+    await enterStage(deps.db, taskId, 'plan', { harness: this.builder.name })
+    const prompt = changePlanPrompt(this.buildInput())
+    const first = await this.settle(this.builder, 'builder', 1, (onEvent) =>
+      this.builder.run(this.backend, { onEvent, cwd: this.repoDir, timeoutMs, prompt }),
+    )
+    if (!first.ok) throw new StageFailure(`the agent did not finish the plan: ${first.summary}`)
+    this.sessionId = first.sessionId ?? this.sessionId
+    const plan = parseChangePlan(first.summary) ?? (await this.planAgain(timeoutMs))
+    const discarded = await this.discardEdits()
+    await deps.db.insert(changePlan).values({
+      taskId,
+      baseSha: this.baseSha,
+      harness: this.builder.name,
+      plan,
+    })
+    this.plan = plan
+    this.planned = { discarded }
+  }
+
+  /** The planning turn ended with no plan that could be read: one more turn, asking for the plan alone. */
+  private async planAgain(timeoutMs: number): Promise<ChangePlan> {
+    if (!this.sessionId)
+      throw new StageFailure('the agent wrote no plan and gave no session to ask again')
+    const sessionId = this.sessionId
+    const again = await this.settle(this.builder, 'builder', 1, (onEvent) =>
+      this.builder.resume!(this.backend, sessionId, {
+        onEvent,
+        cwd: this.repoDir,
+        timeoutMs,
+        prompt: planAgainPrompt(),
+      }),
+    )
+    this.sessionId = again.sessionId ?? this.sessionId
+    const plan = again.ok ? parseChangePlan(again.summary) : undefined
+    if (!plan)
+      throw new StageFailure(`the agent wrote no plan: ${oneLine(again.summary).slice(0, 700)}`)
+    return plan
+  }
+
+  /** Puts back the checkout the planning turn was not to change. Says whether there was anything to put back. */
+  private async discardEdits(): Promise<boolean> {
+    const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
+    if (pending.stdout.trim() === '') return false
+    await must(this.backend, `git -C ${this.repoDir} reset --hard ${this.baseSha}`)
+    await must(this.backend, `git -C ${this.repoDir} clean -fd`)
+    return true
+  }
+
+  /** The latest plan of the task, written by an earlier run. */
+  private async storedPlan(): Promise<ChangePlan | undefined> {
+    const [latest] = await this.c.deps.db
+      .select()
+      .from(changePlan)
+      .where(eq(changePlan.taskId, this.c.taskId))
+      .orderBy(desc(changePlan.id))
+      .limit(1)
+    return latest?.plan as ChangePlan | undefined
   }
 
   private firstMessage(): string {
@@ -831,6 +942,7 @@ export class Run {
    * something (the run parks) or when a person's requested change needed no change.
    */
   async start(): Promise<{ result: RunResult } | { sha: string }> {
+    await this.planChange()
     this.c.state.current = 'build'
     const first = await this.firstPass()
     if (!first.ok) throw new StageFailure(`the agent did not finish: ${first.summary}`)
@@ -942,20 +1054,42 @@ export class Run {
     return { results, here, verdict }
   }
 
-  /** What the diff says about itself, without a model: facts an agent could bend. */
-  private async diffFacts(): Promise<Finding[]> {
+  /**
+   * What the diff says about itself, without a model: facts an agent could bend, and the files it changed
+   * that the plan does not name.
+   */
+  private async diffFacts(): Promise<{ guards: Finding[]; unplanned: string[] }> {
     const { backend, repoDir, baseSha } = this
     const changes = parseNameStatus(
       (await must(backend, `git -C ${repoDir} diff --name-status ${baseSha} HEAD`)).stdout,
     )
+    const unplanned = this.plan
+      ? unplannedFiles(
+          changes.map((c) => c.path),
+          this.plan,
+        )
+      : []
+    return { guards: await this.guardsOf(changes), unplanned }
+  }
+
+  /** The guards of a diff: the checks' command, `.github/`, deleted or weakened tests. */
+  private async guardsOf(changes: ReturnType<typeof parseNameStatus>): Promise<Finding[]> {
+    const { backend, repoDir, baseSha } = this
     const showScript = async (rev: string) => {
       const shown = await backend.execute(`git -C ${repoDir} show ${rev}:package.json`)
       return shown.exitCode === 0 ? testScriptOf(shown.stdout) : undefined
     }
+    // Fixed pathspecs only: no path the agent wrote reaches the shell.
+    const tests = await must(
+      backend,
+      `git -C ${repoDir} diff -U0 --no-color --no-renames ${baseSha} HEAD -- ${TEST_PATHSPECS.join(' ')}`,
+    )
+    const { issue } = this.c
     return diffGuards({
       changes,
       baseTestScript: await showScript(baseSha),
       headTestScript: await showScript('HEAD'),
+      tests: { patch: tests.stdout, issue },
     })
   }
 
@@ -964,7 +1098,7 @@ export class Run {
     const { deps, taskId, row, issue, branch, state } = this.c
     state.current = 'review'
     await enterStage(deps.db, taskId, 'review', { sha, attempt, reviewer: this.reviewer.name })
-    const guards = await this.diffFacts()
+    const { guards, unplanned } = await this.diffFacts()
     const result = await this.settle(this.reviewer, 'reviewer', attempt, (onEvent) =>
       this.reviewer.run(this.backend, {
         onEvent,
@@ -978,6 +1112,9 @@ export class Run {
           branch,
           baseSha: this.baseSha,
           knowledgeDir: this.feed?.dir,
+          ...(this.plan
+            ? { plan: this.renderedPlan, unplanned, builderSummary: this.summary }
+            : {}),
         }),
       }),
     )
@@ -990,10 +1127,16 @@ export class Run {
       : { verdict: 'invalid', summary: `the reviewer failed: ${result.summary}`, findings: [] }
     // A fact about the diff that an agent could bend outranks an approval.
     const blocked = read.verdict === 'approve' && guards.some((g) => g.severity !== 'minor')
+    // A file outside the plan is on record; whether it was needed is the reviewer's call.
+    const outside: Finding[] = unplanned.map((file) => ({
+      severity: 'minor',
+      file,
+      issue: 'changed outside the plan',
+    }))
     const merged: ReviewVerdict = {
       verdict: blocked ? 'changes' : read.verdict,
       summary: read.summary,
-      findings: [...guards, ...read.findings],
+      findings: [...guards, ...outside, ...read.findings],
     }
     await deps.db.insert(reviewTable).values({
       taskId,
@@ -1111,6 +1254,7 @@ export class Run {
         rows: here,
         agentSummary: this.summary,
         review: { reviewer: this.reviewer.name, attempt, outcome },
+        plan: this.renderedPlan,
       }),
     })
     const integrated = await this.integrate(sha, pull.number)
@@ -1203,6 +1347,7 @@ export class Run {
         agentSummary: this.summary,
         review: { reviewer: this.reviewer.name, attempt, outcome },
         handoff: reason,
+        plan: this.renderedPlan,
       }),
     })
     await api.commentOnIssue(

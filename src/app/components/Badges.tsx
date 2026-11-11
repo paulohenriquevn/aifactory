@@ -8,6 +8,7 @@ type Variant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'destr
 const TONE: Record<Stage, Variant> = {
   intake: 'default',
   sandbox: 'primary',
+  plan: 'primary',
   build: 'primary',
   push: 'primary',
   verify: 'primary',

@@ -6,6 +6,7 @@ describe('columnOf', () => {
   const expected: Record<Stage, Column> = {
     intake: 'queued',
     sandbox: 'working',
+    plan: 'working',
     build: 'working',
     push: 'working',
     verify: 'working',

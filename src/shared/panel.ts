@@ -3,6 +3,7 @@
 export type Stage =
   | 'intake'
   | 'sandbox'
+  | 'plan'
   | 'build'
   | 'push'
   | 'verify'
@@ -219,6 +220,19 @@ export type ReviewView = {
   at: string
 }
 
+/** A plan the builder wrote before it changed anything; the latest one is what the reviewer measured by. */
+export type ChangePlanView = {
+  id: number
+  baseSha: string
+  harness: string
+  files: { path: string; why: string }[]
+  order: string[]
+  risks: string[]
+  proof: string[]
+  outOfScope: string[]
+  at: string
+}
+
 export type QuestionView = {
   id: number
   body: string
@@ -241,6 +255,8 @@ export type TaskDetail = {
   timeline: TimelineEvent[]
   evidence: EvidenceView[]
   reviews: ReviewView[]
+  /** Oldest first. */
+  plans: ChangePlanView[]
   questions: QuestionView[]
   decisions: DecisionView[]
   deliveries: DeliveryView[]

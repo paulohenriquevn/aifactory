@@ -64,6 +64,7 @@ describe('stageLabel', () => {
     const all: Stage[] = [
       'intake',
       'sandbox',
+      'plan',
       'build',
       'push',
       'verify',
@@ -78,6 +79,7 @@ describe('stageLabel', () => {
     expect(all.map((s) => stageLabel(s))).toEqual([
       'queued',
       'starting sandbox',
+      'planning',
       'building',
       'pushing',
       'running checks',
@@ -146,6 +148,13 @@ describe('describeEvent', () => {
     )
     expect(line('build', { harness: 'codex', rework: true })).toBe('codex, rework')
     expect(line('build', { harness: 'claude-code' })).toBe('claude-code')
+    expect(line('build', { harness: 'codex', attempt: 1, planned: true })).toBe(
+      'codex, attempt 1, following its plan',
+    )
+  })
+
+  it('names the agent that writes the plan', () => {
+    expect(line('plan', { harness: 'claude-code' })).toBe('claude-code')
   })
 
   it('says which commit and attempt were checked, leaving out what is missing', () => {

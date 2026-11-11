@@ -106,9 +106,14 @@ export function pullRequestBody(input: {
   agentSummary: string
   review: { reviewer: string; attempt: number; outcome: ReviewVerdict }
   handoff?: string
+  /** The plan the builder wrote before it changed anything, as markdown. */
+  plan?: string
 }): string {
   const { review } = input
   const remaining = review.outcome.findings
+  const plan = input.plan
+    ? ['<details><summary>Plan</summary>', '', input.plan, '', '</details>', '']
+    : []
   return [
     `Closes #${input.issueNumber}`,
     '',
@@ -120,6 +125,7 @@ export function pullRequestBody(input: {
     `Independent review by ${review.reviewer}, attempt ${review.attempt}: ${review.outcome.verdict}. ${review.outcome.summary}`,
     ...(remaining.length > 0 ? ['', renderFindings(remaining)] : []),
     '',
+    ...plan,
     '<details><summary>What the agent said</summary>',
     '',
     input.agentSummary.slice(0, 3_000),

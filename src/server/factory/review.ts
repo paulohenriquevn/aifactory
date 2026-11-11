@@ -24,13 +24,19 @@ export function reviewPrompt(input: {
   baseSha: string
   /** Where the knowledge base is in the sandbox, when the factory delivered one. */
   knowledgeDir?: string
+  /** The plan the builder wrote before it changed anything, as markdown. */
+  plan?: string
+  /** The changed files the plan does not cover, found without a model. */
+  unplanned?: string[]
+  /** What the builder said when it finished, where it gives its reasons. */
+  builderSummary?: string
 }): string {
   return `You are an independent code reviewer for the repository ${input.repo}. Another agent implemented the issue below on the branch ${input.branch}. You did not write this code and you must not change it.
 
 # ${input.title} (#${input.issueNumber})
 
 ${input.body || '(the issue has no description)'}
-
+${input.plan === undefined ? '' : planSection(input.plan, input.unplanned ?? [], input.builderSummary)}
 Review the work:
 - Read the change with \`git diff ${input.baseSha}...HEAD\` and the files it touches.
 - Decide whether it does what the issue asks, no more and no less.
@@ -48,6 +54,25 @@ Finish with one JSON object on its own, and nothing after it:
 
 Use "changes" when there is any blocker or major finding. Use "approve" only when you would merge it as it is; minor findings may stay in an approval.
 `
+}
+
+/** The plan in the review: what the builder meant to change, and where the diff left it. */
+function planSection(plan: string, unplanned: string[], builderSummary?: string): string {
+  const outside =
+    unplanned.length === 0
+      ? 'Every file the diff changes is in the plan.'
+      : `A check without a model found these files changed outside the plan:\n\n${unplanned.map((p) => `- \`${p}\``).join('\n')}`
+  return `
+# The builder's plan
+
+The builder wrote this before it changed anything:
+
+${plan}
+
+${outside}
+
+Measure the diff against the plan. A file changed outside the plan is a finding, at least major, unless the builder's summary gives a reason the issue needs it; then judge the reason. Edits the issue does not need (a reformat, a lint fix in an unrelated file) are not a reason.
+${builderSummary ? `\nWhat the builder said when it finished:\n\n${builderSummary.slice(0, 3_000)}\n` : ''}`
 }
 
 /**
