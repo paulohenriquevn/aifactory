@@ -42,6 +42,25 @@ export type PromotionWatchResult = {
   errors: string[]
 }
 
+/**
+ * The log lines a pass leaves: its errors, and what it did when it did anything. A pass that found
+ * nothing to do says nothing, every five minutes.
+ */
+export function passLog(result: PromotionWatchResult): { level: 'log' | 'error'; line: string }[] {
+  const { errors, ...done } = result
+  const lines: { level: 'log' | 'error'; line: string }[] = []
+  if (errors.length > 0) {
+    lines.push({
+      level: 'error',
+      line: JSON.stringify({ event: 'watch_promotions_failed', errors }),
+    })
+  }
+  const acted = done.reruns + done.opened.length + done.commented.length + done.capped > 0
+  if (acted)
+    lines.push({ level: 'log', line: JSON.stringify({ event: 'watch_promotions', ...done }) })
+  return lines
+}
+
 /** A failed check with its evidence, and whether it failed again after a rerun. */
 type Seen = FailedCheck & { rerun: boolean }
 

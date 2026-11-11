@@ -2,7 +2,7 @@ import { defineCron } from 'theokit/server/cron'
 
 import { mainProcessOnly } from '../factory/worker-only'
 import { newIssuesCapFromEnv } from '../factory/promotion'
-import { pollPromotions } from '../factory/promotion-watch'
+import { passLog, pollPromotions } from '../factory/promotion-watch'
 import { createIssuesApi } from '../github/issues-api'
 import { createPromotionApi } from '../github/promotion-api'
 import { actionDeps } from '../panel/deps'
@@ -35,12 +35,6 @@ export default defineCron('watch-promotions', {
       issues: createIssuesApi(),
       maxNewIssuesPerRepository: cap,
     })
-    const { errors, ...done } = result
-    if (errors.length > 0) {
-      console.error(JSON.stringify({ event: 'watch_promotions_failed', errors }))
-    }
-    if (done.reruns > 0 || done.opened.length > 0 || done.commented.length > 0 || done.capped > 0) {
-      console.log(JSON.stringify({ event: 'watch_promotions', ...done }))
-    }
+    for (const { level, line } of passLog(result)) console[level](line)
   }),
 })
