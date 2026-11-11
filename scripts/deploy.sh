@@ -19,14 +19,22 @@ fi
 
 pnpm build
 # All at once, so each process drains its own run in parallel. The workers run tasks and the feeder hands them
-# out from the same build, so each one left alone keeps the code from before it. try-restart restarts only the
-# ones running: the feeder is started on purpose, never here.
+# out from the same build, so each one left alone keeps the code from before it.
+# Every enabled worker is restarted, a stopped one included: try-restart left a stopped worker stopped, and
+# the factory ran fewer tasks at once without anyone noticing. The enabled ones are what the boot target
+# wants (install-services.sh enables FACTORY_WORKERS of them). The feeder opens issues in real repositories,
+# so it is started on purpose, never here: try-restart restarts it only when it already runs.
+mapfile -t workers < <(systemctl --user list-dependencies --plain --no-legend default.target |
+  grep -oE 'aifactory-worker@[0-9]+\.service' | sort -u)
 systemctl --user restart aifactory.service &
-server=$!
-systemctl --user try-restart 'aifactory-worker@*.service' aifactory-feeder.service &
-others=$!
-wait "$server"
-wait "$others"
+pids=($!)
+if [ "${#workers[@]}" -gt 0 ]; then
+  systemctl --user restart "${workers[@]}" &
+  pids+=($!)
+fi
+systemctl --user try-restart aifactory-feeder.service &
+pids+=($!)
+for pid in "${pids[@]}"; do wait "$pid"; done
 for _ in $(seq 1 40); do
   curl -fs -o /dev/null http://127.0.0.1:3000/api/health && { echo "aifactory is up"; exit 0; }
   sleep 1

@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A deploy now starts every enabled worker, a stopped one included, so the factory runs as many tasks at once as it has workers; before, a worker that stopped once stayed stopped through every later deploy (#20)
+
 ## [0.2.0] - 2026-11-10
 
 ### Added
