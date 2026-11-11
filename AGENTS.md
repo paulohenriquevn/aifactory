@@ -123,7 +123,9 @@ reads that file, not a convention.
   decision logic. A gate that fails is fixed with a test or a smaller function, not by raising the line.
 - **A run is `Run`, one method per step.** `factory/run.ts` holds what changes during a run (cost, the
   agent's last words, its session) and a method for each step; `run-task.ts` is only the public entry
-  points. A new step is a new method, not a branch inside another.
+  points. A new step is a new method, not a branch inside another. The same step goes into
+  `src/server/evals/run-case.ts`, which runs evaluation cases along the factory's path without pushing:
+  without it, the suite measures a factory that no longer exists.
 - **Commits carry no co-author trailer.**
 - **Validate at the boundary.** A route validates input with Zod once, then trusts it.
 - **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`

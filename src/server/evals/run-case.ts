@@ -6,10 +6,24 @@ import {
   agentTimeLeft,
   fitToSession,
 } from '../factory/agent-time'
+import {
+  changePlanPrompt,
+  implementPlanPrompt,
+  parseChangePlan,
+  planAgainPrompt,
+  renderChangePlan,
+  unplannedFiles,
+  type ChangePlan,
+} from '../factory/change-plan'
 import { cloneRepository } from '../factory/clone'
 import { failingChecks, runChecks, type CheckResult } from '../factory/evidence'
 import { diffGuards, parseNameStatus, testScriptOf } from '../factory/guards'
-import { buildPrompt, type CodingHarness, type HarnessResult } from '../factory/harness'
+import {
+  buildPrompt,
+  type CodingHarness,
+  type HarnessInput,
+  type HarnessResult,
+} from '../factory/harness'
 import {
   MAX_ATTEMPTS,
   parseVerdict,
@@ -18,6 +32,7 @@ import {
   type Finding,
   type ReviewVerdict,
 } from '../factory/review'
+import { DEFAULT_TIMEOUTS, PLAN_MS } from '../factory/run'
 import {
   COMMIT_MESSAGE,
   GITCONFIG,
@@ -26,13 +41,13 @@ import {
   must,
   oneLine,
 } from '../factory/run-support'
-import { DEFAULT_TIMEOUTS } from '../factory/run'
 import {
   createIsolatedSandbox,
   type IsolatedSandbox,
   type IsolatedSandboxProvider,
   type SandboxSpec,
 } from '../factory/sandbox'
+import { TEST_PATHSPECS } from '../factory/test-weakening'
 import { parseQuestion } from '../factory/waiting'
 import { KnowledgeFeed } from '../knowledge/feed'
 import type { KnowledgeSource } from '../knowledge/source'
@@ -55,8 +70,9 @@ class Stopped extends Error {}
 const COMMIT = /^[0-9a-f]{40}$/
 
 /**
- * One case run the way the factory runs a task (`factory/run.ts`): the same prompts, agents, checks, facts
- * about the diff and review, and up to `MAX_ATTEMPTS` passes. It writes nowhere but the sandbox: GitHub is
+ * One case run the way the factory runs a task (`factory/run.ts`): the same prompts, agents, plan, checks,
+ * facts about the diff and review, and up to `MAX_ATTEMPTS` passes. A step added to `Run` is added here too,
+ * or the suite measures a factory that no longer exists. It writes nowhere but the sandbox: GitHub is
  * reachable without a credential, so the clone works and a push cannot, and nothing here pushes, opens a
  * pull request or records a stage.
  */
@@ -65,6 +81,10 @@ class CaseRun {
   attempts = 1
   reviewRounds = 0
   private sessionId: string | undefined
+  /** What the builder meant to change, written before it changed anything. */
+  private plan: ChangePlan | undefined
+  /** What the builder said when it last finished, where it gives its reasons. */
+  private summary = ''
   private readonly started = Date.now()
 
   constructor(
@@ -93,33 +113,75 @@ class CaseRun {
     return result
   }
 
-  private agentInput(prompt: string) {
+  private agentInput(prompt: string, longest = Infinity): HarnessInput {
     return {
       cwd: this.repoDir,
       prompt,
-      timeoutMs: agentTimeLeft(this.limits, Date.now() - this.started),
+      timeoutMs: Math.min(agentTimeLeft(this.limits, Date.now() - this.started), longest),
     }
   }
 
-  async build(): Promise<void> {
+  private buildInput(): Parameters<typeof buildPrompt>[0] {
     const { c } = this
-    const first = await this.deps.builder.run(
-      this.backend,
-      this.agentInput(
-        buildPrompt({
-          repo: c.repository,
-          issueNumber: c.issueNumber,
-          title: c.title,
-          body: c.body,
-          branch: `factory/${c.issueNumber}`,
-          askQuestions: false,
-          knowledgeDir: this.knowledgeDir,
-          checks: c.checks,
-        }),
-      ),
+    return {
+      repo: c.repository,
+      issueNumber: c.issueNumber,
+      title: c.title,
+      body: c.body,
+      branch: `factory/${c.issueNumber}`,
+      askQuestions: false,
+      knowledgeDir: this.knowledgeDir,
+      checks: c.checks,
+    }
+  }
+
+  /**
+   * The builder's work, as `Run.build` does it: a builder that can continue a session first writes a plan
+   * (`Run.planChange`), what the planning turn changed is thrown away, and the work continues that session.
+   */
+  async build(): Promise<void> {
+    const { builder } = this.deps
+    const discarded = builder.resume ? await this.planChange() : undefined
+    const result =
+      discarded === undefined
+        ? await builder.run(this.backend, this.agentInput(buildPrompt(this.buildInput())))
+        : await builder.resume!(
+            this.backend,
+            this.sessionId!,
+            this.agentInput(implementPlanPrompt({ discarded })),
+          )
+    this.settle(result, 'the agent did not finish')
+    this.summary = result.summary
+    if (parseQuestion(result.summary)) throw new Stopped('the agent asked a question')
+  }
+
+  /** Writes the plan and answers whether the planning turn left edits, which are thrown away. */
+  private async planChange(): Promise<boolean> {
+    const input = this.agentInput(changePlanPrompt(this.buildInput()), PLAN_MS)
+    const first = this.settle(
+      await this.deps.builder.run(this.backend, input),
+      'the agent did not finish the plan',
     )
-    this.settle(first, 'the agent did not finish')
-    if (parseQuestion(first.summary)) throw new Stopped('the agent asked a question')
+    this.plan = parseChangePlan(first.summary) ?? (await this.planAgain(input.timeoutMs))
+    const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
+    if (pending.stdout.trim() === '') return false
+    await must(this.backend, `git -C ${this.repoDir} reset --hard ${this.c.baseSha}`)
+    await must(this.backend, `git -C ${this.repoDir} clean -fd`)
+    return true
+  }
+
+  /** The planning turn ended with no plan that could be read: one more turn, asking for the plan alone. */
+  private async planAgain(timeoutMs: number): Promise<ChangePlan> {
+    const again = await this.deps.builder.resume!(this.backend, this.sessionId!, {
+      cwd: this.repoDir,
+      timeoutMs,
+      prompt: planAgainPrompt(),
+    })
+    this.cost += again.costUsd ?? 0
+    this.sessionId = again.sessionId ?? this.sessionId
+    const plan = again.ok ? parseChangePlan(again.summary) : undefined
+    if (!plan) throw new Stopped(`the agent wrote no plan: ${oneLine(again.summary).slice(0, 300)}`)
+    return plan
   }
 
   private async rework(findings: Finding[], failed: CheckResult[]): Promise<void> {
@@ -131,6 +193,7 @@ class CaseRun {
       this.agentInput(prompt),
     )
     this.settle(result, 'the agent did not finish the rework')
+    this.summary = result.summary
   }
 
   /** Commits what the builder left, in the sandbox only, and answers the commit. */
@@ -158,24 +221,32 @@ class CaseRun {
     return failingChecks(results)
   }
 
-  private async guards(): Promise<Finding[]> {
-    const { backend, repoDir } = this
+  /** What the diff says about itself without a model (`Run.diffFacts`): its guards and the files the plan does not name. */
+  private async diffFacts(): Promise<{ guards: Finding[]; unplanned: string[] }> {
+    const { backend, repoDir, c } = this
     const changes = parseNameStatus(
-      (await must(backend, `git -C ${repoDir} diff --name-status ${this.c.baseSha} HEAD`)).stdout,
+      (await must(backend, `git -C ${repoDir} diff --name-status ${c.baseSha} HEAD`)).stdout,
     )
     const script = async (rev: string) => {
       const shown = await backend.execute(`git -C ${repoDir} show ${rev}:package.json`)
       return shown.exitCode === 0 ? testScriptOf(shown.stdout) : undefined
     }
-    const found = diffGuards({
+    // Fixed pathspecs only: no path the agent wrote reaches the shell.
+    const tests = await must(
+      backend,
+      `git -C ${repoDir} diff -U0 --no-color --no-renames ${c.baseSha} HEAD -- ${TEST_PATHSPECS.join(' ')}`,
+    )
+    const guards = diffGuards({
       changes,
-      baseTestScript: await script(this.c.baseSha),
+      baseTestScript: await script(c.baseSha),
       headTestScript: await script('HEAD'),
+      tests: { patch: tests.stdout, issue: { labels: c.labels, title: c.title, body: c.body } },
     })
-    return found.filter((f) => f.severity !== 'minor')
+    const paths = changes.map((change) => change.path)
+    return { guards, unplanned: this.plan ? unplannedFiles(paths, this.plan) : [] }
   }
 
-  private async review(sha: string): Promise<ReviewVerdict> {
+  private async review(sha: string, unplanned: string[]): Promise<ReviewVerdict> {
     this.reviewRounds++
     const { c } = this
     const result = await this.deps.reviewer.run(this.backend, {
@@ -189,6 +260,9 @@ class CaseRun {
         branch: `factory/${c.issueNumber}`,
         baseSha: c.baseSha,
         knowledgeDir: this.knowledgeDir,
+        ...(this.plan
+          ? { plan: renderChangePlan(this.plan), unplanned, builderSummary: this.summary }
+          : {}),
       }),
     })
     this.cost += result.costUsd ?? 0
@@ -223,8 +297,9 @@ class CaseRun {
         await this.rework([], failed)
         continue
       }
-      const blocking = await this.guards()
-      const read = await this.review(sha)
+      const { guards, unplanned } = await this.diffFacts()
+      const blocking = guards.filter((g) => g.severity !== 'minor')
+      const read = await this.review(sha, unplanned)
       if (read.verdict === 'approve' && blocking.length === 0) {
         return { checksPassed: true, verdict: 'approve', blockingGuards: [] }
       }
@@ -235,7 +310,13 @@ class CaseRun {
           blockingGuards: blocking.map((g) => g.issue),
         }
       }
-      await this.rework([...blocking, ...read.findings], [])
+      // A file outside the plan is on record; whether it was needed is the reviewer's call.
+      const outside: Finding[] = unplanned.map((file) => ({
+        severity: 'minor',
+        file,
+        issue: 'changed outside the plan',
+      }))
+      await this.rework([...guards, ...outside, ...read.findings], [])
     }
   }
 

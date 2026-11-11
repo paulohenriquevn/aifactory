@@ -555,8 +555,8 @@ de verdade (ADR 0008).
 - **Os casos** estão em `evals/cases.json`: 30 tarefas que a fábrica entregou, em seis repositórios, metade
   bug e metade feature. Cada um tem a issue, o commit de partida e as checagens que aceitaram o trabalho.
   `pnpm evals:cases` os escreve de novo a partir do banco e do GitHub, sem mudar nada em nenhum dos dois.
-- **Um caso roda como uma tarefa**: sandbox, construtor, checagens, guardas do diff, revisor e até três
-  tentativas, com os agentes e modelos escolhidos no painel. O construtor não pode perguntar nada. Nada sai
+- **Um caso roda como uma tarefa**: sandbox, plano do construtor, construtor, checagens, guardas do diff,
+  revisor e até três tentativas, com os agentes e modelos escolhidos no painel. O construtor não pode perguntar nada. Nada sai
   do sandbox: o GitHub é alcançável sem credencial, então o clone funciona e um push não tem como passar. O
   caso passa quando as checagens passam, o revisor aprova e nenhuma guarda bloqueia.
 - **`pnpm evals`** roda os cinco casos marcados como rápidos (`EVALS_SET=all` roda todos, `EVALS_CASES` escolhe

@@ -14,8 +14,8 @@ const evalCase: EvalCase = {
   issueNumber: 7,
   title: 'Add a flag',
   body: 'The CLI needs --dry-run.',
-  labels: ['factory'],
-  kind: 'feature',
+  labels: ['factory', 'bug'],
+  kind: 'bug',
   integrationBranch: 'workspace',
   baseSha: BASE,
   checks: [{ name: 'tests', command: 'pnpm test' }],
@@ -26,6 +26,24 @@ const evalCase: EvalCase = {
 const APPROVE = '{"verdict":"approve","summary":"good","findings":[]}'
 const CHANGES =
   '{"verdict":"changes","summary":"no test","findings":[{"severity":"major","issue":"add a test"}]}'
+const PLAN = JSON.stringify({
+  files: [{ path: 'src/cli.ts', why: 'the flag' }],
+  order: ['add the flag'],
+  risks: [],
+  proof: ['pnpm test'],
+  outOfScope: [],
+})
+/** The builder's planning turn, which every case with a builder that can resume starts with. */
+const planned = (...answers: HarnessResult[]): HarnessResult[] => [
+  { ok: true, summary: PLAN, sessionId: 's1' },
+  ...answers,
+]
+const built = (summary = 'done', costUsd?: number): HarnessResult => ({
+  ok: true,
+  summary,
+  sessionId: 's1',
+  ...(costUsd === undefined ? {} : { costUsd }),
+})
 
 /** An agent that answers each call from a list and remembers the prompts it was given. */
 function agent(name: string, answers: HarnessResult[]): CodingHarness & { prompts: string[] } {
@@ -44,22 +62,31 @@ function agent(name: string, answers: HarnessResult[]): CodingHarness & { prompt
 }
 
 type World = {
-  /** What `git status --porcelain` says after the builder ran. */
+  /** Whether the planning turn left edits in the checkout, which the run then throws away. */
+  plannedEdits?: boolean
+  /** What `git status --porcelain` says after the builder worked. */
   dirty?: boolean
   /** Exit code of each run of the check command, in order. */
   checkExits?: number[]
   /** `git diff --name-status` between the base and the commit. */
   nameStatus?: string
+  /** `git diff -U0` of the test files between the base and the commit. */
+  testPatch?: string
 }
 
 function sandbox(world: World = {}) {
   const exits = [...(world.checkExits ?? [0])]
+  let statuses = 0
   return new FakeSandbox((command): Reply | undefined => {
-    if (command.includes('status --porcelain'))
-      return { stdout: world.dirty === false ? '' : ' M src/cli.ts\n' }
+    if (command.includes('status --porcelain')) {
+      const afterPlan = statuses++ === 0
+      const changed = afterPlan ? world.plannedEdits === true : world.dirty !== false
+      return { stdout: changed ? ' M src/cli.ts\n' : '' }
+    }
     if (command.includes('pnpm test')) return { exitCode: exits.shift() ?? 0, stdout: 'ran' }
     if (command.includes('diff --name-status'))
       return { stdout: world.nameStatus ?? 'M\tsrc/cli.ts\n' }
+    if (command.includes('diff -U0')) return { stdout: world.testPatch ?? '' }
     if (command.includes('rev-parse HEAD')) return { stdout: 'b'.repeat(40) }
     return undefined
   })
@@ -75,7 +102,7 @@ const deps = (provider: FakeSandbox, builder: CodingHarness, reviewer: CodingHar
 describe('runCase', () => {
   it('passes a case whose checks pass and whose review approves, with its cost and rounds', async () => {
     const provider = sandbox()
-    const builder = agent('builder', [{ ok: true, summary: 'done', costUsd: 0.3, sessionId: 's1' }])
+    const builder = agent('builder', planned(built('done', 0.3)))
     const reviewer = agent('reviewer', [{ ok: true, summary: APPROVE, costUsd: 0.1 }])
 
     const result = await runCase(deps(provider, builder, reviewer), evalCase)
@@ -93,7 +120,7 @@ describe('runCase', () => {
 
   it('starts from the base commit of the case, with the same prompt a task gets', async () => {
     const provider = sandbox()
-    const builder = agent('builder', [{ ok: true, summary: 'done', sessionId: 's1' }])
+    const builder = agent('builder', planned(built()))
 
     await runCase(
       deps(provider, builder, agent('reviewer', [{ ok: true, summary: APPROVE }])),
@@ -109,13 +136,83 @@ describe('runCase', () => {
     expect(builder.prompts[0]).toContain('do not ask one')
   })
 
+  it('plans before it builds, and builds in the session that wrote the plan', async () => {
+    const builder = agent('builder', planned(built()))
+
+    await runCase(
+      deps(sandbox(), builder, agent('reviewer', [{ ok: true, summary: APPROVE }])),
+      evalCase,
+    )
+
+    expect(builder.prompts[0]).toContain('# This turn: plan only')
+    expect(builder.prompts[1]).toContain('Implement the plan you wrote')
+    expect(builder.prompts[1]).not.toContain('was discarded')
+  })
+
+  it('throws away what the planning turn changed, and tells the builder so', async () => {
+    const provider = sandbox({ plannedEdits: true })
+    const builder = agent('builder', planned(built()))
+
+    await runCase(
+      deps(provider, builder, agent('reviewer', [{ ok: true, summary: APPROVE }])),
+      evalCase,
+    )
+
+    expect(provider.backend.commands.some((c) => c.endsWith(`reset --hard ${BASE}`))).toBe(true)
+    expect(builder.prompts[1]).toContain('what you changed in it was discarded')
+  })
+
+  it('asks for the plan once more when the first answer had none', async () => {
+    const builder = agent('builder', [
+      { ok: true, summary: 'I read the code.', sessionId: 's1' },
+      { ok: true, summary: PLAN, sessionId: 's1' },
+      built(),
+    ])
+
+    const result = await runCase(
+      deps(sandbox(), builder, agent('reviewer', [{ ok: true, summary: APPROVE }])),
+      evalCase,
+    )
+
+    expect(result.passed).toBe(true)
+    expect(builder.prompts[1]).toContain('Your answer had no plan that could be read')
+  })
+
+  it('fails a case whose builder writes no plan even when asked again', async () => {
+    const builder = agent('builder', [
+      { ok: true, summary: 'I read the code.', sessionId: 's1' },
+      { ok: true, summary: 'Still reading.', sessionId: 's1' },
+    ])
+
+    const result = await runCase(deps(sandbox(), builder, agent('reviewer', [])), evalCase)
+
+    expect(result).toMatchObject({ passed: false, reason: 'the agent wrote no plan: Still reading.' })
+  })
+
+  it('shows the reviewer the plan and the files the diff changed outside it', async () => {
+    const reviewer = agent('reviewer', [{ ok: true, summary: APPROVE }])
+
+    await runCase(
+      deps(
+        sandbox({ nameStatus: 'M\tsrc/cli.ts\nM\tREADME.md\n' }),
+        agent('builder', planned(built('changed the flag and the readme'))),
+        reviewer,
+      ),
+      evalCase,
+    )
+
+    expect(reviewer.prompts[0]).toContain("# The builder's plan")
+    expect(reviewer.prompts[0]).toContain('- `README.md`')
+    expect(reviewer.prompts[0]).toContain('changed the flag and the readme')
+  })
+
   it('writes nothing outside the sandbox: no push, and GitHub is reachable without a credential', async () => {
     const provider = sandbox()
 
     await runCase(
       deps(
         provider,
-        agent('builder', [{ ok: true, summary: 'done', sessionId: 's1' }]),
+        agent('builder', planned(built())),
         agent('reviewer', [{ ok: true, summary: APPROVE }]),
       ),
       evalCase,
@@ -135,10 +232,7 @@ describe('runCase', () => {
 
   it('sends failed checks back to the builder and passes when the rework fixes them', async () => {
     const provider = sandbox({ checkExits: [1, 1, 0] })
-    const builder = agent('builder', [
-      { ok: true, summary: 'done', sessionId: 's1', costUsd: 0.2 },
-      { ok: true, summary: 'fixed', sessionId: 's1', costUsd: 0.1 },
-    ])
+    const builder = agent('builder', planned(built('done', 0.2), built('fixed', 0.1)))
 
     const result = await runCase(
       deps(provider, builder, agent('reviewer', [{ ok: true, summary: APPROVE }])),
@@ -146,14 +240,11 @@ describe('runCase', () => {
     )
 
     expect(result).toMatchObject({ passed: true, attempts: 2, reviewRounds: 1 })
-    expect(builder.prompts[1]).toContain('These checks failed on your commit')
+    expect(builder.prompts[2]).toContain('These checks failed on your commit')
   })
 
   it('sends a review that asks for changes back and passes when the next review approves', async () => {
-    const builder = agent('builder', [
-      { ok: true, summary: 'done', sessionId: 's1' },
-      { ok: true, summary: 'added the test', sessionId: 's1' },
-    ])
+    const builder = agent('builder', planned(built(), built('added the test')))
     const reviewer = agent('reviewer', [
       { ok: true, summary: CHANGES },
       { ok: true, summary: APPROVE },
@@ -162,15 +253,11 @@ describe('runCase', () => {
     const result = await runCase(deps(sandbox(), builder, reviewer), evalCase)
 
     expect(result).toMatchObject({ passed: true, attempts: 2, reviewRounds: 2 })
-    expect(builder.prompts[1]).toContain('add a test')
+    expect(builder.prompts[2]).toContain('add a test')
   })
 
   it('fails a case whose checks still fail after the last attempt', async () => {
-    const builder = agent('builder', [
-      { ok: true, summary: 'done', sessionId: 's1' },
-      { ok: true, summary: 'try 2', sessionId: 's1' },
-      { ok: true, summary: 'try 3', sessionId: 's1' },
-    ])
+    const builder = agent('builder', planned(built(), built('try 2'), built('try 3')))
 
     const result = await runCase(
       deps(sandbox({ checkExits: [1, 1, 1, 1, 1, 1] }), builder, agent('reviewer', [])),
@@ -186,11 +273,7 @@ describe('runCase', () => {
       { ok: true, summary: APPROVE },
       { ok: true, summary: APPROVE },
     ])
-    const builder = agent('builder', [
-      { ok: true, summary: 'done', sessionId: 's1' },
-      { ok: true, summary: 'again', sessionId: 's1' },
-      { ok: true, summary: 'again', sessionId: 's1' },
-    ])
+    const builder = agent('builder', planned(built(), built('again'), built('again')))
 
     const result = await runCase(
       deps(sandbox({ nameStatus: 'M\t.github/workflows/ci.yml\n' }), builder, reviewer),
@@ -201,15 +284,33 @@ describe('runCase', () => {
     expect(result.reason).toContain('outside the rules: the change touches .github/')
   })
 
+  it('fails an approved bug fix that removed an assertion from a test that was there', async () => {
+    const reviewer = agent('reviewer', [
+      { ok: true, summary: APPROVE },
+      { ok: true, summary: APPROVE },
+      { ok: true, summary: APPROVE },
+    ])
+    const builder = agent('builder', planned(built(), built('again'), built('again')))
+    const testPatch = [
+      'diff --git a/src/cli.test.ts b/src/cli.test.ts',
+      '--- a/src/cli.test.ts',
+      '+++ b/src/cli.test.ts',
+      '@@ -3 +2,0 @@',
+      '-  expect(parse(["--dry-run"])).toEqual({ dryRun: true })',
+      '',
+    ].join('\n')
+
+    const result = await runCase(deps(sandbox({ testPatch }), builder, reviewer), evalCase)
+
+    expect(result.passed).toBe(false)
+    expect(result.reason).toContain('the change weakens a test that was there before it')
+  })
+
   it('fails a case where the builder changed nothing, and still stops the sandbox', async () => {
     const provider = sandbox({ dirty: false })
 
     const result = await runCase(
-      deps(
-        provider,
-        agent('builder', [{ ok: true, summary: 'nothing to do' }]),
-        agent('reviewer', []),
-      ),
+      deps(provider, agent('builder', planned(built('nothing to do'))), agent('reviewer', [])),
       evalCase,
     )
 
@@ -221,7 +322,7 @@ describe('runCase', () => {
     const result = await runCase(
       deps(
         sandbox(),
-        agent('builder', [{ ok: true, summary: 'QUESTION: which flag name?' }]),
+        agent('builder', planned(built('QUESTION: which flag name?'))),
         agent('reviewer', []),
       ),
       evalCase,
@@ -230,7 +331,7 @@ describe('runCase', () => {
     expect(result).toMatchObject({ passed: false, reason: 'the agent asked a question' })
   })
 
-  it('fails a case whose builder did not finish, with what it said', async () => {
+  it('fails a case whose builder did not finish the plan, with what it said', async () => {
     const result = await runCase(
       deps(
         sandbox(),
@@ -240,7 +341,40 @@ describe('runCase', () => {
       evalCase,
     )
 
-    expect(result).toMatchObject({ passed: false, reason: 'the agent did not finish: timed out' })
+    expect(result).toMatchObject({
+      passed: false,
+      reason: 'the agent did not finish the plan: timed out',
+    })
+  })
+
+  it('fails a case whose builder did not finish the work, with what it said', async () => {
+    const result = await runCase(
+      deps(
+        sandbox(),
+        agent('builder', planned({ ok: false, summary: 'out of time' })),
+        agent('reviewer', []),
+      ),
+      evalCase,
+    )
+
+    expect(result).toMatchObject({
+      passed: false,
+      reason: 'the agent did not finish: out of time',
+    })
+  })
+
+  it('builds without a plan when the builder cannot continue a session, as a task does', async () => {
+    const builder = { ...agent('builder', [built()]), resume: undefined }
+    // With no planning turn, the first look at the checkout is the one before the commit.
+    const provider = sandbox({ plannedEdits: true })
+
+    const result = await runCase(
+      deps(provider, builder, agent('reviewer', [{ ok: true, summary: APPROVE }])),
+      evalCase,
+    )
+
+    expect(result).toMatchObject({ passed: true, reason: 'approved' })
+    expect(builder.prompts[0]).not.toContain('# This turn: plan only')
   })
 
   it('refuses a base that is not a full commit hash before a sandbox starts', async () => {

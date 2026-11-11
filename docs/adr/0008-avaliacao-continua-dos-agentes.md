@@ -36,7 +36,9 @@ issue, o commit de que partiu, as checagens que a aceitaram, o custo e a duraç�
   repositórios, deixa de fora execuções de mais de 35 minutos e execuções sem custo registrado, e marca
   como "rápidos" os casos mais curtos de cada repositório, também em alternância.
 - **Um caso roda como uma tarefa.** O runner (`src/server/evals/run-case.ts`) usa os mesmos prompts,
-  agentes, checagens, guardas e revisor da fábrica, com até três tentativas. Diferenças: o construtor não
+  agentes, plano, checagens, guardas e revisor da fábrica, com até três tentativas. Ele repete os passos
+  do `Run` em vez de chamá-lo, porque o `Run` grava estágios, empurra a branch e abre o pull request a
+  cada passo. Por isso um passo novo no `Run` também precisa entrar no runner (`AGENTS.md`). Diferenças: o construtor não
   pode fazer perguntas, e um caso que pergunta falha. Nada sai do sandbox. O GitHub fica liberado na
   allowlist sem credencial, então o clone de um repositório público funciona e um push não tem como
   passar. O runner não chama push, não abre pull request e não grava estágio. Um teste confere que nenhum
@@ -82,6 +84,9 @@ Cinco de cinco passaram. A rodada levou 32 minutos de relógio, dois casos por v
 dos agentes e US$ 0,25 de sandbox. O custo dos agentes é o que o Claude Code informa (`total_cost_usd`), que
 é o preço equivalente na API. Numa assinatura, ele mede consumo, não cobrança. Uma primeira tentativa, que
 parou porque o runner ainda não aplicava a escolha do painel, custou US$ 0,01.
+
+O commit `6385b0a` é anterior ao plano do construtor (`48d2c7c`), que mudou `review.ts` e `guards.ts`. O
+primeiro deploy que levar o plano roda então os casos rápidos e mede o plano contra essa baseline.
 
 Então um deploy que muda a configuração dos agentes custa por volta de US$ 2 e meia hora a mais. O teto
 padrão de US$ 15 cobre a suíte rápida com folga. Os 30 casos custariam por volta de US$ 12 se cada um
