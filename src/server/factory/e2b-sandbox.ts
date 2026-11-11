@@ -62,7 +62,7 @@ export function networkFor(spec: SandboxSpec): SandboxNetworkOpts {
 }
 
 /**
- * A `SandboxBackend` over an E2B sandbox. The contract can state an egress policy (usetheokit/theokit#1130)
+ * A `SandboxBackend` over an E2B sandbox, here because the SDK ships none (usetheokit/theokit-sdk#985). The contract can state an egress policy (usetheokit/theokit#1130)
  * but not enforce one, attach credentials outside, renew them or snapshot a disk, so those live beside it. A command that fails comes back with its exit
  * code; E2B throws for it, and for a timeout, which becomes exit 124.
  */
