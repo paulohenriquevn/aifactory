@@ -37,7 +37,12 @@ export type PullRequestState = {
   draft: boolean
   state: 'open' | 'closed'
   merged: boolean
+  /** When it was merged, for a merged one. */
+  mergedAt?: Date
 }
+
+/** A full release a repository published, as its own release workflow names it. */
+export type PublishedRelease = { tag: string; url: string; publishedAt: Date }
 
 export type CommitChecks = {
   checkRuns: { name: string; status: string; conclusion: string | null }[]
@@ -65,6 +70,17 @@ export type GithubApi = {
   createRelease(repo: string, token: string, release: ReleaseInput): Promise<CreatedRelease>
   /** The tag of the latest full release (not a pre-release), if there is one. */
   latestReleaseTag(repo: string, token: string): Promise<string | undefined>
+  /** The names in a directory at a ref, or undefined when there is no such directory there. */
+  listDirectory(
+    repo: string,
+    token: string,
+    path: string,
+    ref: string,
+  ): Promise<string[] | undefined>
+  /** The full releases (no pre-releases, no drafts) published at or after `since`, newest first. */
+  releasesSince(repo: string, token: string, since: Date): Promise<PublishedRelease[]>
+  /** Whether `ancestor` is in the history of `descendant`. */
+  contains(repo: string, token: string, descendant: string, ancestor: string): Promise<boolean>
   /** The pull request opened from `head`, open or not, if there is one. */
   findPullRequest(repo: string, token: string, head: string): Promise<PullRequestState | undefined>
   /** Merges a pull request only if its head is still `sha`. Returns the merge commit. */
@@ -295,8 +311,56 @@ export function createGithubApi(
             draft: pr.draft,
             state: pr.state,
             merged: pr.merged_at !== null,
+            mergedAt: pr.merged_at ? new Date(pr.merged_at) : undefined,
           }
         : undefined
+    },
+
+    async listDirectory(repo, token, path, ref) {
+      const response = await call(
+        repo,
+        token,
+        `/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`,
+      )
+      if (response.status === 404) return undefined
+      const body = (await (
+        await ensure(response, `listing ${path} at ${ref} on ${repo}`, [200])
+      ).json()) as { name: string }[] | { type: string }
+      if (!Array.isArray(body)) {
+        throw new Error(`${path} at ${ref} on ${repo} is not a directory`)
+      }
+      return body.map((entry) => entry.name)
+    },
+
+    async releasesSince(repo, token, since) {
+      const releases = (await (
+        await ensure(
+          await call(repo, token, '/releases?per_page=100'),
+          `listing the releases of ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        tag_name: string
+        html_url: string
+        prerelease: boolean
+        draft: boolean
+        published_at: string | null
+      }[]
+      return releases
+        .filter((r) => !r.prerelease && !r.draft && r.published_at !== null)
+        .map((r) => ({ tag: r.tag_name, url: r.html_url, publishedAt: new Date(r.published_at!) }))
+        .filter((r) => r.publishedAt.getTime() >= since.getTime())
+    },
+
+    async contains(repo, token, descendant, ancestor) {
+      const body = (await (
+        await ensure(
+          await call(repo, token, `/compare/${ancestor}...${descendant}`),
+          `comparing ${ancestor.slice(0, 7)} with ${descendant.slice(0, 7)} on ${repo}`,
+          [200],
+        )
+      ).json()) as { status: string }
+      return body.status === 'ahead' || body.status === 'identical'
     },
 
     async defaultBranch(repo, token) {

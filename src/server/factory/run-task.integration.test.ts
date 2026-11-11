@@ -11,6 +11,7 @@ import {
   delivery,
   evidence,
   ingress,
+  publication,
   question,
   repository,
   review,
@@ -118,8 +119,11 @@ const githubApi: GithubApi & {
   branches: FakeBranches
   /** Opening a pull request from this branch fails. */
   openFailsFor: string | undefined
+  /** What `.changeset` on the pre-release branch holds; undefined when the repository has none. */
+  changesets: string[] | undefined
 } = {
   openFailsFor: undefined,
+  changesets: undefined,
   branches: FakeBranches.prepared(),
   branchMerges: [],
   mergeFails: false,
@@ -160,6 +164,15 @@ const githubApi: GithubApi & {
   },
   async latestReleaseTag() {
     return this.latest
+  },
+  async listDirectory(_repo, _token, path) {
+    return path === '.changeset' ? this.changesets : undefined
+  },
+  async releasesSince() {
+    return []
+  },
+  async contains() {
+    return true
   },
   async commitChecks() {
     return { checkRuns: [], statuses: 'none' as const }
@@ -217,6 +230,7 @@ beforeEach(() => {
   githubApi.mergeFails = false
   githubApi.branchMergeFails = false
   githubApi.openFailsFor = undefined
+  githubApi.changesets = undefined
   githubApi.branches = FakeBranches.prepared()
   dirty = true
 })
@@ -1889,6 +1903,50 @@ describe('release', () => {
         repository: 'paulo/app',
       },
     ])
+  })
+
+  it('hands a repository that publishes with changesets to its own workflow: no tag of the factory, a publication waits', async () => {
+    const id = await delivered()
+    githubApi.changesets = ['config.json', 'README.md', 'brave-fox.md']
+    githubApi.latest = 'v1.2.3'
+
+    const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: undefined, mergeSha: 'merge0001', publishing: true })
+    expect(githubApi.merges).toHaveLength(2)
+    expect(githubApi.releases.filter((r) => !r.prerelease)).toEqual([])
+    expect(await getDb().select().from(publication)).toMatchObject([
+      {
+        taskId: id,
+        repository: 'paulo/app',
+        releaseBranch: 'main',
+        promotedSha: 'merge0001',
+        actor: 'human',
+        status: 'waiting',
+      },
+    ])
+    expect((await deliveries(id)).filter((d) => d.kind === 'release')).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row.stage).toBe('released')
+    const released = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'released'))
+    )[0]
+    expect(released.detail).toMatchObject({ publishing: 'changesets', mergeSha: 'merge0001' })
+    expect(await getDb().select().from(watch).where(eq(watch.taskId, id))).toMatchObject([
+      { sha: 'merge0001', tag: null, status: 'watching' },
+    ])
+  })
+
+  it('refuses a release that would publish nothing, because develop has no changeset', async () => {
+    const id = await delivered()
+    githubApi.changesets = ['config.json', 'README.md']
+
+    await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+      /no changeset.*nothing would be published/,
+    )
+    expect(githubApi.merges).toHaveLength(1)
+    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+    expect(await getDb().select().from(publication)).toEqual([])
   })
 
   it('promotes into the release branch the owner named, not the default branch', async () => {

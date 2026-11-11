@@ -550,3 +550,105 @@ describe('the branches of a repository', () => {
     ).rejects.toThrow(/403/)
   })
 })
+
+describe('what a release with changesets needs to read', () => {
+  it('lists the names in a directory at a ref, and nothing when the directory is not there', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /contents/.changeset': {
+        status: 200,
+        body: [{ name: 'config.json' }, { name: 'README.md' }, { name: 'brave-fox.md' }],
+      },
+    })
+    expect(await createGithubApi(fetch).listDirectory('o/r', 't', '.changeset', 'develop')).toEqual(
+      ['config.json', 'README.md', 'brave-fox.md'],
+    )
+    expect(calls[0].url).toBe('/contents/.changeset?ref=develop')
+    const none = fakeFetch({ 'GET /contents/.changeset': { status: 404 } })
+    expect(
+      await createGithubApi(none.fetch).listDirectory('o/r', 't', '.changeset', 'develop'),
+    ).toBeUndefined()
+  })
+
+  it('throws when the path is a file, not a directory', async () => {
+    const { fetch } = fakeFetch({
+      'GET /contents/.changeset': { status: 200, body: { name: '.changeset', type: 'file' } },
+    })
+    await expect(
+      createGithubApi(fetch).listDirectory('o/r', 't', '.changeset', 'develop'),
+    ).rejects.toThrow(/not a directory/)
+  })
+
+  it('reads the full releases published since a time, leaving pre-releases and drafts out', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /releases': {
+        status: 200,
+        body: [
+          {
+            tag_name: '@theokit/ui@1.13.0',
+            html_url: 'https://github.com/o/r/releases/tag/u',
+            prerelease: false,
+            draft: false,
+            published_at: '2026-11-11T12:00:00Z',
+          },
+          {
+            tag_name: 'pre/7-abc',
+            html_url: 'p',
+            prerelease: true,
+            draft: false,
+            published_at: '2026-11-11T12:00:00Z',
+          },
+          { tag_name: 'draft', html_url: 'd', prerelease: false, draft: true, published_at: null },
+          {
+            tag_name: '@theokit/ui@1.12.2',
+            html_url: 'old',
+            prerelease: false,
+            draft: false,
+            published_at: '2026-09-25T21:13:42Z',
+          },
+        ],
+      },
+    })
+    expect(
+      await createGithubApi(fetch).releasesSince('o/r', 't', new Date('2026-11-11T11:00:00Z')),
+    ).toEqual([
+      {
+        tag: '@theokit/ui@1.13.0',
+        url: 'https://github.com/o/r/releases/tag/u',
+        publishedAt: new Date('2026-11-11T12:00:00Z'),
+      },
+    ])
+    expect(calls[0].url).toContain('per_page=100')
+  })
+
+  it('says whether a commit is in the history of another', async () => {
+    const answer = (status: string) =>
+      fakeFetch({ 'GET /compare/old...new': { status: 200, body: { status } } }).fetch
+    const api = (status: string) => createGithubApi(answer(status))
+    expect(await api('ahead').contains('o/r', 't', 'new', 'old')).toBe(true)
+    expect(await api('identical').contains('o/r', 't', 'new', 'old')).toBe(true)
+    expect(await api('behind').contains('o/r', 't', 'new', 'old')).toBe(false)
+    expect(await api('diverged').contains('o/r', 't', 'new', 'old')).toBe(false)
+  })
+
+  it('reads when a pull request was merged', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls': {
+        status: 200,
+        body: [
+          {
+            number: 171,
+            html_url: 'u',
+            head: { sha: 'abc' },
+            draft: false,
+            state: 'closed',
+            merged_at: '2026-09-25T21:12:10Z',
+          },
+        ],
+      },
+    })
+    expect(
+      (await createGithubApi(fetch).findPullRequest('o/r', 't', 'changeset-release/main'))
+        ?.mergedAt,
+    ).toEqual(new Date('2026-09-25T21:12:10Z'))
+  })
+})

@@ -194,6 +194,39 @@ export const delivery = pgTable('delivery', {
 })
 
 /**
+ * A release handed to a repository that publishes with changesets. The factory promoted `develop` to the
+ * release branch and made no tag of its own; the repository's release workflow opens a Version Packages
+ * pull request, the factory merges it once its checks are green, and the workflow publishes. The row
+ * waits until the published releases appear, then names them and the tasks they shipped.
+ */
+export const publication = pgTable('publication', {
+  id: serial('id').primaryKey(),
+  /** The task whose release started it. */
+  taskId: integer('task_id')
+    .notNull()
+    .unique()
+    .references(() => task.id),
+  repository: text('repository').notNull(),
+  /** The branch the promotion landed on, which the Version Packages pull request targets. */
+  releaseBranch: text('release_branch').notNull(),
+  /** The merge commit of the promotion: what was released. */
+  promotedSha: text('promoted_sha').notNull(),
+  /** Who decided the release, which also covers merging the Version Packages pull request. */
+  actor: text('actor').notNull(),
+  status: text('status', { enum: ['waiting', 'published'] })
+    .notNull()
+    .default('waiting'),
+  /** The Version Packages pull request, once the factory merged it or saw it merged. */
+  versionPullRequest: integer('version_pull_request'),
+  /** The tags the repository's workflow published, once it did. */
+  tags: jsonb('tags').$type<string[]>(),
+  /** What the last look found: what it waits for, or why it cannot go on. */
+  detail: text('detail'),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+})
+
+/**
  * A release under watch. After the factory (or a person through it) merges a pull request, the
  * checks on the merge commit are watched. If they turn red the factory opens a pull request that
  * reverts the merge, and goes no further: a person decides whether to merge it.

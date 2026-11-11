@@ -1,11 +1,21 @@
 import { and, asc, eq, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { decision, delivery, evidence, repository, review, task, watch } from '../db/schema'
+import {
+  decision,
+  delivery,
+  evidence,
+  publication,
+  repository,
+  review,
+  task,
+  watch,
+} from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
 
 import { PRE_RELEASE_BRANCH, releaseBranchOf } from './branches'
+import { changesetsOn } from './changesets'
 import { nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
 import { enterStage } from './stages'
 
@@ -118,6 +128,8 @@ export type ReleaseResult = {
   mergeSha: string
   /** The merge happened but the release object could not be created. */
   releaseError?: string
+  /** The repository publishes with changesets: its own workflow tags the release, and a publication waits. */
+  publishing?: boolean
 }
 
 /**
@@ -167,6 +179,14 @@ export async function release(
     .from(repository)
     .where(sql`lower(${repository.fullName}) = lower(${row.repository})`)
   const target = await releaseBranchOf(deps.api, row.repository, token, saved ?? {})
+  const changesets = changesetsOn(
+    await deps.api.listDirectory(row.repository, token, '.changeset', PRE_RELEASE_BRANCH),
+  )
+  if (changesets.uses && changesets.pending.length === 0) {
+    throw new ReleaseRefused(
+      `${PRE_RELEASE_BRANCH} has no changeset, so nothing would be published: this repository releases with changesets, and its release workflow publishes only what a .changeset/*.md file describes`,
+    )
+  }
   let opened: { number: number; url: string }
   try {
     opened = await deps.api.openPullRequest(row.repository, token, {
@@ -212,28 +232,17 @@ export async function release(
     )
   }
 
-  let created: { tag: string; url: string } | undefined
-  let releaseError: string | undefined
-  try {
-    const latest = await deps.api.latestReleaseTag(row.repository, token)
-    const tag = nextVersion(latest, options.bump)
-    const made = await deps.api.createRelease(row.repository, token, {
-      tag,
-      sha: merged.sha,
-      name: `${tag}: ${row.issueTitle}`,
-      body: [
-        `Release of #${row.issueNumber}: ${row.issueTitle}.`,
-        '',
-        `Promoted from the pre-release \`${pre.tag}\` (${pre.url}) by ${options.actor}.`,
-        `Release pull request: ${pr.url}`,
-        `Pull request of the work: ${row.pullRequestUrl ?? pr.url}`,
-        '',
-      ].join('\n'),
-      prerelease: false,
+  const { created, releaseError } = changesets.uses
+    ? { created: undefined, releaseError: undefined }
+    : await createOwnRelease(deps, { row, pre, pr, token, mergeSha: merged.sha, ...options })
+  if (changesets.uses) {
+    await deps.db.insert(publication).values({
+      taskId,
+      repository: row.repository,
+      releaseBranch: target,
+      promotedSha: merged.sha,
+      actor: options.actor,
     })
-    created = { tag: made.tag, url: made.url }
-  } catch (error) {
-    releaseError = error instanceof Error ? error.message : String(error)
   }
 
   // The merge is on the default branch now, so its checks are watched from here on.
@@ -248,7 +257,7 @@ export async function release(
     taskId,
     kind: 'release',
     sha,
-    note: `${options.actor}${created ? ` -> ${created.tag}` : ''}`,
+    note: `${options.actor}${created ? ` -> ${created.tag}` : ''}${changesets.uses ? ' -> changesets' : ''}`,
   })
   if (created) {
     await deps.db.insert(delivery).values({
@@ -266,6 +275,53 @@ export async function release(
     sha,
     ...(created ? { tag: created.tag, url: created.url } : {}),
     ...(releaseError ? { releaseError } : {}),
+    ...(changesets.uses ? { publishing: 'changesets' } : {}),
   })
-  return { tag: created?.tag, url: created?.url, mergeSha: merged.sha, releaseError }
+  return {
+    tag: created?.tag,
+    url: created?.url,
+    mergeSha: merged.sha,
+    releaseError,
+    ...(changesets.uses ? { publishing: true } : {}),
+  }
+}
+
+/**
+ * Tags the promotion with the next version and creates its release, for a repository that does not publish
+ * with changesets. A failure is returned, not thrown: the merge already happened.
+ */
+async function createOwnRelease(
+  deps: Pick<DeliverDeps, 'api'>,
+  input: {
+    row: typeof task.$inferSelect
+    pre: typeof delivery.$inferSelect
+    pr: { url: string }
+    token: string
+    mergeSha: string
+    bump: Bump
+    actor: string
+  },
+): Promise<{ created?: { tag: string; url: string }; releaseError?: string }> {
+  const { row, pre, pr, token } = input
+  try {
+    const latest = await deps.api.latestReleaseTag(row.repository, token)
+    const tag = nextVersion(latest, input.bump)
+    const made = await deps.api.createRelease(row.repository, token, {
+      tag,
+      sha: input.mergeSha,
+      name: `${tag}: ${row.issueTitle}`,
+      body: [
+        `Release of #${row.issueNumber}: ${row.issueTitle}.`,
+        '',
+        `Promoted from the pre-release \`${pre.tag}\` (${pre.url}) by ${input.actor}.`,
+        `Release pull request: ${pr.url}`,
+        `Pull request of the work: ${row.pullRequestUrl ?? pr.url}`,
+        '',
+      ].join('\n'),
+      prerelease: false,
+    })
+    return { created: { tag: made.tag, url: made.url } }
+  } catch (error) {
+    return { releaseError: error instanceof Error ? error.message : String(error) }
+  }
 }
