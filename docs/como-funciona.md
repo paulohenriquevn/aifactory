@@ -360,6 +360,27 @@ sua (`main`), porque `develop` é onde vai a pré-release e a fábrica se recusa
 pré-release e como release. As branches que faltam são criadas a partir da branch de release, e a promoção
 abre o PR `develop → <branch de release>`.
 
+**Repositório que publica com changesets.** Quando `develop` tem `.changeset/config.json` (os quatro
+repositórios do theokit), a versão não é da fábrica: vem dos arquivos `.changeset/*.md`, e quem publica no
+npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio repositório, ao mergear o PR
+"Version Packages" que ele abre a partir de `changeset-release/main`. Nesse caso o `release()`:
+
+- recusa quando `develop` não tem nenhum changeset além do README, porque nada seria publicado;
+- promove `develop` para a branch de release como sempre, mas não cria tag nem release próprios;
+- grava uma `publication` esperando, e a task que pediu o release fica `released` (promovida).
+
+O cron `publish-changesets` olha cada `publication` esperando, a cada minuto. Ele acha o PR "Version
+Packages" e o mergeia quando os checks dele estão verdes, fixado ao commit que viu, em nome de quem decidiu o
+release. Checks vermelhos, pendentes ou ausentes, rascunho ou PR fechado: ele espera e registra o motivo na
+`publication`. É o único PR que esse passo mergeia. Depois que o workflow publica, ele lê as releases novas
+do GitHub, grava uma entrega `release` com cada tag, e cada task cujo trabalho está no commit promovido (a
+do release e toda task `done` integrada antes dela, conferido pela API de comparação) vai para `released`,
+ganha o comentário "Available in <tags>" na issue e tem a issue fechada.
+
+Nesses repositórios a verificação ganha um check a mais, `changeset`
+(`pnpm exec changeset status --since=origin/<branch de integração>`): mudar um pacote sem changeset reprova
+o trabalho, e o agente volta para escrever um.
+
 **A fábrica nunca mergeia em `main` por conta própria.** A branch de integração não pode ser a branch
 padrão: a fábrica se recusa (ao habilitar o repositório e ao começar uma execução), porque integrar ali é
 liberar, e liberar é a única coisa que pede uma decisão. As branches que faltam são criadas a partir da

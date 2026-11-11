@@ -16,6 +16,7 @@ import { parseLearned, withoutLearned } from '../knowledge/format'
 
 import { cloneRepository } from './clone'
 import { ensureBranches, integrationBranch, PRE_RELEASE_BRANCH } from './branches'
+import { withChangesetCheck } from './changesets'
 import { githubEgress, renewGithubCredential } from './credential-renewal'
 import { createPreRelease, release } from './deliver'
 import {
@@ -160,6 +161,8 @@ export class Run {
    * when there was none), then each commit the run pushed. A push replaces exactly that and nothing else.
    */
   remoteHead = ''
+  /** The clone holds `.changeset/config.json`: the repository publishes with changesets. */
+  usesChangesets = false
   /** What the agents of this task do, written while they work. Opened by the first agent run. */
   private transcript: Transcript | undefined
 
@@ -202,7 +205,11 @@ export class Run {
     return `${oneLine(this.c.issue.title)} (#${this.c.row.issueNumber})`
   }
   private get checks() {
-    return this.c.repo.checks ?? this.c.deps.checks ?? DEFAULT_CHECKS
+    return withChangesetCheck(
+      this.c.repo.checks ?? this.c.deps.checks ?? DEFAULT_CHECKS,
+      this.usesChangesets,
+      integrationBranch(this.c.repo),
+    )
   }
 
   /**
@@ -273,6 +280,7 @@ export class Run {
     const run = new Run(c, builder, reviewer, sandbox, repoDir, baseSha, startedAt)
     run.feed = feed
     run.remoteHead = await Run.remoteHeadOf(sandbox.backend, repoDir, c.branch)
+    run.usesChangesets = await Run.publishesWithChangesets(sandbox.backend, repoDir)
     return run
   }
 
@@ -281,6 +289,15 @@ export class Run {
    * inside the snapshot. The SDK's provisioner clones with `--` and the `ext::` transport off. The work
    * starts from the integration branch: `workspace`, or the one the owner chose for the repository.
    */
+  /** Whether the clone has `.changeset/config.json`; only an answer of `yes` counts. */
+  private static async publishesWithChangesets(backend: SandboxBackend, repoDir: string) {
+    const found = await must(
+      backend,
+      `test -f ${repoDir}/.changeset/config.json && echo yes || echo no`,
+    )
+    return found.stdout.trim() === 'yes'
+  }
+
   private static async checkout(c: RunContext, backend: SandboxBackend) {
     const { resuming, continuation, branch, row } = c
     if (resuming) return { repoDir: resuming.repoDir, baseSha: resuming.baseSha }

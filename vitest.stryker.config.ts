@@ -8,6 +8,7 @@ export default defineConfig({
     include: [
       'src/server/factory/clone.test.ts',
       'src/server/factory/auto-retry.test.ts',
+      'src/server/factory/changesets.test.ts',
       'src/server/factory/evidence.test.ts',
       'src/server/factory/release.test.ts',
       'src/server/factory/review.test.ts',

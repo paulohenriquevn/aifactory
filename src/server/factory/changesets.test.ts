@@ -40,6 +40,12 @@ describe('isPackageTag', () => {
     expect(isPackageTag('v1.3.0')).toBe(false)
     expect(isPackageTag('pre/172-9095546')).toBe(false)
   })
+
+  it('takes only a whole tag of that shape, with versions of more than one digit', () => {
+    expect(isPackageTag('@theokit/gateway-slack@10.2.3')).toBe(true)
+    expect(isPackageTag('release notes for @theokit/ui@1.13.0')).toBe(false)
+    expect(isPackageTag('@theokit/ui@1.13.0 (draft)')).toBe(false)
+  })
 })
 
 describe('withChangesetCheck', () => {

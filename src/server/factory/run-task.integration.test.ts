@@ -2215,6 +2215,39 @@ describe('what the owner set for the repository', () => {
     expect(sandbox.backend.commands.filter((c) => c.endsWith('&& npm test'))).toEqual([])
   })
 
+  it('adds the changeset check, against the integration branch, when the clone uses changesets', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((command) =>
+        command.includes('.changeset/config.json') ? { stdout: 'yes\n' } : undefined,
+      ),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
+    expect(stored.map((e) => e.name).sort()).toEqual(['changeset', 'test'])
+    expect(sandbox.backend.commands.join('\n')).toContain(
+      'pnpm exec changeset status --since=origin/workspace',
+    )
+  })
+
+  it('runs no changeset check when the clone has no changesets config', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((command) =>
+        command.includes('.changeset/config.json') ? { stdout: 'no\n' } : undefined,
+      ),
+    )
+
+    await runTask(deps(sandbox), id)
+
+    const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
+    expect(stored.map((e) => e.name)).toEqual(['test'])
+    expect(sandbox.backend.commands.join('\n')).not.toContain('changeset status')
+  })
+
   it('opens the sandbox to the extra domains the owner listed, with no credential on them', async () => {
     await setRepo(`egress|'["pypi.org","files.pythonhosted.org"]'`)
     const id = await seedTask()
