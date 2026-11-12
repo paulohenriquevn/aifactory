@@ -307,6 +307,37 @@ describe('pollAwaitingIntegrations', () => {
     )
   })
 
+  it('puts the error of the job a required aggregate check depends on in the note', async () => {
+    const ci = 'https://github.com/usetheokit/theokit/actions/runs/500/job/1'
+    const types = 'https://github.com/usetheokit/theokit/actions/runs/500/job/2'
+    gh.required = ['CI']
+    gh.reports = [
+      { name: 'CI', state: 'failure', detail: '', url: ci },
+      { name: 'Type tests', state: 'failure', detail: '', url: types },
+    ]
+    gh.failedRuns = [
+      { id: 1, name: 'CI', url: ci, summary: '', actions: true },
+      { id: 2, name: 'Type tests', url: types, summary: '', actions: true },
+    ]
+    gh.logs = {
+      1: '2026-11-12T22:00:01.0000000Z ##[error]at least one dependency did not succeed',
+      2: [
+        '2026-11-12T21:58:01.0000000Z AssertionError: expected 1 to be 2',
+        '2026-11-12T21:58:02.0000000Z ##[error]Process completed with exit code 1.',
+      ].join('\n'),
+    }
+    const id = await waitingTask()
+
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({
+      sentBack: [id],
+      unreadEvidence: [],
+    })
+
+    const { note } = sentBack[0]
+    expect(note).toContain(`- CI: ${ci}\n- Type tests: ${types} (not a required check`)
+    expect(note).toContain('Type tests:\n~~~~text\nAssertionError: expected 1 to be 2\n~~~~')
+  })
+
   it('puts the annotations and summary of a failed check that is not an Actions job in the note', async () => {
     gh.required = ['CodeQL']
     gh.reports = [{ name: 'CodeQL', state: 'failure', detail: '', url: 'https://cq/1' }]

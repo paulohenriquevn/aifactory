@@ -22,8 +22,12 @@ const FRAME = 18
  */
 export type ServerEvidence = { lines: string[] } | { unreadable: string }
 
-/** A failed check as the note names it. A commit status has no check run, so it has no evidence. */
-export type FailedReport = CheckReport & { evidence?: ServerEvidence }
+/**
+ * A failed check as the note names it. A commit status has no check run, so it has no evidence. A check that
+ * is `notRequired` failed on the same commit and is named because a required check (an aggregate job) said
+ * only that something it depends on failed.
+ */
+export type FailedReport = CheckReport & { evidence?: ServerEvidence; notRequired?: true }
 
 /** What to do about a task whose pull request waits for the repository's required checks. */
 export type WaitingStep =
@@ -151,6 +155,12 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
 
 const unread = (r: FailedReport) => r.evidence !== undefined && 'unreadable' in r.evidence
 
+/** What the list of checks says of a check besides its name and link. */
+const remarks = (r: FailedReport) =>
+  (r.notRequired
+    ? ' (not a required check: it failed on the same commit, where a required one names no failure of its own)'
+    : '') + (unread(r) ? ' (the factory could not read its log or annotations)' : '')
+
 /** The lines read from the check's log or annotations, when the factory read any. */
 const evidenceLines = (r: FailedReport) =>
   r.evidence && 'lines' in r.evidence ? r.evidence.lines : []
@@ -177,10 +187,7 @@ const said = (r: FailedReport) => evidenceLines(r).length > 0 || r.detail.trim()
 export function checksFeedback(sha: string, failed: FailedReport[]): string {
   const head = [
     `The repository's required checks failed on ${short(sha)}, so the pull request was not merged. Fix what they report:`,
-    ...failed.map(
-      (r) =>
-        `- ${r.name}: ${r.url}${unread(r) ? ' (the factory could not read its log or annotations)' : ''}`,
-    ),
+    ...failed.map((r) => `- ${r.name}: ${r.url}${remarks(r)}`),
   ].join('\n')
   const told = failed.filter(said)
   // Each report gets an equal share of what is left once its frame (`\n\n<name>:\n` and a fence) is counted.

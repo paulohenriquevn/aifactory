@@ -364,7 +364,10 @@ O cron `integrate-after-ci` olha essas tasks a cada dois minutos:
   antes de ser verificado, e manda o trabalho de volta ao agente, na mesma branch. O feedback nomeia cada
   check, com o link e a evidência que a fábrica leu no servidor com o token do repositório, porque o
   sandbox não abre o link: as linhas de erro do log de um job do Actions, ou as anotações e o resumo de
-  outro check (o mesmo `readEvidence` do `watch-promotions`). Um commit status, que não tem check run,
+  outro check (o mesmo `readEvidence` do `watch-promotions`). Se o check obrigatório é um job agregador
+  cujo log só diz que uma dependência não passou, a nota também traz os outros checks que falharam no
+  mesmo commit, marcados como não obrigatórios, com link e linhas de erro; um que não diz mais do que o
+  agregador fica de fora. Um commit status, que não tem check run,
   leva o fim do que reportou. Se o GitHub não entrega a evidência, a nota diz isso, o motivo vai para o
   log do cron e o trabalho volta mesmo assim. Conta como execução automática: depois de 3, vai para uma
   pessoa com a lista dos checks.

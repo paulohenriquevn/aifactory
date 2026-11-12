@@ -29,6 +29,17 @@ const DOC_LOG = [
   '2026-11-12T10:00:02.0000000Z ##[error]Process completed with exit code 1.',
 ].join('\n')
 
+/** The log of an aggregate job (shared-workflows `checks-pass`), which names no failure of its own. */
+const AGGREGATE_LOG = [
+  '2026-11-12T22:00:00.0000000Z Run re-actors/alls-green@release/v1',
+  '2026-11-12T22:00:01.0000000Z ##[error]at least one dependency did not succeed',
+].join('\n')
+const TYPE_TESTS_LOG = [
+  '2026-11-12T21:58:00.0000000Z > vitest --typecheck',
+  '2026-11-12T21:58:01.0000000Z AssertionError: expected 1 to be 2',
+  '2026-11-12T21:58:02.0000000Z ##[error]Process completed with exit code 1.',
+].join('\n')
+
 /** GitHub as the evidence reader sees it: the failed runs of a commit, their logs and annotations. */
 function fakeApi(
   options: {
@@ -100,6 +111,91 @@ describe('attachEvidence', () => {
       },
     ])
     expect(calls).toEqual([`checks o/r t ${SHA}`, 'log o/r t 11'])
+  })
+
+  it('adds the failed jobs a required aggregate check only says did not succeed', async () => {
+    const { api } = fakeApi({
+      runs: [
+        actionsRun({ id: 1, name: 'CI' }),
+        actionsRun({ id: 2, name: 'Type tests', url: 'https://ci/2' }),
+      ],
+      logs: { 1: AGGREGATE_LOG, 2: TYPE_TESTS_LOG },
+    })
+
+    const failed = await attachEvidence(api, REPO, 't', SHA, [report('CI')])
+
+    expect(failed).toEqual([
+      { ...report('CI'), evidence: { lines: [] } },
+      {
+        name: 'Type tests',
+        state: 'failure',
+        detail: '',
+        url: 'https://ci/2',
+        notRequired: true,
+        evidence: { lines: ['AssertionError: expected 1 to be 2'] },
+      },
+    ])
+  })
+
+  it('adds the other failed jobs once, when only one of the required checks is an aggregate', async () => {
+    const { api } = fakeApi({
+      runs: [
+        actionsRun({ id: 1, name: 'CI' }),
+        actionsRun({ id: 9, name: 'Lint' }),
+        actionsRun({ id: 2, name: 'Type tests' }),
+      ],
+      logs: { 1: AGGREGATE_LOG, 9: 'error TS2322: wrong type', 2: TYPE_TESTS_LOG },
+    })
+
+    const failed = await attachEvidence(api, REPO, 't', SHA, [report('CI'), report('Lint')])
+
+    expect(failed.map((r) => [r.name, r.notRequired ?? false])).toEqual([
+      ['CI', false],
+      ['Lint', false],
+      ['Type tests', true],
+    ])
+  })
+
+  it('leaves out another failed job that says no more than the aggregate does', async () => {
+    const { api } = fakeApi({
+      runs: [actionsRun({ id: 1, name: 'CI' }), actionsRun({ id: 3, name: 'All checks' })],
+      logs: { 1: AGGREGATE_LOG, 3: AGGREGATE_LOG },
+    })
+
+    expect(await attachEvidence(api, REPO, 't', SHA, [report('CI')])).toEqual([
+      { ...report('CI'), evidence: { lines: [] } },
+    ])
+  })
+
+  it('names another failed job whose evidence could not be read', async () => {
+    const { api } = fakeApi({
+      runs: [actionsRun({ id: 1, name: 'CI' }), actionsRun({ id: 4, name: 'Type tests' })],
+      logs: { 1: AGGREGATE_LOG },
+      failLogOf: 4,
+    })
+
+    const failed = await attachEvidence(api, REPO, 't', SHA, [report('CI')])
+
+    expect(failed[1]).toMatchObject({
+      name: 'Type tests',
+      notRequired: true,
+      evidence: { unreadable: 'GitHub answered 410 reading job 4' },
+    })
+  })
+
+  it('does not look past a required check whose evidence could not be read', async () => {
+    const { api, calls } = fakeApi({
+      runs: [actionsRun({ id: 1, name: 'CI' }), actionsRun({ id: 2, name: 'Type tests' })],
+      logs: { 2: TYPE_TESTS_LOG },
+      failLogOf: 1,
+    })
+
+    const failed = await attachEvidence(api, REPO, 't', SHA, [report('CI')])
+
+    expect(failed).toEqual([
+      { ...report('CI'), evidence: { unreadable: 'GitHub answered 410 reading job 1' } },
+    ])
+    expect(calls).toEqual([`checks o/r t ${SHA}`, 'log o/r t 1'])
   })
 
   it('leaves a commit status, which has no check run, with what it said of itself', async () => {
