@@ -357,7 +357,10 @@ exige (`GET /repos/{r}/branches/{branch}` e as regras de `GET /repos/{r}/rules/b
 exige status checks, a fábrica não mergeia depois só dos checks dela: liga o auto-merge do PR (merge commit,
 com `expectedHeadOid` igual ao SHA verificado), grava esse SHA em `task.awaiting_ci_sha` e termina a
 execução. A task fica `done`, o painel mostra "waiting for CI", e nada de pré-release ainda. Se o GitHub
-recusar o auto-merge, a execução falha com uma mensagem dizendo o que configurar.
+recusar o auto-merge porque o PR já está `clean` (os checks obrigatórios passaram antes de a fábrica chegar
+aí), não há o que esperar: a fábrica mergeia na hora, fixada ao SHA verificado, pelo mesmo caminho de um
+repositório sem checks obrigatórios. Qualquer outra recusa faz a execução falhar com uma mensagem dizendo o
+que configurar.
 
 O cron `integrate-after-ci` olha essas tasks a cada dois minutos:
 
@@ -442,7 +445,9 @@ auto-merge do PR, fixado ao head que viu, e grava uma linha em `release_wait` co
 `bump`, quem decidiu e se o repositório usa changesets. A task continua `done`, a resposta traz
 `awaitingChecks`, e a página da task diz que o release espera os checks e esconde o botão de release.
 Só um release por repositório espera de cada vez, porque todos usariam o mesmo PR; um segundo pedido é
-recusado com o link do PR que espera. Se o GitHub recusar o auto-merge, o release é recusado com o motivo.
+recusado com o link do PR que espera. Se o GitHub recusar o auto-merge porque o PR já está `clean`, a linha
+de `release_wait` é apagada e o release mergeia na hora, fixado ao mesmo head, como sem checks
+obrigatórios. Qualquer outra recusa faz o release ser recusado com o motivo.
 
 O mesmo cron `integrate-after-ci` olha esses releases a cada dois minutos:
 

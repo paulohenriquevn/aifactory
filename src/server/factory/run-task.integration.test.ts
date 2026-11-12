@@ -33,6 +33,10 @@ import type {
 } from '../github/pulls'
 import { AutoMergeRefused } from '../github/pulls'
 
+const NOT_ALLOWED = 'Auto merge is not allowed for this repository'
+/** What GitHub answers when the required checks already passed, so there is nothing to wait for. */
+const CLEAN = 'Pull request Pull request is in clean status'
+
 import { retryableFailure } from '../../shared/panel'
 import {
   divergedRepository,
@@ -155,11 +159,14 @@ const githubApi: GithubApi & {
   autoMerges: { number: number; sha: string }[]
   /** GitHub refuses to turn auto-merge on. */
   autoMergeRefused: boolean
+  /** What GitHub says when it refuses. */
+  autoMergeRefusal: string
 } = {
   required: [],
   releaseRequired: [],
   autoMerges: [],
   autoMergeRefused: false,
+  autoMergeRefusal: NOT_ALLOWED,
   openFailsFor: undefined,
   changesets: undefined,
   changed: [],
@@ -249,8 +256,7 @@ const githubApi: GithubApi & {
     throw new Error('a run never reads a pull request by number')
   },
   async enableAutoMerge(repo, _token, number, sha) {
-    if (this.autoMergeRefused)
-      throw new AutoMergeRefused(repo, number, 'Auto merge is not allowed for this repository')
+    if (this.autoMergeRefused) throw new AutoMergeRefused(repo, number, this.autoMergeRefusal)
     this.autoMerges.push({ number, sha })
   },
   async disableAutoMerge() {
@@ -322,6 +328,7 @@ beforeEach(() => {
   githubApi.releaseRequired = []
   githubApi.autoMerges = []
   githubApi.autoMergeRefused = false
+  githubApi.autoMergeRefusal = NOT_ALLOWED
   githubApi.branches = FakeBranches.prepared()
   dirty = true
 })
@@ -2154,6 +2161,46 @@ describe('the factory always makes a pre-release', () => {
     )
   })
 
+  it('merges at once, pinned to the verified commit, when GitHub refuses auto-merge because the checks already passed', async () => {
+    githubApi.required = ['CI']
+    githubApi.autoMergeRefused = true
+    githubApi.autoMergeRefusal = CLEAN
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done', preRelease: 'pre/7-develop' })
+    expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+    expect(githubApi.mergeKinds).toEqual([
+      { method: 'squash', title: expect.stringMatching(/ \(#7\)$/) },
+    ])
+    expect(githubApi.branchMerges).toEqual([{ base: 'develop', head: 'merge0001' }])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'done', mergedSha: 'merge0001', awaitingCiSha: null })
+    const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
+    expect(done.detail).toMatchObject({ mergedSha: 'merge0001', developSha: 'develop0001' })
+    expect((done.detail as Record<string, unknown>).awaitingChecks).toBeUndefined()
+  })
+
+  it('still fails the task with what to configure when the refusal is not about a clean pull request', async () => {
+    githubApi.required = ['CI']
+    githubApi.autoMergeRefused = true
+    githubApi.autoMergeRefusal = 'Pull request Pull request is in unstable status'
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(githubApi.merges).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'failed', mergedSha: null })
+    const failed = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
+    )[0]
+    expect(String((failed.detail as Record<string, unknown>).error)).toMatch(
+      /unstable status.*Allow auto-merge/,
+    )
+  })
+
   it('keeps the work integrated and says why when develop cannot be advanced', async () => {
     githubApi.branchMergeFails = true
     const id = await seedTask()
@@ -2838,6 +2885,40 @@ describe('release', () => {
       expect(refused).toMatchObject({ status: 'refused' })
       expect(refused.detail).toContain('Auto merge is not allowed')
       expect(refused.endedAt).not.toBeNull()
+    })
+
+    it('merges the promotion at once, pinned to the head it saw, when GitHub refuses auto-merge because the checks already passed', async () => {
+      const id = await delivered()
+      githubApi.latest = 'v1.2.3'
+      githubApi.releaseRequired = ['CI']
+      githubApi.autoMergeRefused = true
+      githubApi.autoMergeRefusal = CLEAN
+
+      const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+      expect(result).toMatchObject({ tag: 'v1.3.0', mergeSha: 'merge0001' })
+      expect(result).not.toHaveProperty('awaitingChecks')
+      expect(githubApi.merges).toEqual([
+        { number: 12, sha: 'abc123def' },
+        { number: 12, sha: 'abc123def' },
+      ])
+      expect(githubApi.mergeKinds.at(-1)).toEqual({ method: 'merge' })
+      expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('released')
+      // Nothing waited, so no wait stays behind to block the next release.
+      expect(await waits()).toEqual([])
+    })
+
+    it('still refuses the release when the refusal is not about a clean pull request', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI']
+      githubApi.autoMergeRefused = true
+      githubApi.autoMergeRefusal = 'Pull request Pull request is in unstable status'
+
+      await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+        /GitHub would not turn auto-merge on.*unstable status/,
+      )
+      expect(githubApi.merges).toHaveLength(1)
+      expect(await waits()).toMatchObject([{ status: 'refused' }])
     })
   })
 })

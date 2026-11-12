@@ -104,7 +104,9 @@ reads that file, not a convention.
   request there, pinned to the verified commit, once the checks pass and the review approves. When the
   integration branch requires status checks, the factory merges nothing itself: it turns on auto-merge pinned
   to the verified commit (`task.awaiting_ci_sha`), and the `integrate-after-ci` cron finishes the integration
-  after GitHub merges, or sends the work back when a required check fails. Nothing else may merge there, with one
+  after GitHub merges, or sends the work back when a required check fails. When GitHub refuses auto-merge because
+  the pull request is already clean (its checks passed first), the factory merges it at once, pinned to the
+  same commit, as if no check were required (`autoMergeOrMergeable` in `github/pulls.ts`). Nothing else may merge there, with one
   exception: after a changesets release, `publish-changesets` merges the repository's back-merge, the open pull
   request from the release branch into the integration branch of the same repository (never a fork), with a
   merge commit pinned to its head once its checks are green (`pickBackMerge` in `factory/changesets.ts`). `develop` is
@@ -114,7 +116,7 @@ reads that file, not a convention.
   `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it. When the release branch requires status
   checks, `release()` merges nothing either: it turns on auto-merge pinned to the head it saw and records a
   `release_wait`, and the `integrate-after-ci` cron finishes the release after GitHub merges, or refuses it
-  with the reason when a required check fails. A refused release is never retried on its own. Every release, tagged by the factory or published by changesets, releases each finished task
+  with the reason when a required check fails. A clean release pull request is merged at once, the same way. A refused release is never retried on its own. Every release, tagged by the factory or published by changesets, releases each finished task
   whose merge is in the promoted commit and closes its issue through `shipContained` in `factory/ship.ts`; an
   issue that will not close is recorded, never thrown. `ensureBranches` creates the two missing
   branches, never touches one that exists, and refuses the default branch as the integration branch.

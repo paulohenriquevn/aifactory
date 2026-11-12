@@ -13,7 +13,7 @@ import {
   watch,
 } from '../db/schema'
 import type { GithubApp } from '../github/app'
-import type { GithubApi } from '../github/pulls'
+import { autoMergeOrMergeable, type GithubApi } from '../github/pulls'
 
 import { PRE_RELEASE_BRANCH, releaseBranchOf } from './branches'
 import { publishedPackagesChanged } from './changed-packages'
@@ -228,7 +228,7 @@ export async function release(
   const pull = { number: pr.number, url: pr.url }
   const required = await deps.api.requiredChecks(row.repository, token, target)
   if (required.length > 0) {
-    return waitForChecks(deps, {
+    const waited = await waitForChecks(deps, {
       row,
       pull,
       sha,
@@ -238,6 +238,8 @@ export async function release(
       changesets: usesChangesets,
       ...options,
     })
+    // A clean pull request already passed the checks, so it is merged below like one with none required.
+    if (waited !== 'mergeable') return waited
   }
 
   // Takes the task so two clicks cannot merge twice. It is given back if the merge does not happen.
@@ -301,11 +303,13 @@ type Promotion = {
  * Leaves the promotion to GitHub: auto-merge is turned on, pinned to the head seen, and the release waits
  * in `release_wait` for the release branch's required checks. A repository has one release pull request, so
  * a second release while one waits is refused; GitHub refusing auto-merge refuses the release and says why.
+ * When GitHub refuses because the pull request is already clean, nothing waits: the claim is dropped and
+ * `mergeable` tells the caller to merge it itself.
  */
 async function waitForChecks(
   deps: DeliverDeps,
   input: Promotion & { required: string[] },
-): Promise<ReleaseResult> {
+): Promise<ReleaseResult | 'mergeable'> {
   const { row, pull, token } = input
   const [waiting] = await deps.db
     .select({ pullRequestUrl: releaseWait.pullRequestUrl })
@@ -333,8 +337,14 @@ async function waitForChecks(
     .onConflictDoNothing()
     .returning({ id: releaseWait.id })
   if (!claimed) throw busy()
+  let next: 'waiting' | 'mergeable'
   try {
-    await deps.api.enableAutoMerge(row.repository, token, pull.number, input.sha)
+    next = await autoMergeOrMergeable(deps.api, {
+      repo: row.repository,
+      token,
+      number: pull.number,
+      sha: input.sha,
+    })
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error)
     await deps.db
@@ -342,6 +352,10 @@ async function waitForChecks(
       .set({ status: 'refused', detail: why, endedAt: new Date() })
       .where(eq(releaseWait.id, claimed.id))
     throw new ReleaseRefused(why)
+  }
+  if (next === 'mergeable') {
+    await deps.db.delete(releaseWait).where(eq(releaseWait.id, claimed.id))
+    return 'mergeable'
   }
   return {
     tag: undefined,

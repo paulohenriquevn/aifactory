@@ -10,7 +10,7 @@ import {
   task,
 } from '../db/schema'
 import type { Issue } from '../github/issues'
-import type { GithubApi } from '../github/pulls'
+import { autoMergeOrMergeable, type GithubApi } from '../github/pulls'
 import { KnowledgeFeed } from '../knowledge/feed'
 import { parseLearned, withoutLearned } from '../knowledge/format'
 
@@ -1121,14 +1121,16 @@ export class Run {
    *
    * An integration branch that requires status checks gets the repository's own CI first: GitHub merges
    * the pull request through auto-merge once they pass, pinned to the same commit, and the
-   * `integrate-after-ci` cron does the rest. GitHub refusing auto-merge fails the run, with what to set.
+   * `integrate-after-ci` cron does the rest. When GitHub refuses auto-merge because the checks already
+   * passed (the pull request is clean), it is merged at once like one with no required checks. Any other
+   * refusal fails the run, with what to set.
    */
   private async integrate(sha: string, pullNumber: number): Promise<Integrated> {
     const { deps, taskId, row, api, branch } = this.c
     const integration = integrationBranch(this.c.repo)
     const required = await api.requiredChecks(row.repository, this.c.token, integration)
-    if (required.length > 0) {
-      await api.enableAutoMerge(row.repository, this.c.token, pullNumber, sha)
+    const pull = { repo: row.repository, token: this.c.token, number: pullNumber, sha }
+    if (required.length > 0 && (await autoMergeOrMergeable(api, pull)) === 'waiting') {
       return { awaitingChecks: required }
     }
     let merged: { sha: string }

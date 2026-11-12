@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { AutoMergeRefused, createGithubApi } from './pulls'
+import { AutoMergeRefused, autoMergeOrMergeable, createGithubApi } from './pulls'
 
 type Call = { method: string; url: string; body?: unknown; auth?: string }
 
@@ -1032,6 +1032,59 @@ describe('what integrating through the repository CI needs', () => {
     await expect(refused).rejects.toThrow(
       /o\/r#12.*Auto merge is not allowed for this repository.*Allow auto-merge.*merge commits/,
     )
+  })
+
+  it('tells a refusal because the pull request is already clean from any other refusal', () => {
+    const clean = new AutoMergeRefused('o/r', 12, 'Pull request Pull request is in clean status')
+    const notAllowed = new AutoMergeRefused(
+      'o/r',
+      12,
+      'Auto merge is not allowed for this repository',
+    )
+    const unstable = new AutoMergeRefused(
+      'o/r',
+      12,
+      'Pull request Pull request is in unstable status',
+    )
+
+    expect(clean.pullRequestIsClean).toBe(true)
+    expect(notAllowed.pullRequestIsClean).toBe(false)
+    expect(unstable.pullRequestIsClean).toBe(false)
+  })
+
+  describe('autoMergeOrMergeable', () => {
+    const pull = { repo: 'o/r', token: 't', number: 12, sha: 'abc' }
+    const refusing = (error: Error) => ({
+      enableAutoMerge: async () => {
+        throw error
+      },
+    })
+
+    it('waits for the checks once auto-merge is on, pinned to the sha', async () => {
+      const calls: unknown[][] = []
+      const api = { enableAutoMerge: async (...args: unknown[]) => void calls.push(args) }
+
+      await expect(autoMergeOrMergeable(api, pull)).resolves.toBe('waiting')
+      expect(calls).toEqual([['o/r', 't', 12, 'abc']])
+    })
+
+    it('says the pull request is mergeable when GitHub refuses because it is clean', async () => {
+      const clean = new AutoMergeRefused('o/r', 12, 'Pull request Pull request is in clean status')
+
+      await expect(autoMergeOrMergeable(refusing(clean), pull)).resolves.toBe('mergeable')
+    })
+
+    it('throws any other refusal as it came', async () => {
+      const notAllowed = new AutoMergeRefused('o/r', 12, 'Auto merge is not allowed')
+
+      await expect(autoMergeOrMergeable(refusing(notAllowed), pull)).rejects.toBe(notAllowed)
+    })
+
+    it('throws an error that is not a refusal, even when it mentions a clean status', async () => {
+      const failure = new Error('GitHub answered 502: clean status unknown')
+
+      await expect(autoMergeOrMergeable(refusing(failure), pull)).rejects.toBe(failure)
+    })
   })
 
   it('turns auto-merge off', async () => {

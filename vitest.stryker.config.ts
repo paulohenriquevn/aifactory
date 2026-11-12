@@ -7,6 +7,7 @@ export default defineConfig({
     setupFiles: ['src/test/no-real-docker.ts'],
     include: [
       'src/server/factory/clone.test.ts',
+      'src/server/github/pulls.test.ts',
       'src/server/evals/compare.test.ts',
       'src/server/evals/cases.test.ts',
       'src/server/evals/suite.test.ts',
