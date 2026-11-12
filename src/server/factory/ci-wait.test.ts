@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { CheckReport, PullRequestDetail } from '../github/pulls'
 
 import { AUTOMATIC_RETRIES } from './auto-retry'
-import { CI_SILENCE_MS, checksFeedback, decideWaitingIntegration } from './ci-wait'
+import { CI_SILENCE_MS, checksFeedback, decideWaitingIntegration, readRequired } from './ci-wait'
 
 const VERIFIED = 'abc1234def'
 const open: PullRequestDetail = {
@@ -198,9 +198,54 @@ describe('decideWaitingIntegration', () => {
     })
   })
 
+  it('sends back the failed run of a check that also passed on the same commit', () => {
+    const step = decide({
+      reports: [
+        report('CI', 'success', 'push run passed'),
+        report('CI', 'failure', 'pull_request run failed'),
+        report('Lint', 'success'),
+      ],
+    })
+    expect(step).toEqual({
+      kind: 'send_back',
+      failed: ['CI'],
+      reports: [report('CI', 'failure', 'pull_request run failed')],
+    })
+  })
+
   it('still waits for a silent check until the limit itself', () => {
     expect(decide({ reports: [report('CI', 'success')], waitedMs: CI_SILENCE_MS })).toEqual({
       kind: 'wait',
+    })
+  })
+})
+
+describe('readRequired', () => {
+  // A workflow that runs on both push and pull_request leaves two runs of the same name on the head.
+  const passed = report('CI', 'success')
+  const broke = report('CI', 'failure')
+
+  it.each([
+    ['the failed run comes first', [broke, passed]],
+    ['the passing run comes first', [passed, broke]],
+  ])('reads a check as failed when any of its runs failed: %s', (_, reports) => {
+    expect(readRequired({ required: ['CI'], reports })).toEqual({ failed: ['CI'], silent: [] })
+  })
+
+  it('reads a check as failed when a run failed beside one still pending', () => {
+    const reports = [report('CI', 'pending'), broke]
+    expect(readRequired({ required: ['CI'], reports })).toEqual({ failed: ['CI'], silent: [] })
+  })
+
+  it('does not read a check as failed when every run of it passed', () => {
+    const reports = [passed, report('CI', 'success')]
+    expect(readRequired({ required: ['CI'], reports })).toEqual({ failed: [], silent: [] })
+  })
+
+  it('still reads a required check with no report as silent', () => {
+    expect(readRequired({ required: ['CI'], reports: [report('Lint', 'failure')] })).toEqual({
+      failed: [],
+      silent: ['CI'],
     })
   })
 })

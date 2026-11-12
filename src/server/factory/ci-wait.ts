@@ -92,14 +92,21 @@ function settled(input: WaitingIntegration): WaitingStep | undefined {
   return undefined
 }
 
-/** What the required checks say: the ones that failed, and the ones that never reported. */
+/** The failed run of a check, when one of its runs on the commit failed. */
+const failedRun = (reports: CheckReport[], name: string) =>
+  reports.find((r) => r.name === name && r.state === 'failure')
+
+/**
+ * What the required checks say: the ones that failed, and the ones that never reported. A check can run
+ * more than once on a commit (a workflow on both `push` and `pull_request`), and GitHub blocks the merge
+ * when any of those runs failed, so one failed run makes the check failed whatever the others say.
+ */
 export function readRequired(input: Pick<WaitingIntegration, 'required' | 'reports'>) {
   const failed: string[] = []
   const silent: string[] = []
   for (const name of input.required) {
-    const seen = input.reports.find((r) => r.name === name)
-    if (!seen) silent.push(name)
-    else if (seen.state === 'failure') failed.push(name)
+    if (failedRun(input.reports, name)) failed.push(name)
+    else if (!input.reports.some((r) => r.name === name)) silent.push(name)
   }
   return { failed, silent }
 }
@@ -140,7 +147,7 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
         stopAutoMerge: true,
       }
     }
-    const reports = failed.map((name) => input.reports.find((r) => r.name === name)!)
+    const reports = failed.map((name) => failedRun(input.reports, name)!)
     return { kind: 'send_back', failed, reports }
   }
   if (silent.length > 0 && input.waitedMs > CI_SILENCE_MS) {

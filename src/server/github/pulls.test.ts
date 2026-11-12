@@ -927,4 +927,26 @@ describe('what integrating through the repository CI needs', () => {
       { name: 'socket', state: 'failure', detail: 'down', url: 'https://x' },
     ])
   })
+
+  it('keeps every run of a check that ran more than once on the commit', async () => {
+    const run = (conclusion: string, url: string) => ({
+      name: 'CI',
+      status: 'completed',
+      conclusion,
+      html_url: url,
+      output: {},
+    })
+    const { fetch } = fakeFetch({
+      'GET /commits/abc/check-runs': {
+        status: 200,
+        body: { check_runs: [run('success', 'push'), run('failure', 'pr')] },
+      },
+      'GET /commits/abc/status': { status: 200, body: { state: 'pending', total_count: 0 } },
+    })
+
+    expect(await createGithubApi(fetch).checkReports('o/r', 't', 'abc')).toEqual([
+      { name: 'CI', state: 'success', detail: '', url: 'push' },
+      { name: 'CI', state: 'failure', detail: '', url: 'pr' },
+    ])
+  })
 })

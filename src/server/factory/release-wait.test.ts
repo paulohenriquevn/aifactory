@@ -119,6 +119,20 @@ describe('decideWaitingRelease', () => {
     })
   })
 
+  it('refuses, naming it, a required check that failed on one run and passed on another', () => {
+    const twice = [
+      report('CI', 'success'),
+      report('CI', 'failure'),
+      report('SonarCloud Code Analysis', 'success'),
+    ]
+    expect(decide({ reports: twice })).toEqual({
+      kind: 'refuse',
+      reason: 'the required check of main failed on the release pull request: CI',
+      failed: ['CI'],
+      stopAutoMerge: true,
+    })
+  })
+
   it('refuses a required check that stayed silent past the limit', () => {
     const step = decide({ reports: [report('CI', 'success')], waitedMs: CI_SILENCE_MS + 1 })
     expect(step).toEqual({
