@@ -343,6 +343,144 @@ describe('testWeakening', () => {
   })
 })
 
+describe('a test retitled in its own file', () => {
+  const retitle = [
+    "-  it('the real ledger holds exactly the 113 source ids', () => {",
+    "+  it('the real ledger holds exactly the 114 source ids', () => {",
+    '-    expect(ids).toHaveLength(113)',
+    '+    expect(ids).toHaveLength(114)',
+  ]
+
+  it('is not a removed case when the file keeps its assertions', () => {
+    const patch = patchOf('tools/check-parity-ledger.test.mjs', retitle)
+    expect(testWeakening({ patch, issue: feature })).toEqual([
+      {
+        severity: 'minor',
+        file: 'tools/check-parity-ledger.test.mjs',
+        issue:
+          'the change retitles 1 test case (the file lost "the real ledger holds exactly the 113 source ids" and gained "the real ledger holds exactly the 114 source ids"), and the file keeps its assertions; judge whether the new title still says what the test checks',
+      },
+    ])
+  })
+
+  it('stays minor in a bug fix', () => {
+    const patch = patchOf('tools/check-parity-ledger.test.mjs', retitle)
+    expect(testWeakening({ patch, issue: bug }).map((f) => f.severity)).toEqual(['minor'])
+  })
+
+  it('names every case retitled, in the plural', () => {
+    const patch = patchOf('src/a.test.ts', [
+      '-  it("counts 1", () => {})',
+      '-  it("counts 2", () => {})',
+      '+  it("counts one", () => {})',
+      '+  it("counts two", () => {})',
+    ])
+    expect(testWeakening({ patch, issue: feature })[0].issue).toContain(
+      'retitles 2 test cases (the file lost "counts 1", "counts 2" and gained "counts one", "counts two")',
+    )
+  })
+
+  it('still reports a case removed when the only new name is in another file', () => {
+    const patch =
+      patchOf('src/a.test.ts', ['-  it("keeps the last line", () => {})']) +
+      '\n' +
+      patchOf('src/b.test.ts', ['+  it("keeps the first line", () => {})'])
+    const findings = testWeakening({ patch, issue: feature })
+    expect(findings).toHaveLength(1)
+    expect(findings[0].severity).toBe('major')
+    expect(findings[0].issue).toBe(
+      'the change weakens a test that was there before it: it removes 1 test case ("keeps the last line")',
+    )
+  })
+
+  it('reports one removed case when two leave a file and one new name comes in', () => {
+    const patch = patchOf('src/a.test.ts', [
+      '-  it("parses a list", () => {})',
+      '-  it("parses a map", () => {})',
+      '+  it("parses a collection", () => {})',
+    ])
+    const [finding] = testWeakening({ patch, issue: feature })
+    expect(finding.severity).toBe('major')
+    expect(finding.issue).toBe(
+      'the change weakens a test that was there before it: it removes 1 test case ("parses a list", "parses a map" left the file and 1 new name came in, "parses a collection")',
+    )
+  })
+
+  it('names the new names in the plural when more than one came in', () => {
+    const patch = patchOf('src/a.test.ts', [
+      '-  it("parses a list", () => {})',
+      '-  it("parses a map", () => {})',
+      '-  it("parses a set", () => {})',
+      '+  it("parses a collection", () => {})',
+      '+  it("parses a dictionary", () => {})',
+    ])
+    expect(testWeakening({ patch, issue: feature })[0].issue).toContain(
+      'removes 1 test case ("parses a list", "parses a map", "parses a set" left the file and 2 new names came in, "parses a collection", "parses a dictionary")',
+    )
+  })
+
+  it('does not take an added line that opens no case for a new name', () => {
+    const patch = patchOf('src/a.test.ts', [
+      '-  it("keeps the last line", () => {',
+      '+  it("keeps the last line", () => {',
+      '-  it("trims", () => {})',
+      '+    expect(a).toBe(1)',
+    ])
+    expect(testWeakening({ patch, issue: feature })[0].issue).toBe(
+      'the change weakens a test that was there before it: it removes 1 test case ("trims")',
+    )
+  })
+
+  it('still reports the loss when the retitled file has fewer assertions', () => {
+    const patch = patchOf('src/a.test.ts', [
+      '-  it("parses a list", () => {',
+      '+  it("parses a sequence", () => {',
+      '-    expect(x).toBe(1)',
+      '-    expect(y).toBe(2)',
+      '+    expect(x).toBe(1)',
+    ])
+    const [finding] = testWeakening({ patch, issue: bug })
+    expect(finding.severity).toBe('blocker')
+    expect(finding.issue).toBe(
+      'the change weakens a test that was there before it: it leaves 1 assertion fewer; retitles 1 test case (the file lost "parses a list" and gained "parses a sequence")',
+    )
+  })
+
+  it('does not pair a removed case with a name another file lost', () => {
+    const patch =
+      patchOf('src/a.test.ts', [
+        '-  it("keeps the last line", () => {})',
+        '+  it("trims", () => {})',
+      ]) +
+      '\n' +
+      patchOf('src/b.test.ts', ['-  it("trims", () => {})'])
+    const findings = testWeakening({ patch, issue: feature })
+    expect(findings).toHaveLength(1)
+    expect(findings[0].issue).toContain('removes 1 test case ("keeps the last line")')
+  })
+
+  it('does not pair a removed case with a name the file lost and got back', () => {
+    const patch = patchOf('src/a.test.ts', [
+      '-  it("keeps the last line", () => {})',
+      '-  it("trims", () => {})',
+      '+  it("trims", () => {})',
+    ])
+    expect(testWeakening({ patch, issue: feature })[0].issue).toContain(
+      'removes 1 test case ("keeps the last line")',
+    )
+  })
+
+  it('is minor when the issue names the old title and the file loses an assertion', () => {
+    const patch = patchOf('src/a.test.ts', [
+      '-  it("parses a list", () => {',
+      '+  it("parses a sequence", () => {',
+      '-    expect(x).toBe(1)',
+    ])
+    const issue = { ...bug, body: 'The test "parses a list" checks too much.' }
+    expect(testWeakening({ patch, issue })[0].severity).toBe('minor')
+  })
+})
+
 describe('a test the issue names', () => {
   it('counts a removed name of six letters in the issue, and not one of five', () => {
     const six = patchOf('src/a.test.ts', ['-  it("parses", () => {})'])

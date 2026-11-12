@@ -240,7 +240,10 @@ checadas sem modelo e valem como achados que impedem a aprovação:
   `.skip`, `.only`, `.todo`, `xit`, `@pytest.mark.skip` ou `t.Skip`: achado `blocker`. Fora de uma
   correção de bug, o mesmo achado é `major`. Quando o texto da issue cita o arquivo ou o caso removido,
   ele vira `minor` e a decisão fica com o revisor, porque a remoção pode ser o que a issue pede. Um caso
-  que muda de arquivo com o mesmo nome não conta como perda.
+  que muda de arquivo com o mesmo nome não conta como perda. Um caso renomeado no próprio arquivo também
+  não: cada nome novo no arquivo, que nenhum arquivo do diff perdeu, cobre um nome que o arquivo perdeu.
+  Se o arquivo não perde asserção, a renomeação vira só um achado `minor` para o revisor conferir o título
+  novo. Dois casos que saem e um que entra contam como um caso removido.
 
 **Plano antes do código.** Numa task nova, antes de editar, o construtor recebe a issue e as regras do
 build e escreve um plano em JSON: os arquivos que vai mudar e por quê, a ordem, os riscos, a prova

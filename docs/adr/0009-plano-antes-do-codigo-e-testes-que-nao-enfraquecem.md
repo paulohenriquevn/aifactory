@@ -55,7 +55,11 @@ bug, em que o teste de regressão é a prova do conserto.
 - **Um guarda sem modelo** (`testWeakening`, em `test-weakening.ts`) lê o `git diff -U0` dos arquivos de
   teste entre a base e o commit. Os caminhos vêm de pathspecs fixos, então nenhum caminho criado pelo
   agente chega ao shell. Num arquivo de teste que já existia na base, o guarda aponta:
-  - casos removidos (`it`, `test`, `def test_`, `func Test`) cujo nome não volta em nenhum lugar do diff;
+  - casos removidos (`it`, `test`, `def test_`, `func Test`) cujo nome não volta em nenhum lugar do diff,
+    descontados os renomeados no mesmo arquivo (#42): cada nome que o arquivo ganha, e que nenhum arquivo
+    do diff perdeu, cobre no máximo um nome que o arquivo perdeu. Um título que carrega um valor que a
+    mudança precisa atualizar não pode ser mantido, e o corpo do caso continua guardado pela contagem de
+    asserções. A renomeação sem perda de asserção vira um achado `minor`, para o revisor conferir o título;
   - perda líquida de asserções (`expect(`, `assert…`, `t.Error/Fatal`), descontadas as que foram junto
     com um caso movido para outro arquivo;
   - `.skip`, `.only`, `.todo`, `xit`, `xdescribe`, `@pytest.mark.skip` ou `t.Skip` acrescentados.
@@ -89,6 +93,9 @@ bug, em que o teste de regressão é a prova do conserto.
 - **Falso positivo do guarda de testes.** Uma refatoração que reescreve um teste com outro nome e menos
   asserções gera um achado. Fora de uma correção de bug, ele é `major` e volta ao construtor com o
   motivo. Se a issue citar o teste, vira `minor`.
+- **O que o pareamento de renomeações deixa passar (#42).** Apagar um caso e escrever outro, com outro
+  nome e ao menos tantas asserções, no mesmo arquivo, sai como renomeação `minor`. O guarda não distingue
+  isso de um título atualizado, e o achado `minor` deixa o par à vista do revisor.
 
 ## Alternativas consideradas
 
