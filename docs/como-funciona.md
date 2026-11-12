@@ -491,7 +491,11 @@ npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio r
 O cron `publish-changesets` olha cada `publication` esperando, a cada minuto. Ele acha o PR "Version
 Packages" e o mergeia quando os checks dele estão verdes, fixado ao commit que viu, em nome de quem decidiu o
 release. Checks vermelhos, pendentes ou ausentes, rascunho ou PR fechado: ele espera e registra o motivo na
-`publication`. Depois que o workflow publica, ele lê as releases novas
+`publication`. O workflow cria as releases um pacote por vez, então o cron só segue quando existe uma release
+para cada pacote publicado cuja versão o merge do "Version Packages" mudou (lido do `package.json` de cada
+pacote no commit do merge e no primeiro pai dele); enquanto falta alguma, ele espera e registra qual. Passados
+30 minutos do merge, segue com as releases que existem e registra no `detail` da `publication` o pacote que
+ficou sem release, para nunca esperar para sempre. Depois que o workflow publica, ele lê as releases novas
 do GitHub, grava uma entrega `release` com cada tag, e cada task cujo trabalho está no commit promovido (a
 do release e toda task `done` integrada antes dela, conferido pela API de comparação) vai para `released`,
 ganha o comentário "Available in <tags>" na issue e tem a issue fechada. Uma issue que não fecha fica

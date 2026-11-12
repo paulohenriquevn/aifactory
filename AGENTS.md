@@ -130,7 +130,10 @@ reads that file, not a convention.
   factory's own, tagged after the highest `v` tag, since no changeset can exist for those. The `publish-changesets` cron merges the Version Packages pull
   request (`changeset-release/<release branch>`) once its checks are green, under the same decision, and
   only that pull request; when the workflow has published, it releases the tasks in the promoted commit and
-  closes their issues with the versions. When the release workflow pushed the version branch after the promotion,
+  closes their issues with the versions. The workflow creates the releases one package at a time, so the
+  publication waits for a release of every published package whose version the Version Packages merge moved
+  (`versionedTags` in `changed-packages.ts`); 30 minutes after that merge it goes on with the releases that
+  exist and names the missing ones in its detail. When the release workflow pushed the version branch after the promotion,
   ahead of the release branch, without opening a pull request from it, the factory opens Version Packages itself
   and the publication keeps waiting; it never ends while such a branch waits. When the run on the promoted commit
   finished without a Version Packages pull request or such a branch

@@ -79,8 +79,9 @@ export type PullRequestDetail = {
   url: string
   state: 'open' | 'closed'
   merged: boolean
-  /** The commit the merge made on the base, for a merged one. */
+  /** The commit the merge made on the base, and when, for a merged one. */
   mergeCommitSha?: string
+  mergedAt?: Date
   headSha: string
   /** Whether GitHub will merge it on its own once the required checks pass. */
   autoMerge: boolean
@@ -808,6 +809,7 @@ export function createGithubApi(
         state: 'open' | 'closed'
         merged: boolean
         merge_commit_sha: string | null
+        merged_at?: string | null
         head: { sha: string }
         auto_merge: object | null
         mergeable_state: string
@@ -819,6 +821,7 @@ export function createGithubApi(
         merged: pr.merged,
         // An open pull request's merge_commit_sha is GitHub's test merge, not anything on the base.
         mergeCommitSha: pr.merged ? (pr.merge_commit_sha ?? undefined) : undefined,
+        mergedAt: pr.merged_at ? new Date(pr.merged_at) : undefined,
         headSha: pr.head.sha,
         autoMerge: pr.auto_merge !== null,
         mergeableState: pr.mergeable_state,

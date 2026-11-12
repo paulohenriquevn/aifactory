@@ -63,7 +63,15 @@ const gh = {
   branchesRead: [] as string[],
   /** The pull requests the factory opened. */
   opened: [] as { head: string; base?: string; title: string; body: string }[],
+  /** When GitHub says the Version Packages pull request merged. */
+  versionMergedAt: STARTED,
+  /**
+   * What the Version Packages merge (`version-merge`) changed: each file as it was on its first parent and
+   * as the merge left it.
+   */
+  versionFiles: {} as Record<string, { before?: string; after: string }>,
 }
+const VERSION_MERGE = 'version-merge'
 beforeEach(async () => {
   await getPool().query(
     'truncate table repository, publication, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
@@ -87,6 +95,8 @@ beforeEach(async () => {
     versionBranch: undefined,
     branchesRead: [],
     opened: [],
+    versionMergedAt: STARTED,
+    versionFiles: {},
   })
 })
 
@@ -105,10 +115,26 @@ const api = {
   },
   changedFiles: async (_repo: string, _token: string, base: string, head: string) => {
     gh.compared.push(`${base}...${head}`)
-    return gh.changed
+    if (head !== VERSION_MERGE) return gh.changed
+    return Object.keys(gh.versionFiles).map((path) => ({ path, status: 'modified' }))
   },
   filePaths: async () => Object.keys(gh.tree),
-  readFile: async (_repo: string, _token: string, path: string) => gh.tree[path],
+  readFile: async (_repo: string, _token: string, path: string, ref: string) => {
+    if (ref === VERSION_MERGE) return gh.versionFiles[path]?.after
+    if (ref === `${VERSION_MERGE}^`) return gh.versionFiles[path]?.before
+    return gh.tree[path]
+  },
+  readPullRequest: async (_repo: string, _token: string, number: number) => ({
+    number,
+    url: `https://github.com/usetheokit/ui/pull/${number}`,
+    state: 'closed',
+    merged: true,
+    mergeCommitSha: VERSION_MERGE,
+    mergedAt: gh.versionMergedAt,
+    headSha: 'version-head',
+    autoMerge: false,
+    mergeableState: 'unknown',
+  }),
   versionTags: async () => gh.versionTags,
   createRelease: async (_repo: string, _token: string, release: ReleaseInput) => {
     gh.created.push(release)
@@ -369,6 +395,101 @@ describe('publishing a changesets release', () => {
     expect((await row()).status).toBe('waiting')
     expect((await getDb().select().from(task).where(eq(task.id, other)))[0].stage).toBe('done')
     expect(gh.closed).toEqual([])
+  })
+
+  describe('when the Version Packages merge versioned several packages', () => {
+    const bump = (name: string, from: string, to: string) => ({
+      before: `{"name":"${name}","version":"${from}"}`,
+      after: `{"name":"${name}","version":"${to}"}`,
+    })
+    const ALL = [
+      '@theokit/gateway-yuanbao@0.1.1',
+      '@theokit/gateway-slack@0.5.1',
+      '@theokit/gateway@0.16.1',
+    ]
+    beforeEach(() => {
+      gh.versionPr = versionPr({
+        state: 'closed',
+        merged: true,
+        mergedAt: new Date('2026-11-11T12:10:00Z'),
+      })
+      gh.versionMergedAt = new Date('2026-11-11T12:10:00Z')
+      gh.versionFiles = {
+        'packages/gateway/package.json': bump('@theokit/gateway', '0.16.0', '0.16.1'),
+        'packages/gateway/CHANGELOG.md': { before: '', after: '## 0.16.1' },
+        'packages/slack/package.json': bump('@theokit/gateway-slack', '0.5.0', '0.5.1'),
+        'packages/yuanbao/package.json': bump('@theokit/gateway-yuanbao', '0.1.0', '0.1.1'),
+        'examples/demo/package.json': {
+          before: '{"name":"demo","version":"0.1.0","private":true}',
+          after: '{"name":"demo","version":"0.1.1","private":true}',
+        },
+      }
+    })
+    /** Twenty minutes after the Version Packages merge: the release workflow may still be publishing. */
+    const STILL_RUNNING = new Date('2026-11-11T12:30:00Z')
+    /** Forty minutes after it: past the bounded wait. */
+    const PAST_THE_WAIT = new Date('2026-11-11T12:50:00Z')
+
+    it('keeps waiting while one of the versioned packages has no release yet', async () => {
+      await waitingPublication()
+      const other = await seedTask('done', 'shipped1')
+      gh.published = ALL.slice(0, 2).map(published)
+
+      const result = await pollPublications(deps(STILL_RUNNING))
+
+      expect(result).toMatchObject({ published: [], waiting: 1 })
+      expect(await row()).toMatchObject({ status: 'waiting', tags: null })
+      expect((await row()).detail).toMatch(
+        /waiting for the release workflow to publish @theokit\/gateway@0\.16\.1$/,
+      )
+      expect((await getDb().select().from(task).where(eq(task.id, other)))[0].stage).toBe('done')
+      expect(gh.closed).toEqual([])
+      expect(gh.comments).toEqual([])
+    })
+
+    it('publishes with every tag once each versioned package has its release', async () => {
+      await waitingPublication()
+      gh.published = ALL.map(published)
+
+      const result = await pollPublications(deps(STILL_RUNNING))
+
+      expect(result.published).toHaveLength(1)
+      expect((await row()).status).toBe('published')
+      expect([...((await row()).tags ?? [])].sort()).toEqual([...ALL].sort())
+      expect((await row()).detail).not.toMatch(/no release for/)
+      for (const tag of ALL) expect(gh.comments[0].body).toContain(`\`${tag}\``)
+    })
+
+    it('publishes with what exists after the bounded wait, naming the package with no release', async () => {
+      await waitingPublication()
+      gh.published = ALL.slice(0, 2).map(published)
+
+      const result = await pollPublications(deps(PAST_THE_WAIT))
+
+      expect(result.published).toHaveLength(1)
+      expect([...((await row()).tags ?? [])].sort()).toEqual(ALL.slice(0, 2).sort())
+      expect((await row()).detail).toMatch(
+        /no release for @theokit\/gateway@0\.16\.1 30 minutes after the Version Packages merge/,
+      )
+      expect(gh.closed).toHaveLength(1)
+    })
+
+    it('records why it cannot tell the releases apart when GitHub names no merge commit for the merged pull request', async () => {
+      await waitingPublication()
+      gh.published = ALL.map(published)
+      const noMerge = {
+        ...api,
+        readPullRequest: async (...args: [string, string, number]) => ({
+          ...(await api.readPullRequest(...args)),
+          mergeCommitSha: undefined,
+        }),
+      } as unknown as GithubApi
+
+      const result = await pollPublications({ ...deps(STILL_RUNNING), api: noMerge })
+
+      expect(result.errors).toEqual([expect.stringMatching(/#180 .*no merge commit/)])
+      expect(await row()).toMatchObject({ status: 'waiting' })
+    })
   })
 
   it('releases each task once, when a pass that already published runs again', async () => {

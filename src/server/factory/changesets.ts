@@ -82,6 +82,54 @@ export function parseManifest(text: string, dir: string): PackageManifest {
   }
 }
 
+/**
+ * The release changesets makes for a package whose package.json a Version Packages merge changed, as
+ * `name@version`: given the manifest before the merge (undefined for a package the merge added) and after
+ * it. Nothing when the merge kept the version, or for a private package or one without a name or a version,
+ * which changesets never publishes.
+ */
+export function versionedTag(
+  before: string | undefined,
+  after: string,
+  path: string,
+): string | undefined {
+  const { name, version, private: kept } = parseJson(after, path)
+  if (typeof name !== 'string' || typeof version !== 'string' || kept === true) return undefined
+  const previous = before === undefined ? undefined : parseJson(before, path).version
+  return previous === version ? undefined : `${name}@${version}`
+}
+
+/**
+ * How long a publication waits, after its Version Packages pull request merged, for a release of every
+ * package that merge versioned. The release workflow creates the releases one package at a time, so reading
+ * them while it runs finds only some (theokit-gateways, publication 12). Past this, the publication goes on
+ * with the releases that exist and names the ones that do not, so it never waits forever.
+ */
+export const VERSION_RELEASES_WAIT_MS = 30 * 60_000
+
+/**
+ * Whether the published releases are the whole publication. `complete` carries what to add to its detail:
+ * nothing when every `expected` release is in `tags`, or the missing ones once the bounded wait is over.
+ */
+export type ReleasesRead = { wait: string } | { complete: string }
+
+export function releasesRead(
+  expected: string[],
+  tags: string[],
+  mergedAt: Date,
+  now: Date,
+): ReleasesRead {
+  const missing = expected.filter((tag) => !tags.includes(tag)).join(', ')
+  if (missing === '') return { complete: '' }
+  if (now.getTime() - mergedAt.getTime() < VERSION_RELEASES_WAIT_MS) {
+    return { wait: `waiting for the release workflow to publish ${missing}` }
+  }
+  const minutes = VERSION_RELEASES_WAIT_MS / 60_000
+  return {
+    complete: `; no release for ${missing} ${minutes} minutes after the Version Packages merge`,
+  }
+}
+
 /** The packages `.changeset/config.json` tells changesets to leave alone. */
 export function changesetIgnore(text: string): string[] {
   const ignore = parseJson(text, '.changeset/config.json').ignore

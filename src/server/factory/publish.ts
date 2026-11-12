@@ -3,10 +3,17 @@ import { desc, eq } from 'drizzle-orm'
 import type { Database } from '../db'
 import { publication, repository } from '../db/schema'
 import type { GithubApp } from '../github/app'
-import type { GithubApi } from '../github/pulls'
+import type { GithubApi, PublishedRelease } from '../github/pulls'
 
 import { integrationBranch } from './branches'
-import { isPackageTag, pickBackMerge, versionBranchFor } from './changesets'
+import { versionedTags } from './changed-packages'
+import {
+  isPackageTag,
+  pickBackMerge,
+  releasesRead,
+  versionBranchFor,
+  type ReleasesRead,
+} from './changesets'
 import { endWithoutVersionPullRequest, type Ending } from './publication-end'
 import { shipContained, unclosedNote } from './ship'
 import { classify } from './watch'
@@ -97,11 +104,40 @@ async function count(deps: PublishDeps, p: Publication, end: Ending, result: Pub
 const note = (db: Database, id: number, detail: string) =>
   db.update(publication).set({ detail }).where(eq(publication.id, id))
 
+/**
+ * Whether the releases out so far are the whole publication: one for every package the Version Packages
+ * merge versioned. The release workflow creates them one at a time, so until the last one is out the
+ * publication waits, up to a bounded time after that merge; then it goes on with what exists.
+ */
+async function readReleases(
+  deps: PublishDeps,
+  p: Publication,
+  token: string,
+  versionPullRequest: number,
+  tags: PublishedRelease[],
+): Promise<ReleasesRead> {
+  const pr = await deps.api.readPullRequest(p.repository, token, versionPullRequest)
+  if (!pr.mergeCommitSha) {
+    throw new Error(
+      `${p.repository}#${versionPullRequest} is the merged Version Packages pull request of this publication, but GitHub names no merge commit for it`,
+    )
+  }
+  const expected = await versionedTags(deps.api, p.repository, token, pr.mergeCommitSha)
+  const now = deps.now?.() ?? new Date()
+  return releasesRead(
+    expected,
+    tags.map((t) => t.tag),
+    pr.mergedAt ?? p.startedAt,
+    now,
+  )
+}
+
 /** One publication, one step further: the Version Packages merge, then the published versions. */
 async function advance(deps: PublishDeps, p: Publication, result: PublishResult) {
   const { token } = await deps.github.installationToken(p.repository)
   let merged = ''
-  if (p.versionPullRequest === null) {
+  let versionPullRequest = p.versionPullRequest
+  if (versionPullRequest === null) {
     const step = await mergeVersionPullRequest(deps, p, token)
     if ('unopened' in step) {
       return count(deps, p, await endWithoutVersionPullRequest(deps, p, token), result)
@@ -117,12 +153,17 @@ async function advance(deps: PublishDeps, p: Publication, result: PublishResult)
       .set({ versionPullRequest: step.merged, detail: merged })
       .where(eq(publication.id, p.id))
     result.merged.push(p.id)
+    versionPullRequest = step.merged
   }
   const tags = (await deps.api.releasesSince(p.repository, token, p.startedAt)).filter((r) =>
     isPackageTag(r.tag),
   )
-  if (tags.length === 0) {
-    await note(deps.db, p.id, `${merged}waiting for the release workflow to publish`)
+  const read: ReleasesRead =
+    tags.length === 0
+      ? { wait: 'waiting for the release workflow to publish' }
+      : await readReleases(deps, p, token, versionPullRequest, tags)
+  if ('wait' in read) {
+    await note(deps.db, p.id, `${merged}${read.wait}`)
     result.waiting += 1
     return
   }
@@ -144,7 +185,7 @@ async function advance(deps: PublishDeps, p: Publication, result: PublishResult)
       status: 'published',
       tags: tags.map((t) => t.tag),
       publishedAt: new Date(),
-      detail: `${merged}published ${tags.map((t) => t.tag).join(', ')}${unclosed}`,
+      detail: `${merged}published ${tags.map((t) => t.tag).join(', ')}${read.complete}${unclosed}`,
     })
     .where(eq(publication.id, p.id))
   result.published.push(p.id)

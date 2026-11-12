@@ -951,6 +951,7 @@ describe('what integrating through the repository CI needs', () => {
           state: 'closed',
           merged: true,
           merge_commit_sha: 'm1',
+          merged_at: '2026-11-12T13:00:00Z',
           head: { sha: 'h1' },
           auto_merge: { merge_method: 'merge' },
           mergeable_state: 'clean',
@@ -964,6 +965,7 @@ describe('what integrating through the repository CI needs', () => {
       state: 'closed',
       merged: true,
       mergeCommitSha: 'm1',
+      mergedAt: new Date('2026-11-12T13:00:00Z'),
       headSha: 'h1',
       autoMerge: true,
       mergeableState: 'clean',
@@ -990,6 +992,7 @@ describe('what integrating through the repository CI needs', () => {
     expect(await createGithubApi(fetch).readPullRequest('o/r', 't', 12)).toMatchObject({
       merged: false,
       mergeCommitSha: undefined,
+      mergedAt: undefined,
       autoMerge: false,
       mergeableState: 'dirty',
     })

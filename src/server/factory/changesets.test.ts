@@ -14,6 +14,9 @@ import {
   usesChangesets,
   pickBackMerge,
   RELEASE_RUN_GRACE_MS,
+  releasesRead,
+  VERSION_RELEASES_WAIT_MS,
+  versionedTag,
   releaseRunGraceOver,
   releaseRunOf,
   versionBranchFor,
@@ -80,6 +83,106 @@ describe('releaseRunGraceOver', () => {
     expect(RELEASE_RUN_GRACE_MS).toBe(10 * 60_000)
     expect(releaseRunGraceOver(started, after(RELEASE_RUN_GRACE_MS - 1))).toBe(false)
     expect(releaseRunGraceOver(started, after(RELEASE_RUN_GRACE_MS))).toBe(true)
+  })
+})
+
+describe('versionedTag', () => {
+  const path = 'packages/gateway/package.json'
+
+  it('is the release changesets makes for a published package whose version the merge moved', () => {
+    expect(
+      versionedTag(
+        '{"name":"@theokit/gateway","version":"0.16.0"}',
+        '{"name":"@theokit/gateway","version":"0.16.1"}',
+        path,
+      ),
+    ).toBe('@theokit/gateway@0.16.1')
+  })
+
+  it('is the first release of a package the merge added', () => {
+    expect(versionedTag(undefined, '{"name":"@theokit/new","version":"0.1.0"}', path)).toBe(
+      '@theokit/new@0.1.0',
+    )
+  })
+
+  it('is nothing when the merge changed the manifest but kept its version', () => {
+    expect(
+      versionedTag(
+        '{"name":"@theokit/gateway","version":"0.16.1","dependencies":{"a":"1"}}',
+        '{"name":"@theokit/gateway","version":"0.16.1","dependencies":{"a":"2"}}',
+        path,
+      ),
+    ).toBeUndefined()
+  })
+
+  it('is nothing for a private package, which changesets versions but never publishes', () => {
+    expect(
+      versionedTag(
+        '{"name":"example","version":"0.1.0","private":true}',
+        '{"name":"example","version":"0.1.1","private":true}',
+        path,
+      ),
+    ).toBeUndefined()
+  })
+
+  it('is nothing for a manifest without a name or a version', () => {
+    expect(versionedTag(undefined, '{"version":"1.0.0"}', path)).toBeUndefined()
+    expect(
+      versionedTag(
+        '{"name":"@theokit/gateway","version":"0.16.0"}',
+        '{"name":"@theokit/gateway"}',
+        path,
+      ),
+    ).toBeUndefined()
+  })
+
+  it('names the manifest that is not valid JSON', () => {
+    expect(() => versionedTag(undefined, '{', path)).toThrow(/packages\/gateway\/package.json/)
+    expect(() => versionedTag('{', '{"name":"a","version":"1.0.0"}', path)).toThrow(
+      /packages\/gateway\/package.json/,
+    )
+  })
+})
+
+describe('releasesRead', () => {
+  const merged = new Date('2026-11-12T13:00:00Z')
+  const after = (ms: number) => new Date(merged.getTime() + ms)
+  const expected = [
+    '@theokit/gateway-yuanbao@0.1.1',
+    '@theokit/gateway-slack@0.5.1',
+    '@theokit/gateway@0.16.1',
+  ]
+
+  it('is complete, with nothing to add, once every versioned package has its release', () => {
+    expect(releasesRead(expected, [...expected, 'other@1.0.0'], merged, after(0))).toEqual({
+      complete: '',
+    })
+  })
+
+  it('is complete when the merge versioned no package it can name', () => {
+    expect(releasesRead([], ['@theokit/ui@1.13.0'], merged, after(0))).toEqual({ complete: '' })
+  })
+
+  it('waits, naming the package, while one release is missing and the bounded wait lasts', () => {
+    expect(VERSION_RELEASES_WAIT_MS).toBe(30 * 60_000)
+    expect(
+      releasesRead(expected, expected.slice(0, 2), merged, after(VERSION_RELEASES_WAIT_MS - 1)),
+    ).toEqual({ wait: 'waiting for the release workflow to publish @theokit/gateway@0.16.1' })
+  })
+
+  it('names every missing release', () => {
+    expect(releasesRead(expected, expected.slice(0, 1), merged, after(0))).toEqual({
+      wait: 'waiting for the release workflow to publish @theokit/gateway-slack@0.5.1, @theokit/gateway@0.16.1',
+    })
+  })
+
+  it('stops waiting once the bounded wait is over, and says which release is missing', () => {
+    expect(
+      releasesRead(expected, expected.slice(0, 2), merged, after(VERSION_RELEASES_WAIT_MS)),
+    ).toEqual({
+      complete:
+        '; no release for @theokit/gateway@0.16.1 30 minutes after the Version Packages merge',
+    })
   })
 })
 
