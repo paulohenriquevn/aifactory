@@ -15,6 +15,18 @@ export function preReleaseTag(issueNumber: number, sha: string): string {
   return `pre/${issueNumber}-${sha.slice(0, 7)}`
 }
 
+const parts = (tag: string) => SEMVER.exec(tag)!.slice(1, 4).map(Number)
+
+/** The highest `v1.2.3` among tags, by number; pre-release versions and other names are left out. */
+export function highestVersion(tags: string[]): string | undefined {
+  const versions = tags.filter((tag) => tag.startsWith('v') && SEMVER.test(tag))
+  const above = (a: number[], b: number[]) => (a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0
+  return versions.reduce<string | undefined>(
+    (best, tag) => (best === undefined || above(parts(tag), parts(best)) ? tag : best),
+    undefined,
+  )
+}
+
 /** The tag after `latest`. With no release yet the first one is v0.1.0 whatever the bump. */
 export function nextVersion(latest: string | undefined, bump: Bump): string {
   if (latest === undefined) return 'v0.1.0'

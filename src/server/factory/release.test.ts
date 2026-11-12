@@ -1,11 +1,30 @@
 import { describe, expect, it } from 'vitest'
 
-import { nextVersion, preReleaseNotes, preReleaseTag } from './release'
+import { highestVersion, nextVersion, preReleaseNotes, preReleaseTag } from './release'
 
 describe('preReleaseTag', () => {
   it('names the issue and the commit, so each delivered commit has its own', () => {
     expect(preReleaseTag(7, 'abcdef1234567890')).toBe('pre/7-abcdef1')
     expect(preReleaseTag(7, 'abcdef1234567890')).not.toBe(preReleaseTag(7, '1234567abcdef'))
+  })
+})
+
+describe('highestVersion', () => {
+  it('takes the highest version by number, not by name or by order', () => {
+    expect(highestVersion(['v1.2.0', 'v1.10.0', 'v1.9.3', 'v0.9.0'])).toBe('v1.10.0')
+    expect(highestVersion(['v1.9.9', 'v2.0.0', 'v1.10.0'])).toBe('v2.0.0')
+    expect(highestVersion(['v1.2.10', 'v1.2.9'])).toBe('v1.2.10')
+    expect(highestVersion(['v1.2.9', 'v1.2.10'])).toBe('v1.2.10')
+    expect(highestVersion(['v2.0.0', 'v1.99.99'])).toBe('v2.0.0')
+  })
+
+  it('leaves out pre-release versions and tags of another shape', () => {
+    expect(highestVersion(['v1.2.0', 'v2.0.0-rc.1', 'vendor-drop', 'v3'])).toBe('v1.2.0')
+  })
+
+  it('is nothing when no tag is a version', () => {
+    expect(highestVersion(['vendor'])).toBeUndefined()
+    expect(highestVersion([])).toBeUndefined()
   })
 })
 

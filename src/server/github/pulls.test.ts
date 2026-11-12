@@ -237,13 +237,127 @@ describe('releases', () => {
     await expect(createGithubApi(fetch).createRelease('o/r', 't', release)).rejects.toThrow(/403/)
   })
 
-  it('reads the latest full release, or nothing when there is none', async () => {
+  it('lists the tags that start with v, by name', async () => {
     const some = fakeFetch({
-      'GET /releases/latest': { status: 200, body: { tag_name: 'v1.2.3' } },
+      'GET /git/matching-refs/tags/v': {
+        status: 200,
+        body: [{ ref: 'refs/tags/v1.2.0' }, { ref: 'refs/tags/vendor-drop' }],
+      },
     })
-    expect(await createGithubApi(some.fetch).latestReleaseTag('o/r', 't')).toBe('v1.2.3')
-    const none = fakeFetch({ 'GET /releases/latest': { status: 404 } })
-    expect(await createGithubApi(none.fetch).latestReleaseTag('o/r', 't')).toBeUndefined()
+    expect(await createGithubApi(some.fetch).versionTags('o/r', 't')).toEqual([
+      'v1.2.0',
+      'vendor-drop',
+    ])
+    expect(some.calls[0].url).toBe('/git/matching-refs/tags/v')
+  })
+
+  it('throws when GitHub will not list the tags', async () => {
+    const { fetch } = fakeFetch({ 'GET /git/matching-refs/tags/v': { status: 403 } })
+    await expect(createGithubApi(fetch).versionTags('o/r', 't')).rejects.toThrow(/403/)
+  })
+})
+
+describe('what changed between two branches, and the files of a branch', () => {
+  /** A compare that answers one page of files per request, then none. */
+  function comparePages(pages: { filename: string; previous_filename?: string }[][]) {
+    const urls: string[] = []
+    const fetch = async (url: string) => {
+      urls.push(url.replace('https://api.github.com/repos/o/r', ''))
+      const page = Number(new URL(url).searchParams.get('page'))
+      return new Response(JSON.stringify({ files: pages[page - 1] ?? [] }), { status: 200 })
+    }
+    return { fetch, urls }
+  }
+
+  it('lists every file the head changed since the base, page by page, with the old name of a rename', async () => {
+    const { fetch, urls } = comparePages([
+      [{ filename: 'apps/theoclaw/a.ts' }, { filename: 'b.md', previous_filename: 'old/b.md' }],
+      [{ filename: 'pnpm-lock.yaml' }],
+    ])
+
+    expect(await createGithubApi(fetch).changedFiles('o/r', 't', 'main', 'develop')).toEqual([
+      'apps/theoclaw/a.ts',
+      'b.md',
+      'old/b.md',
+      'pnpm-lock.yaml',
+    ])
+    expect(urls).toEqual([
+      '/compare/main...develop?per_page=100&page=1',
+      '/compare/main...develop?per_page=100&page=2',
+      '/compare/main...develop?per_page=100&page=3',
+    ])
+  })
+
+  it('refuses to answer for a change larger than GitHub lists, rather than leave files out', async () => {
+    const page = Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` }))
+    const { fetch } = comparePages(Array.from({ length: 10 }, () => page))
+    await expect(
+      createGithubApi(fetch).changedFiles('o/r', 't', 'main', 'develop'),
+    ).rejects.toThrow(/main\.\.\.develop on o\/r changes 3000 files or more/)
+  })
+
+  it('throws when GitHub will not compare the branches', async () => {
+    const { fetch } = fakeFetch({ 'GET /compare/main...develop': { status: 404 } })
+    await expect(
+      createGithubApi(fetch).changedFiles('o/r', 't', 'main', 'develop'),
+    ).rejects.toThrow(/404 comparing main with develop/)
+  })
+
+  it('lists the files of a branch, without directories', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /git/trees/develop': {
+        status: 200,
+        body: {
+          truncated: false,
+          tree: [
+            { path: 'package.json', type: 'blob' },
+            { path: 'apps', type: 'tree' },
+            { path: 'apps/theoclaw/package.json', type: 'blob' },
+          ],
+        },
+      },
+    })
+    expect(await createGithubApi(fetch).filePaths('o/r', 't', 'develop')).toEqual([
+      'package.json',
+      'apps/theoclaw/package.json',
+    ])
+    expect(calls[0].url).toBe('/git/trees/develop?recursive=1')
+  })
+
+  it('refuses a listing GitHub cut short, which would leave packages out', async () => {
+    const { fetch } = fakeFetch({
+      'GET /git/trees/develop': { status: 200, body: { truncated: true, tree: [] } },
+    })
+    await expect(createGithubApi(fetch).filePaths('o/r', 't', 'develop')).rejects.toThrow(
+      /truncated/,
+    )
+  })
+
+  it('reads a file at a branch, raw, and nothing when it is not there', async () => {
+    const urls: string[] = []
+    const accepts: string[] = []
+    const fetch = async (url: string, init: RequestInit = {}) => {
+      urls.push(url.replace('https://api.github.com/repos/o/r', ''))
+      accepts.push((init.headers as Record<string, string>).accept)
+      return url.includes('missing')
+        ? new Response('{}', { status: 404 })
+        : new Response('{"name":"theoclaw"}', { status: 200 })
+    }
+    const api = createGithubApi(fetch)
+
+    expect(await api.readFile('o/r', 't', 'apps/the claw/package.json', 'develop')).toBe(
+      '{"name":"theoclaw"}',
+    )
+    expect(await api.readFile('o/r', 't', 'missing.json', 'develop')).toBeUndefined()
+    expect(urls[0]).toBe('/contents/apps/the%20claw/package.json?ref=develop')
+    expect(accepts[0]).toBe('application/vnd.github.raw+json')
+  })
+
+  it('throws when GitHub will not give the file', async () => {
+    const { fetch } = fakeFetch({ 'GET /contents/package.json': { status: 403 } })
+    await expect(
+      createGithubApi(fetch).readFile('o/r', 't', 'package.json', 'develop'),
+    ).rejects.toThrow(/403 reading package.json at develop/)
   })
 })
 

@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CHANGESET_CHECK,
+  changesetIgnore,
   changesetsOn,
+  enclosingPackages,
+  isIgnored,
+  packageDirs,
+  parseManifest,
+  publishedTouched,
   isPackageTag,
   pickBackMerge,
   versionBranchFor,
@@ -105,5 +111,153 @@ describe('pickBackMerge', () => {
 
   it('is nothing when no pull request is open', () => {
     expect(pickBackMerge([], branches)).toBeUndefined()
+  })
+})
+
+describe('packageDirs', () => {
+  it('names the directory of every package.json, the root as the empty one', () => {
+    expect(
+      packageDirs([
+        'package.json',
+        'README.md',
+        'packages/ui/package.json',
+        'packages/ui/src/index.ts',
+        'apps/theoclaw/package.json',
+      ]),
+    ).toEqual(['', 'packages/ui', 'apps/theoclaw'])
+  })
+
+  it('leaves out a vendored node_modules and a file merely ending in package.json', () => {
+    expect(packageDirs(['vendor/node_modules/x/package.json', 'docs/not-a-package.json'])).toEqual(
+      [],
+    )
+  })
+})
+
+describe('enclosingPackages', () => {
+  const dirs = ['', 'packages/ui', 'packages/ui/fixtures/app', 'apps/theoclaw']
+
+  it('is every package directory a file is under, the root included', () => {
+    expect(enclosingPackages('packages/ui/fixtures/app/a.ts', dirs)).toEqual([
+      '',
+      'packages/ui',
+      'packages/ui/fixtures/app',
+    ])
+    expect(enclosingPackages('pnpm-lock.yaml', dirs)).toEqual([''])
+  })
+
+  it('does not take a directory that only shares a prefix with the file', () => {
+    expect(enclosingPackages('packages/ui-kit/a.ts', ['packages/ui'])).toEqual([])
+    expect(enclosingPackages('apps/theoclaw/src/a.ts', ['apps/theoclaw'])).toEqual([
+      'apps/theoclaw',
+    ])
+  })
+
+  it('is nothing for a file outside every package', () => {
+    expect(enclosingPackages('docs/a.md', ['packages/ui'])).toEqual([])
+  })
+})
+
+describe('isIgnored', () => {
+  it('matches a name in the ignore list, exactly', () => {
+    expect(isIgnored('theoclaw', ['theoclaw'])).toBe(true)
+    expect(isIgnored('theoclaw-cli', ['theoclaw'])).toBe(false)
+    expect(isIgnored('theoclaw', [])).toBe(false)
+  })
+
+  it('takes a star as any part of a name without a slash, as in a scope', () => {
+    expect(isIgnored('@theokit/example-chat', ['@theokit/example-*'])).toBe(true)
+    expect(isIgnored('@theokit/ui', ['@theokit/example-*'])).toBe(false)
+    expect(isIgnored('@other/example-chat', ['@theokit/example-*'])).toBe(false)
+    expect(isIgnored('@theokit/a/b', ['@theokit/*'])).toBe(false)
+  })
+
+  it('reads the other characters of a pattern literally', () => {
+    expect(isIgnored('axb', ['a.b'])).toBe(false)
+    expect(isIgnored('a.b', ['a.b'])).toBe(true)
+  })
+})
+
+describe('parseManifest', () => {
+  it('reads the name and whether the package is private', () => {
+    expect(parseManifest('{"name":"theoclaw","private":true}', 'apps/theoclaw')).toEqual({
+      name: 'theoclaw',
+      private: true,
+    })
+    expect(parseManifest('{"name":"@theokit/ui"}', 'packages/ui')).toEqual({
+      name: '@theokit/ui',
+      private: false,
+    })
+  })
+
+  it('is a package with no name, and not private, when the manifest says neither', () => {
+    expect(parseManifest('{"private":"yes"}', 'x')).toEqual({ name: undefined, private: false })
+    expect(parseManifest('{"name":5}', 'x')).toEqual({ name: undefined, private: false })
+  })
+
+  it('names the file when it is not JSON', () => {
+    expect(() => parseManifest('{', 'packages/ui')).toThrow(
+      /^packages\/ui\/package.json is not valid JSON/,
+    )
+    expect(() => parseManifest('{', '')).toThrow(/^package.json is not valid JSON/)
+  })
+})
+
+describe('changesetIgnore', () => {
+  it('reads the ignore list of .changeset/config.json, empty when there is none', () => {
+    expect(changesetIgnore('{"ignore":["theoclaw"]}')).toEqual(['theoclaw'])
+    expect(changesetIgnore('{"access":"public"}')).toEqual([])
+  })
+
+  it('says which file is not JSON', () => {
+    expect(() => changesetIgnore('nope')).toThrow(/^\.changeset\/config.json is not valid JSON/)
+  })
+})
+
+describe('publishedTouched', () => {
+  const manifests = new Map([
+    ['', { name: 'theokit-monorepo', private: true }],
+    ['packages/ui', { name: '@theokit/ui', private: false }],
+    ['packages/sdk', { name: '@theokit/sdk', private: false }],
+    ['apps/theoclaw', { name: 'theoclaw', private: false }],
+    ['apps/site', { name: 'site', private: true }],
+    ['apps/unnamed', { name: undefined, private: false }],
+  ])
+
+  it('is nothing when every change is in an ignored or private package, or at the private root', () => {
+    expect(
+      publishedTouched(
+        ['apps/theoclaw/src/a.ts', 'apps/site/page.tsx', 'pnpm-lock.yaml', 'apps/unnamed/x.ts'],
+        manifests,
+        ['theoclaw'],
+      ),
+    ).toEqual([])
+  })
+
+  it('names each published package a change touches, once and in order', () => {
+    expect(
+      publishedTouched(
+        ['packages/ui/b.ts', 'apps/theoclaw/a.ts', 'packages/sdk/x.ts', 'packages/ui/a.ts'],
+        manifests,
+        ['theoclaw'],
+      ),
+    ).toEqual(['@theokit/sdk', '@theokit/ui'])
+  })
+
+  it('counts a file of a package nested in a published one as a change to the published one', () => {
+    const nested = new Map([
+      ...manifests,
+      ['packages/ui/fixtures/app', { name: 'fixture', private: true }],
+    ])
+    expect(publishedTouched(['packages/ui/fixtures/app/a.ts'], nested, [])).toEqual(['@theokit/ui'])
+  })
+
+  it('takes a published root package, as in a repository that is one package', () => {
+    const single = new Map([['', { name: 'tool', private: false }]])
+    expect(publishedTouched(['src/a.ts'], single, [])).toEqual(['tool'])
+  })
+
+  it('is nothing for a file in no package', () => {
+    expect(publishedTouched(['docs/a.md'], new Map(), [])).toEqual([])
   })
 })

@@ -140,6 +140,12 @@ const githubApi: GithubApi & {
   openFailsFor: string | undefined
   /** What `.changeset` on the pre-release branch holds; undefined when the repository has none. */
   changesets: string[] | undefined
+  /** The files `develop` changes since the release branch. */
+  changed: string[]
+  /** The files on `develop`, with what each holds. */
+  tree: Record<string, string>
+  /** The release branch each comparison was made from. */
+  compared: string[]
   /** The status checks the integration branch requires. */
   required: string[]
   /** The status checks the release branch requires. */
@@ -155,6 +161,9 @@ const githubApi: GithubApi & {
   autoMergeRefused: false,
   openFailsFor: undefined,
   changesets: undefined,
+  changed: [],
+  tree: {},
+  compared: [],
   branches: FakeBranches.prepared(),
   branchMerges: [],
   mergeFails: false,
@@ -198,8 +207,18 @@ const githubApi: GithubApi & {
       url: `https://github.com/paulo/app/releases/tag/${release.tag}`,
     }
   },
-  async latestReleaseTag() {
-    return this.latest
+  async changedFiles(_repo, _token, base) {
+    this.compared.push(base)
+    return this.changed
+  },
+  async filePaths() {
+    return Object.keys(this.tree)
+  },
+  async readFile(_repo, _token, path) {
+    return this.tree[path]
+  },
+  async versionTags() {
+    return this.latest ? [this.latest] : []
   },
   async listDirectory(_repo, _token, path) {
     return path === '.changeset' ? this.changesets : undefined
@@ -294,6 +313,9 @@ beforeEach(() => {
   githubApi.branchMergeFails = false
   githubApi.openFailsFor = undefined
   githubApi.changesets = undefined
+  githubApi.changed = []
+  githubApi.tree = {}
+  githubApi.compared = []
   githubApi.required = []
   githubApi.releaseRequired = []
   githubApi.autoMerges = []
@@ -2468,16 +2490,73 @@ describe('release', () => {
     ])
   })
 
-  it('refuses a release that would publish nothing, because develop has no changeset', async () => {
-    const id = await delivered()
+  /** A changesets repository like theokit: a private root, one published package and one ignored app. */
+  function changesetsMonorepo(changed: string[]) {
     githubApi.changesets = ['config.json', 'README.md']
+    githubApi.changed = changed
+    githubApi.tree = {
+      'package.json': '{"name":"theokit-monorepo","private":true}',
+      '.changeset/config.json': '{"ignore":["theoclaw"]}',
+      'packages/ui/package.json': '{"name":"@theokit/ui","version":"1.13.0"}',
+      'packages/ui/src/index.ts': '',
+      'apps/theoclaw/package.json': '{"name":"theoclaw","version":"0.1.0"}',
+      'apps/theoclaw/src/a.ts': '',
+    }
+  }
+
+  it('releases as its own when develop has no changeset and changes only packages changesets never publishes', async () => {
+    const id = await delivered()
+    const contained = await integrated(8, 'inside01')
+    changesetsMonorepo(['apps/theoclaw/src/a.ts', 'pnpm-lock.yaml', '.github/workflows/ci.yml'])
+    githubApi.latest = 'v1.2.0'
+
+    const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: 'v1.3.0', mergeSha: 'merge0001' })
+    expect(result.publishing).toBeUndefined()
+    expect(githubApi.compared).toEqual(['main'])
+    expect(githubApi.merges).toHaveLength(2)
+    expect(githubApi.releases.at(-1)).toMatchObject({ tag: 'v1.3.0', prerelease: false })
+    expect(await getDb().select().from(publication)).toEqual([])
+    expect(await stageOf(id)).toBe('released')
+    expect(await stageOf(contained)).toBe('released')
+    expect(githubApi.closed.sort()).toEqual([7, 8])
+  })
+
+  it('refuses a release with no changeset when a package changesets publishes changed, and names it', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['apps/theoclaw/src/a.ts', 'packages/ui/src/index.ts'])
 
     await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
-      /no changeset.*nothing would be published/,
+      /develop has no changeset, and it changes @theokit\/ui since main/,
     )
     expect(githubApi.merges).toHaveLength(1)
-    expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+    expect(await stageOf(id)).toBe('done')
     expect(await getDb().select().from(publication)).toEqual([])
+  })
+
+  it('reads no change when a changeset waits: the publication goes on as before', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['packages/ui/src/index.ts'])
+    githubApi.changesets = ['config.json', 'brave-fox.md']
+
+    const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ publishing: 'changesets', tag: undefined })
+    expect(githubApi.compared).toEqual([])
+    expect(await getDb().select().from(publication)).toHaveLength(1)
+  })
+
+  it('waits for the release branch checks as its own release, when only unpublished packages changed', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['apps/theoclaw/src/a.ts'])
+    githubApi.releaseRequired = ['CI']
+
+    const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ awaitingChecks: ['CI'] })
+    expect(result.publishing).toBeUndefined()
+    expect(await getDb().select().from(releaseWait)).toMatchObject([{ changesets: false }])
   })
 
   it('promotes into the release branch the owner named, not the default branch', async () => {

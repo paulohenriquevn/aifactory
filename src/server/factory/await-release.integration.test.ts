@@ -84,7 +84,7 @@ const api = {
     if (gh.disableFails) throw new Error('GitHub could not turn auto-merge off on paulo/app#381')
     gh.autoMergeOff.push(number)
   },
-  latestReleaseTag: async () => gh.latest,
+  versionTags: async () => (gh.latest ? [gh.latest] : []),
   contains: async () => true,
   commentOnIssue: async () => 'c',
   closeIssue: async (_repo: string, _token: string, issue: number) => {

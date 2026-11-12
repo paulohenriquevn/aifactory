@@ -393,8 +393,9 @@ protegida que só aceita PR), a task continua integrada e a tag fica sobre o com
 PR só, e as integrações seguintes entram nele. Checks vermelhos não geram entrega, porque não há o que entregar.
 
 **Release.** É a promoção de `develop` para a branch padrão: abre (ou reaproveita) um PR `develop → main` e
-o mergeia, e publica uma release de verdade com a versão seguinte à da última (`v0.1.0` na primeira, e
-`patch`, `minor` ou `major` escolhe o que sobe). Como é a promoção da branch, **tudo o que está em `develop`
+o mergeia, e publica uma release de verdade com a versão seguinte à maior tag `vX.Y.Z` do repositório
+(`v0.1.0` quando não há nenhuma; tags de pacote e pré-releases como `v2.0.0-rc.1` não contam), e `patch`,
+`minor` ou `major` escolhe o que sobe. Como é a promoção da branch, **tudo o que está em `develop`
 vai junto** com o item pedido. Quem a faz:
 
 - um humano, pelo painel. O clique vale como a aprovação, e o painel pede confirmação;
@@ -453,8 +454,15 @@ repositórios do theokit), a versão não é da fábrica: vem dos arquivos `.cha
 npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio repositório, ao mergear o PR
 "Version Packages" que ele abre a partir de `changeset-release/main`. Nesse caso o `release()`:
 
-- recusa quando `develop` não tem nenhum changeset além do README, porque nada seria publicado;
-- promove `develop` para a branch de release como sempre, mas não cria tag nem release próprios;
+- quando `develop` não tem nenhum changeset além do README, lê pela API de comparação os arquivos que
+  `develop` muda desde a branch de release e liga cada um aos pacotes em que está (todo `package.json` de
+  `develop` acima dele, a raiz incluída). Se algum desses pacotes é publicado pelo changesets (tem nome, não
+  é `private` e não está no `ignore` do `.changeset/config.json`), recusa e diz o nome do pacote, porque ele
+  não seria publicado. Se nenhum é (o `theoclaw`, ignorado no theokit, ou arquivos fora de pacote), o
+  release é o da própria fábrica: tag, release, tasks liberadas e issues fechadas, como num repositório
+  sem changesets, porque nenhum changeset pode existir para esses pacotes;
+- com um changeset esperando, promove `develop` para a branch de release como sempre, mas não cria tag nem
+  release próprios;
 - grava uma `publication` esperando, e a task que pediu o release fica `released` (promovida). Quando a
   branch de release exige checks, isso acontece só depois que o GitHub mergeia a promoção (veja acima).
 

@@ -16,8 +16,9 @@ import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
 
 import { PRE_RELEASE_BRANCH, releaseBranchOf } from './branches'
+import { publishedPackagesChanged } from './changed-packages'
 import { changesetsOn } from './changesets'
-import { nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
+import { highestVersion, nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
 import { shipContained } from './ship'
 import { enterStage } from './stages'
 
@@ -199,7 +200,7 @@ export async function release(
     .from(repository)
     .where(sql`lower(${repository.fullName}) = lower(${row.repository})`)
   const target = await releaseBranchOf(deps.api, row.repository, token, saved ?? {})
-  const usesChangesets = await changesetsToShip(deps, row.repository, token)
+  const usesChangesets = await changesetsToShip(deps, row.repository, token, target)
   let opened: { number: number; url: string }
   try {
     opened = await deps.api.openPullRequest(row.repository, token, {
@@ -408,23 +409,33 @@ export async function completeRelease(
 }
 
 /**
- * Whether the repository publishes with changesets, read on the pre-release branch. Such a release with no
- * changeset waiting is refused: the promotion would land and nothing would be published.
+ * Whether the release is left to changesets, read on the pre-release branch: true when the repository
+ * publishes with changesets and a changeset waits. With none waiting, what the pre-release branch changes
+ * since the release branch decides. A change only to packages changesets never publishes (private, ignored,
+ * or no package at all) is the factory's own release, since no changeset can exist for them and reaching the
+ * release branch is what makes them available. A change to a published package is refused, naming it: the
+ * promotion would land and the package would not be published.
  */
 async function changesetsToShip(
   deps: Pick<DeliverDeps, 'api'>,
   repo: string,
   token: string,
+  target: string,
 ): Promise<boolean> {
   const state = changesetsOn(
     await deps.api.listDirectory(repo, token, '.changeset', PRE_RELEASE_BRANCH),
   )
-  if (state.uses && state.pending.length === 0) {
+  if (!state.uses || state.pending.length > 0) return state.uses
+  const published = await publishedPackagesChanged(deps.api, repo, token, {
+    base: target,
+    head: PRE_RELEASE_BRANCH,
+  })
+  if (published.length > 0) {
     throw new ReleaseRefused(
-      `${PRE_RELEASE_BRANCH} has no changeset, so nothing would be published: this repository releases with changesets, and its release workflow publishes only what a .changeset/*.md file describes`,
+      `${PRE_RELEASE_BRANCH} has no changeset, and it changes ${published.join(', ')} since ${target}, so nothing of that would be published: this repository releases with changesets, and its release workflow publishes only what a .changeset/*.md file describes`,
     )
   }
-  return state.uses
+  return false
 }
 
 /**
@@ -446,8 +457,9 @@ async function handToChangesets(
 }
 
 /**
- * Tags the promotion with the next version and creates its release, for a repository that does not publish
- * with changesets. A failure is returned, not thrown: the merge already happened.
+ * Tags the promotion with the version after the highest `v` tag and creates its release, for a repository
+ * that does not publish with changesets, or one whose promotion changes no package changesets publishes.
+ * A failure is returned, not thrown: the merge already happened.
  */
 async function createOwnRelease(
   deps: Pick<DeliverDeps, 'api'>,
@@ -463,7 +475,7 @@ async function createOwnRelease(
 ): Promise<Published> {
   const { row, pre, pr, token } = input
   try {
-    const latest = await deps.api.latestReleaseTag(row.repository, token)
+    const latest = highestVersion(await deps.api.versionTags(row.repository, token))
     const tag = nextVersion(latest, input.bump)
     const made = await deps.api.createRelease(row.repository, token, {
       tag,

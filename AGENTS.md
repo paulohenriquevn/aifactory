@@ -119,8 +119,11 @@ reads that file, not a convention.
   issue that will not close is recorded, never thrown. `ensureBranches` creates the two missing
   branches, never touches one that exists, and refuses the default branch as the integration branch.
 - **A repository that publishes with changesets tags its own releases.** When `.changeset/config.json` is on
-  `develop`, `release()` makes no tag: it refuses when no changeset waits (nothing would be published),
-  promotes, and records a `publication`. The `publish-changesets` cron merges the Version Packages pull
+  `develop` and a changeset waits there, `release()` makes no tag: it promotes and records a `publication`.
+  With no changeset waiting, it reads what `develop` changes since the release branch (`changed-packages.ts`):
+  when a package changesets publishes changed, it refuses and names the package; when every change is in a
+  private package, an ignored one (`ignore` in `.changeset/config.json`) or no package, the release is the
+  factory's own, tagged after the highest `v` tag, since no changeset can exist for those. The `publish-changesets` cron merges the Version Packages pull
   request (`changeset-release/<release branch>`) once its checks are green, under the same decision, and
   only that pull request; when the workflow has published, it releases the tasks in the promoted commit and
   closes their issues with the versions. Such a repository also gets a `changeset` check.

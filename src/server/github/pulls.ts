@@ -116,8 +116,20 @@ export type GithubApi = {
    * the existing release comes back, so a repeated call delivers once.
    */
   createRelease(repo: string, token: string, release: ReleaseInput): Promise<CreatedRelease>
-  /** The tag of the latest full release (not a pre-release), if there is one. */
-  latestReleaseTag(repo: string, token: string): Promise<string | undefined>
+  /**
+   * Every tag whose name starts with `v`, where the factory's own versions are. Not the latest release: in
+   * a repository that publishes with changesets that is a package's tag (`@theokit/ui@1.13.0`).
+   */
+  versionTags(repo: string, token: string): Promise<string[]>
+  /**
+   * The files `head` changes since `base`, a rename by both names. A change too large for GitHub to list
+   * whole is an error, never a partial list.
+   */
+  changedFiles(repo: string, token: string, base: string, head: string): Promise<string[]>
+  /** The path of every file on a branch. */
+  filePaths(repo: string, token: string, ref: string): Promise<string[]>
+  /** What a file holds on a branch, or undefined when it is not there. */
+  readFile(repo: string, token: string, path: string, ref: string): Promise<string | undefined>
   /** The names in a directory at a ref, or undefined when there is no such directory there. */
   listDirectory(
     repo: string,
@@ -244,6 +256,9 @@ const statusState = (state: string): CheckReport['state'] => {
 
 type GraphqlAnswer<T> = { data?: T; errors?: { message: string }[] }
 
+/** The most files GitHub's compare lists for one comparison. */
+const MAX_COMPARE_FILES = 3000
+
 export function createGithubApi(
   fetchImpl: FetchLike = (url, init) => fetch(url, init),
   wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
@@ -256,6 +271,7 @@ export function createGithubApi(
         'x-github-api-version': '2022-11-28',
         authorization: `Bearer ${token}`,
         ...(init.body ? { 'content-type': 'application/json' } : {}),
+        ...(init.headers as Record<string, string> | undefined),
       },
     })
 
@@ -386,14 +402,61 @@ export function createGithubApi(
       return { id: made.id, tag: made.tag_name, url: made.html_url }
     },
 
-    async latestReleaseTag(repo, token) {
-      const response = await call(repo, token, '/releases/latest')
-      if (response.status === 404) return undefined
-      return (
-        (await (await ensure(response, `reading the latest release of ${repo}`, [200])).json()) as {
-          tag_name: string
+    async versionTags(repo, token) {
+      const refs = (await (
+        await ensure(
+          await call(repo, token, '/git/matching-refs/tags/v'),
+          `listing the version tags of ${repo}`,
+          [200],
+        )
+      ).json()) as { ref: string }[]
+      return refs.map((r) => r.ref.slice('refs/tags/'.length))
+    },
+
+    async changedFiles(repo, token, base, head) {
+      const files: string[] = []
+      for (let page = 1; ; page += 1) {
+        const body = (await (
+          await ensure(
+            await call(repo, token, `/compare/${base}...${head}?per_page=100&page=${page}`),
+            `comparing ${base} with ${head} on ${repo}`,
+            [200],
+          )
+        ).json()) as { files?: { filename: string; previous_filename?: string }[] }
+        const listed = body.files ?? []
+        if (listed.length === 0) return files
+        files.push(...listed.flatMap((f) => [f.filename, f.previous_filename ?? []].flat()))
+        if (files.length >= MAX_COMPARE_FILES) {
+          throw new Error(
+            `${base}...${head} on ${repo} changes ${MAX_COMPARE_FILES} files or more, the most GitHub lists, so what it changes cannot be told`,
+          )
         }
-      ).tag_name
+      }
+    },
+
+    async filePaths(repo, token, ref) {
+      const body = (await (
+        await ensure(
+          await call(repo, token, `/git/trees/${encodeURIComponent(ref)}?recursive=1`),
+          `listing the files of ${ref} on ${repo}`,
+          [200],
+        )
+      ).json()) as { truncated: boolean; tree: { path: string; type: string }[] }
+      if (body.truncated) {
+        throw new Error(`GitHub truncated the listing of ${ref} on ${repo}: it has too many files`)
+      }
+      return body.tree.filter((entry) => entry.type === 'blob').map((entry) => entry.path)
+    },
+
+    async readFile(repo, token, path, ref) {
+      const response = await call(
+        repo,
+        token,
+        `/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`,
+        { headers: { accept: 'application/vnd.github.raw+json' } },
+      )
+      if (response.status === 404) return undefined
+      return (await ensure(response, `reading ${path} at ${ref} on ${repo}`, [200])).text()
     },
 
     async findPullRequest(repo, token, head) {
