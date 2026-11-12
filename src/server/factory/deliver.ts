@@ -6,6 +6,7 @@ import {
   delivery,
   evidence,
   publication,
+  releaseWait,
   repository,
   review,
   task,
@@ -125,11 +126,19 @@ export class ReleaseRefused extends Error {
 export type ReleaseResult = {
   tag: string | undefined
   url: string | undefined
-  mergeSha: string
+  /** The promotion's merge commit; undefined while the release waits for the release branch's checks. */
+  mergeSha: string | undefined
   /** The merge happened but the release object could not be created. */
   releaseError?: string
   /** The repository publishes with changesets: its own workflow tags the release, and a publication waits. */
   publishing?: 'changesets'
+  /**
+   * The release branch requires these checks, so nothing merged yet: GitHub merges the release pull request
+   * through auto-merge once they pass, and the `integrate-after-ci` cron finishes the release then.
+   */
+  awaitingChecks?: string[]
+  /** The release pull request, when the release waits for its checks. */
+  pullRequestUrl?: string
 }
 
 /** What came of the promotion: the factory's own release, or a publication left to changesets. */
@@ -149,6 +158,10 @@ type Published = {
  * merge is pinned to the commit seen, so a push that lands between the look and the merge makes GitHub
  * refuse it instead of merging something unseen.
  *
+ * A release branch that requires status checks cannot take the merge before they report, so the release
+ * waits instead: auto-merge is turned on, pinned to the same commit, and `pollAwaitingReleases` finishes the
+ * release (the tag, or the publication of a changesets repository) once GitHub merges it.
+ *
  * `actor` is who decided: `human` from the panel, `agent:<name>` when an agent's approval was enough.
  */
 export async function release(
@@ -167,13 +180,7 @@ export async function release(
       'this work was not integrated: its pull request is still waiting to be merged into the integration branch, so it is not on the pre-release branch',
     )
   }
-  const [pre] = (
-    await deps.db
-      .select()
-      .from(delivery)
-      .where(and(eq(delivery.taskId, taskId), eq(delivery.kind, 'prerelease')))
-      .orderBy(asc(delivery.id))
-  ).slice(-1)
+  const pre = await latestPreRelease(deps.db, taskId)
   if (!pre) throw new ReleaseRefused('there is no pre-release for this work')
   const checks = await latestChecks(deps.db, taskId, row.headSha)
   if (checks.length === 0 || checks.some((c) => !c.passed)) {
@@ -211,6 +218,20 @@ export async function release(
   if (pr.state !== 'open') throw new ReleaseRefused('the release pull request is closed')
   if (pr.draft) throw new ReleaseRefused('the release pull request is a draft: mark it ready first')
   const sha = pr.headSha
+  const pull = { number: pr.number, url: pr.url }
+  const required = await deps.api.requiredChecks(row.repository, token, target)
+  if (required.length > 0) {
+    return waitForChecks(deps, {
+      row,
+      pull,
+      sha,
+      target,
+      token,
+      required,
+      changesets: usesChangesets,
+      ...options,
+    })
+  }
 
   // Takes the task so two clicks cannot merge twice. It is given back if the merge does not happen.
   const claimed = await deps.db
@@ -231,25 +252,128 @@ export async function release(
       `GitHub did not merge it: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
+  return completeRelease(deps, {
+    row,
+    pre,
+    pull,
+    token,
+    target,
+    sha,
+    mergeSha: merged.sha,
+    changesets: usesChangesets,
+    ...options,
+  })
+}
 
-  const published: Published = usesChangesets
-    ? await handToChangesets(deps, { row, target, mergeSha: merged.sha, actor: options.actor })
-    : await createOwnRelease(deps, { row, pre, pr, token, mergeSha: merged.sha, ...options })
+/** The latest pre-release of a task: what a release promotes. */
+export async function latestPreRelease(db: Database, taskId: number) {
+  const [pre] = (
+    await db
+      .select()
+      .from(delivery)
+      .where(and(eq(delivery.taskId, taskId), eq(delivery.kind, 'prerelease')))
+      .orderBy(asc(delivery.id))
+  ).slice(-1)
+  return pre
+}
+
+/** What finishing a release needs, whether the factory merged the promotion or GitHub did. */
+type Promotion = {
+  row: typeof task.$inferSelect
+  pull: { number: number; url: string }
+  token: string
+  target: string
+  /** The head of the release pull request that was promoted. */
+  sha: string
+  changesets: boolean
+  bump: Bump
+  actor: string
+}
+
+/**
+ * Leaves the promotion to GitHub: auto-merge is turned on, pinned to the head seen, and the release waits
+ * in `release_wait` for the release branch's required checks. A repository has one release pull request, so
+ * a second release while one waits is refused; GitHub refusing auto-merge refuses the release and says why.
+ */
+async function waitForChecks(
+  deps: DeliverDeps,
+  input: Promotion & { required: string[] },
+): Promise<ReleaseResult> {
+  const { row, pull, token } = input
+  const [waiting] = await deps.db
+    .select({ pullRequestUrl: releaseWait.pullRequestUrl })
+    .from(releaseWait)
+    .where(and(eq(releaseWait.repository, row.repository), eq(releaseWait.status, 'waiting')))
+  const busy = () =>
+    new ReleaseRefused(
+      `a release of ${row.repository} already waits for the checks of ${waiting?.pullRequestUrl ?? pull.url}`,
+    )
+  if (waiting) throw busy()
+  const [claimed] = await deps.db
+    .insert(releaseWait)
+    .values({
+      taskId: row.id,
+      repository: row.repository,
+      pullRequestNumber: pull.number,
+      pullRequestUrl: pull.url,
+      sha: input.sha,
+      releaseBranch: input.target,
+      bump: input.bump,
+      actor: input.actor,
+      changesets: input.changesets,
+      checks: input.required,
+    })
+    .onConflictDoNothing()
+    .returning({ id: releaseWait.id })
+  if (!claimed) throw busy()
+  try {
+    await deps.api.enableAutoMerge(row.repository, token, pull.number, input.sha)
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+    await deps.db
+      .update(releaseWait)
+      .set({ status: 'refused', detail: why, endedAt: new Date() })
+      .where(eq(releaseWait.id, claimed.id))
+    throw new ReleaseRefused(why)
+  }
+  return {
+    tag: undefined,
+    url: undefined,
+    mergeSha: undefined,
+    awaitingChecks: input.required,
+    pullRequestUrl: pull.url,
+    ...(input.changesets ? { publishing: 'changesets' as const } : {}),
+  }
+}
+
+/**
+ * What follows the promotion's merge, however it was made: the factory's own release or the publication a
+ * changesets repository makes, the watch on the merge commit, and the task's move to `released`.
+ */
+export async function completeRelease(
+  deps: DeliverDeps,
+  input: Promotion & { pre: typeof delivery.$inferSelect; mergeSha: string },
+): Promise<ReleaseResult> {
+  const { row, pre, pull, token, target, sha, mergeSha, actor } = input
+  const taskId = row.id
+  const published: Published = input.changesets
+    ? await handToChangesets(deps, { row, target, mergeSha, actor })
+    : await createOwnRelease(deps, { row, pre, pr: pull, token, mergeSha, bump: input.bump, actor })
   const { created, releaseError, publishing } = published
 
   // The merge is on the default branch now, so its checks are watched from here on.
   await deps.db.insert(watch).values({
     taskId,
     repository: row.repository,
-    sha: merged.sha,
-    pullRequestNumber: pr.number,
+    sha: mergeSha,
+    pullRequestNumber: pull.number,
     tag: created?.tag ?? null,
   })
   await deps.db.insert(decision).values({
     taskId,
     kind: 'release',
     sha,
-    note: [options.actor, created?.tag, publishing].filter(Boolean).join(' -> '),
+    note: [actor, created?.tag, publishing].filter(Boolean).join(' -> '),
   })
   if (created) {
     await deps.db.insert(delivery).values({
@@ -257,19 +381,19 @@ export async function release(
       kind: 'release',
       tag: created.tag,
       url: created.url,
-      sha: merged.sha,
-      actor: options.actor,
+      sha: mergeSha,
+      actor,
     })
   }
   await enterStage(deps.db, taskId, 'released', {
-    actor: options.actor,
-    mergeSha: merged.sha,
+    actor,
+    mergeSha,
     sha,
     ...(created ? { tag: created.tag, url: created.url } : {}),
     ...(releaseError ? { releaseError } : {}),
     publishing,
   })
-  return { tag: created?.tag, url: created?.url, mergeSha: merged.sha, releaseError, publishing }
+  return { tag: created?.tag, url: created?.url, mergeSha, releaseError, publishing }
 }
 
 /**

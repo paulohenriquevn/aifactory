@@ -47,6 +47,7 @@ const base: TaskCard = {
   },
   release: null,
   mainRed: false,
+  releaseWait: null,
 }
 
 const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
@@ -377,6 +378,63 @@ describe('releasing from the panel', () => {
     })
     const { container } = render(<TaskActions detail={released} onDone={noop} />)
     expect(container.textContent).toBe('')
+  })
+
+  it('says the release waits for the release branch checks, and offers no second release meanwhile', () => {
+    const releaseWait = {
+      status: 'waiting' as const,
+      pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+      checks: ['CI', 'SonarCloud Code Analysis'],
+      reason: null,
+    }
+    render(
+      <TaskActions
+        detail={detail({ task: { ...base, integrated: true, releaseWait } })}
+        onDone={noop}
+      />,
+    )
+    expect(
+      screen.getByText(/waits for the required checks of the release branch: CI, SonarCloud/),
+    ).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Release' })).toBeNull()
+  })
+
+  it('shows why the last release did not happen, and offers it again', () => {
+    const releaseWait = {
+      status: 'refused' as const,
+      pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+      checks: ['CI'],
+      reason: 'the required check of main failed on the release pull request: CI',
+    }
+    render(
+      <TaskActions
+        detail={detail({ task: { ...base, integrated: true, releaseWait } })}
+        onDone={noop}
+      />,
+    )
+    expect(
+      screen.getByText(
+        /The last release did not happen: the required check of main failed on the release pull request: CI/,
+      ),
+    ).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Release' })).toBeDefined()
+  })
+
+  it('says the release waits when the server answers that it does', async () => {
+    serve({
+      'POST /api/panel/tasks/5/release': {
+        awaitingChecks: ['CI'],
+        pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+      },
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toBe(
+        'The release waits for the checks of the release branch (CI): GitHub merges it once they pass.',
+      ),
+    )
   })
 
   it('shows the refusal when GitHub or the checks do not allow it', async () => {

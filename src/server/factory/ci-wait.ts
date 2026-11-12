@@ -89,7 +89,7 @@ function settled(input: WaitingIntegration): WaitingStep | undefined {
 }
 
 /** What the required checks say: the ones that failed, and the ones that never reported. */
-function readRequired(input: WaitingIntegration) {
+export function readRequired(input: Pick<WaitingIntegration, 'required' | 'reports'>) {
   const failed: string[] = []
   const silent: string[] = []
   for (const name of input.required) {

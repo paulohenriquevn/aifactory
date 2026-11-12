@@ -14,6 +14,7 @@ import {
   ingress,
   publication,
   question,
+  releaseWait,
   repository,
   review,
   stageEvent,
@@ -135,12 +136,15 @@ const githubApi: GithubApi & {
   changesets: string[] | undefined
   /** The status checks the integration branch requires. */
   required: string[]
+  /** The status checks the release branch requires. */
+  releaseRequired: string[]
   /** The pull requests auto-merge was turned on for, with the head it is pinned to. */
   autoMerges: { number: number; sha: string }[]
   /** GitHub refuses to turn auto-merge on. */
   autoMergeRefused: boolean
 } = {
   required: [],
+  releaseRequired: [],
   autoMerges: [],
   autoMergeRefused: false,
   openFailsFor: undefined,
@@ -209,8 +213,8 @@ const githubApi: GithubApi & {
   async openPullRequestsBetween() {
     throw new Error('the pipeline never looks for a back-merge')
   },
-  async requiredChecks() {
-    return this.required
+  async requiredChecks(_repo, _token, branch) {
+    return branch === 'workspace' ? this.required : this.releaseRequired
   },
   async readPullRequest() {
     throw new Error('a run never reads a pull request by number')
@@ -276,6 +280,7 @@ beforeEach(() => {
   githubApi.openFailsFor = undefined
   githubApi.changesets = undefined
   githubApi.required = []
+  githubApi.releaseRequired = []
   githubApi.autoMerges = []
   githubApi.autoMergeRefused = false
   githubApi.branches = FakeBranches.prepared()
@@ -2516,6 +2521,87 @@ describe('release', () => {
       await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'released'))
     )[0]
     expect(released.detail).toMatchObject({ mergeSha: 'merge0001' })
+  })
+
+  describe('into a release branch that requires status checks', () => {
+    const waits = () => getDb().select().from(releaseWait).orderBy(releaseWait.id)
+
+    it('does not merge before the checks report: it turns auto-merge on, pinned to the head it saw', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI', 'SonarCloud Code Analysis']
+
+      const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+      expect(result).toMatchObject({
+        tag: undefined,
+        mergeSha: undefined,
+        awaitingChecks: ['CI', 'SonarCloud Code Analysis'],
+        pullRequestUrl: PR_URL,
+      })
+      // Only the integration merged; the promotion waits for GitHub.
+      expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+      expect(githubApi.autoMerges).toEqual([{ number: 12, sha: 'abc123def' }])
+      expect(githubApi.releases.filter((r) => !r.prerelease)).toEqual([])
+      expect(await waits()).toMatchObject([
+        {
+          taskId: id,
+          repository: 'paulo/app',
+          pullRequestNumber: 12,
+          pullRequestUrl: PR_URL,
+          sha: 'abc123def',
+          releaseBranch: 'main',
+          bump: 'minor',
+          actor: 'human',
+          changesets: false,
+          checks: ['CI', 'SonarCloud Code Analysis'],
+          status: 'waiting',
+        },
+      ])
+      // Nothing is released yet, so nothing is recorded as released or watched.
+      expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+      expect(await getDb().select().from(watch)).toEqual([])
+      expect(await getDb().select().from(decision).where(eq(decision.taskId, id))).toEqual([])
+    })
+
+    it('records no publication for a changesets repository until the promotion lands', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI']
+      githubApi.changesets = ['config.json', 'brave-fox.md']
+
+      const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+      expect(result).toMatchObject({ publishing: 'changesets', awaitingChecks: ['CI'] })
+      expect(await getDb().select().from(publication)).toEqual([])
+      expect(await waits()).toMatchObject([{ changesets: true, status: 'waiting' }])
+    })
+
+    it('refuses a second release while one waits for the checks of the release pull request', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI']
+      await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+      await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+        /already waits for the checks of https:\/\/github.com\/paulo\/app\/pull\/12/,
+      )
+      expect(githubApi.autoMerges).toHaveLength(1)
+      expect(await waits()).toHaveLength(1)
+    })
+
+    it('refuses, and records why, when GitHub will not turn auto-merge on', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI']
+      githubApi.autoMergeRefused = true
+
+      await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+        /GitHub would not turn auto-merge on.*Auto merge is not allowed/,
+      )
+      expect(githubApi.merges).toHaveLength(1)
+      expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+      const [refused] = await waits()
+      expect(refused).toMatchObject({ status: 'refused' })
+      expect(refused.detail).toContain('Auto merge is not allowed')
+      expect(refused.endedAt).not.toBeNull()
+    })
   })
 })
 

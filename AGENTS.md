@@ -111,7 +111,10 @@ reads that file, not a convention.
   the pre-release: it advances to each integration, which gets a pre-release tag. The default branch
   (`main`) is the release. The factory never merges into it on its own account: a release is a promotion of
   `develop`, goes through `release()` in `factory/deliver.ts` with its refusals, and only a person or, in
-  `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it. `ensureBranches` creates the two missing
+  `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it. When the release branch requires status
+  checks, `release()` merges nothing either: it turns on auto-merge pinned to the head it saw and records a
+  `release_wait`, and the `integrate-after-ci` cron finishes the release after GitHub merges, or refuses it
+  with the reason when a required check fails. A refused release is never retried on its own. `ensureBranches` creates the two missing
   branches, never touches one that exists, and refuses the default branch as the integration branch.
 - **A repository that publishes with changesets tags its own releases.** When `.changeset/config.json` is on
   `develop`, `release()` makes no tag: it refuses when no changeset waits (nothing would be published),

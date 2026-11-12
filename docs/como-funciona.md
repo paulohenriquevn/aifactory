@@ -409,6 +409,27 @@ vai junto** com o item pedido. Quem a faz:
 O merge é fixado ao commit que a fábrica viu em `develop`. Se o merge acontece mas a release não pôde ser
 criada, a task fica `released` com o erro registrado, porque o merge não se desfaz.
 
+**Release que espera o CI da branch de release.** Um PR `develop → main` aberto há um segundo ainda não tem
+os checks que a `main` exige, e o GitHub recusa o merge (`405 ... required status checks have not
+succeeded`). Por isso, quando a branch de release exige status checks, o `release()` não mergeia: liga o
+auto-merge do PR, fixado ao head que viu, e grava uma linha em `release_wait` com o PR, o head, a branch, o
+`bump`, quem decidiu e se o repositório usa changesets. A task continua `done`, a resposta traz
+`awaitingChecks`, e a página da task diz que o release espera os checks e esconde o botão de release.
+Só um release por repositório espera de cada vez, porque todos usariam o mesmo PR; um segundo pedido é
+recusado com o link do PR que espera. Se o GitHub recusar o auto-merge, o release é recusado com o motivo.
+
+O mesmo cron `integrate-after-ci` olha esses releases a cada dois minutos:
+
+- O GitHub mergeou o head fixado: a fábrica termina o release com o mesmo código do merge direto (a tag e a
+  release, ou a `publication` de um repositório com changesets, gravada só agora que a promoção está na
+  branch de release), cria a vigília do merge e move a task para `released`.
+- Um check obrigatório falhou, `develop` recebeu um push depois do pedido, o PR conflita, foi fechado, o
+  auto-merge foi desligado, ou um check não reporta em 6 horas: o release é recusado, com o motivo na
+  `release_wait` e na página da task, e o auto-merge é desligado quando ainda estava ligado. Um release
+  recusado nunca é tentado de novo sozinho: uma pessoa olha o PR e pede de novo. Se quem decidiu era um
+  agente, a recusa também vira uma decisão `would_release`.
+- Checks ainda rodando: espera.
+
 **A branch de release.** É a branch padrão do repositório, a não ser que o dono nomeie outra em "Branch a
 release lands on". Um repositório cuja branch padrão é `develop` (os gateways do theokit) precisa nomear a
 sua (`main`), porque `develop` é onde vai a pré-release e a fábrica se recusa a tratar a mesma branch como
@@ -422,7 +443,8 @@ npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio r
 
 - recusa quando `develop` não tem nenhum changeset além do README, porque nada seria publicado;
 - promove `develop` para a branch de release como sempre, mas não cria tag nem release próprios;
-- grava uma `publication` esperando, e a task que pediu o release fica `released` (promovida).
+- grava uma `publication` esperando, e a task que pediu o release fica `released` (promovida). Quando a
+  branch de release exige checks, isso acontece só depois que o GitHub mergeia a promoção (veja acima).
 
 O cron `publish-changesets` olha cada `publication` esperando, a cada minuto. Ele acha o PR "Version
 Packages" e o mergeia quando os checks dele estão verdes, fixado ao commit que viu, em nome de quem decidiu o

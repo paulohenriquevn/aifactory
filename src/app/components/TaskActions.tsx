@@ -7,6 +7,14 @@ import { post } from '../lib/api'
 
 import { Assist } from './Assist'
 
+/** What the panel says once a release was asked for: made, or waiting for the release branch's checks. */
+function released(answer: unknown): string {
+  const checks = (answer as { awaitingChecks?: string[] } | undefined)?.awaitingChecks
+  return checks
+    ? `The release waits for the checks of the release branch (${checks.join(', ')}): GitHub merges it once they pass.`
+    : 'Released.'
+}
+
 /**
  * What a person can do about a task right now. Each button asks the server, which checks the task's
  * stage again, so a stale page cannot do something the task no longer allows.
@@ -23,14 +31,16 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
   const canResolve = task.stage === 'failed' || task.stage === 'handoff'
   // Done but never merged (GitHub refused the pull request): the work is not delivered.
   const canRetry = canResolve || (task.stage === 'done' && !task.integrated && !task.resolved)
-  const canRelease = task.stage === 'done' && task.preRelease !== null
+  const releaseWaiting = task.releaseWait?.status === 'waiting'
+  const releaseRefused = task.releaseWait?.status === 'refused' ? task.releaseWait.reason : null
+  const canRelease = task.stage === 'done' && task.preRelease !== null && !releaseWaiting
 
-  async function run(path: string, body?: unknown, done?: string) {
+  async function run(path: string, body?: unknown, done?: string | ((answer: unknown) => string)) {
     setBusy(true)
     setMessage(undefined)
     try {
-      await post(`/api/panel/tasks/${task.id}/${path}`, body)
-      setMessage(done)
+      const answer = await post(`/api/panel/tasks/${task.id}/${path}`, body)
+      setMessage(typeof done === 'function' ? done(answer) : done)
       setNote('')
       setResolution('')
       onDone()
@@ -41,7 +51,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
     }
   }
 
-  if (!hasPullRequest && !canRetry && !canRelease) return null
+  if (!hasPullRequest && !canRetry && !canRelease && !releaseWaiting) return null
 
   return (
     <section aria-label="Actions" className="rounded-lg border border-border bg-card p-4">
@@ -51,6 +61,22 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
           GitHub merges this pull request once the repository's required checks pass, and the
           factory finishes the integration then. A check that fails sends the work back to the
           agent.
+        </p>
+      ) : null}
+      {releaseWaiting && task.releaseWait ? (
+        <p className="mb-3 text-sm text-muted-foreground">
+          The release pull request{' '}
+          <a href={task.releaseWait.pullRequestUrl} className="underline">
+            {task.releaseWait.pullRequestUrl}
+          </a>{' '}
+          waits for the required checks of the release branch: {task.releaseWait.checks.join(', ')}.
+          GitHub merges it once they pass, and the factory finishes the release then. A check that
+          fails stops the release, and the reason shows here.
+        </p>
+      ) : null}
+      {releaseRefused ? (
+        <p className="mb-3 text-sm text-foreground">
+          The last release did not happen: {releaseRefused}.
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
@@ -85,7 +111,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
                     'Promote the pre-release branch to the default branch and publish a release? Everything on the pre-release branch goes with it. This cannot be undone from here.',
                   )
                 ) {
-                  void run('release', { bump }, 'Released.')
+                  void run('release', { bump }, released)
                 }
               }}
             >

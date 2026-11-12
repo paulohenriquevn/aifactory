@@ -18,6 +18,7 @@ import {
   stageEvent,
   task,
   watch,
+  releaseWait,
 } from '../db/schema'
 import type { GithubApi } from '../github/pulls'
 import { COLUMNS } from '../../shared/panel'
@@ -813,6 +814,53 @@ describe('deliveries on the panel', () => {
       ['prerelease', 'pre/1-sha-2', 'factory'],
       ['release', 'v0.1.0', 'human'],
     ])
+  })
+
+  it('shows a release that waits for the release branch checks, then why it was refused, until one lands', async () => {
+    const id = await seed('done', { headSha: 'abc', mergedSha: 'merged-1' })
+    const [wait] = await getDb()
+      .insert(releaseWait)
+      .values({
+        taskId: id,
+        repository: 'paulo/app',
+        pullRequestNumber: 381,
+        pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+        sha: 'dev1234',
+        releaseBranch: 'main',
+        bump: 'minor',
+        actor: 'human',
+        changesets: false,
+        checks: ['CI'],
+      })
+      .returning({ id: releaseWait.id })
+
+    let [card] = await listTasks(getDb())
+    expect(card.releaseWait).toEqual({
+      status: 'waiting',
+      pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+      checks: ['CI'],
+      reason: null,
+    })
+
+    await getDb()
+      .update(releaseWait)
+      .set({ status: 'refused', detail: 'the required check of main failed' })
+      .where(eq(releaseWait.id, wait.id))
+    ;[card] = await listTasks(getDb())
+    expect(card.releaseWait).toMatchObject({
+      status: 'refused',
+      reason: 'the required check of main failed',
+    })
+
+    // Released another way since: the refusal is history, not something to act on.
+    await getDb().update(task).set({ stage: 'released' }).where(eq(task.id, id))
+    ;[card] = await listTasks(getDb())
+    expect(card.releaseWait).toBeNull()
+
+    await getDb().update(task).set({ stage: 'done' }).where(eq(task.id, id))
+    await getDb().update(releaseWait).set({ status: 'merged' }).where(eq(releaseWait.id, wait.id))
+    ;[card] = await listTasks(getDb())
+    expect(card.releaseWait).toBeNull()
   })
 
   it('does not count a released task as waiting for a person', async () => {

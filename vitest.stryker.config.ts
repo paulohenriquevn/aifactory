@@ -14,6 +14,7 @@ export default defineConfig({
       'src/server/factory/changesets.test.ts',
       'src/server/factory/ci-wait.test.ts',
       'src/server/factory/check-evidence.test.ts',
+      'src/server/factory/release-wait.test.ts',
       'src/server/factory/agent-time.test.ts',
       'src/server/factory/test-weakening.test.ts',
       'src/server/factory/change-plan.test.ts',

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean,
   integer,
@@ -9,6 +10,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 /** The stages of a task, in the order a successful run passes through them. */
@@ -248,6 +250,48 @@ export const publication = pgTable('publication', {
   startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
   publishedAt: timestamp('published_at', { withTimezone: true }),
 })
+
+/**
+ * A release that waits for the release branch's required checks. The release pull request from `develop`
+ * cannot merge before they report, so the factory turns auto-merge on, pinned to the head it saw, and the
+ * `integrate-after-ci` cron finishes the release once GitHub merges it, or records why it did not.
+ * A repository has at most one waiting release, since they would share the one release pull request.
+ */
+export const releaseWait = pgTable(
+  'release_wait',
+  {
+    id: serial('id').primaryKey(),
+    taskId: integer('task_id')
+      .notNull()
+      .references(() => task.id),
+    repository: text('repository').notNull(),
+    pullRequestNumber: integer('pull_request_number').notNull(),
+    pullRequestUrl: text('pull_request_url').notNull(),
+    /** The head of the release pull request when the release was asked for: auto-merge is pinned to it. */
+    sha: text('sha').notNull(),
+    /** The branch the release lands on. */
+    releaseBranch: text('release_branch').notNull(),
+    bump: text('bump', { enum: ['patch', 'minor', 'major'] }).notNull(),
+    /** Who decided the release: `human` or `agent:<name>`. */
+    actor: text('actor').notNull(),
+    /** The repository publishes with changesets, so the release becomes a publication once it lands. */
+    changesets: boolean('changesets').notNull(),
+    /** The checks the release branch required when the release was asked for. */
+    checks: jsonb('checks').$type<string[]>().notNull(),
+    status: text('status', { enum: ['waiting', 'merged', 'refused'] })
+      .notNull()
+      .default('waiting'),
+    /** Why a refused release did not happen: the failed checks, a new push, a closed pull request. */
+    detail: text('detail'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('release_wait_one_per_repository')
+      .on(table.repository)
+      .where(sql`${table.status} = 'waiting'`),
+  ],
+)
 
 /**
  * A release under watch. After the factory (or a person through it) merges a pull request, the

@@ -9,6 +9,7 @@ import {
   evidence,
   finding,
   question,
+  releaseWait,
   review,
   stageEvent,
   task,
@@ -22,6 +23,7 @@ import {
   type DecisionView,
   type Retryable,
   type DeliveryView,
+  type ReleaseWaitView,
   type CostGroup,
   type EvidenceView,
   type FindingView,
@@ -97,6 +99,11 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
     .where(inArray(delivery.taskId, ids))
     .orderBy(asc(delivery.id))
   const watched = await db.select().from(watch).where(inArray(watch.taskId, ids))
+  const releases = await db
+    .select()
+    .from(releaseWait)
+    .where(inArray(releaseWait.taskId, ids))
+    .orderBy(asc(releaseWait.id))
   const failures = await db
     .selectDistinctOn([stageEvent.taskId], {
       taskId: stageEvent.taskId,
@@ -135,8 +142,24 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       preRelease: lastDelivery(delivered, r, 'prerelease'),
       release: lastDelivery(delivered, r, 'release'),
       mainRed: watched.some((w) => w.taskId === r.id && w.status === 'red' && !w.acknowledgedAt),
+      releaseWait: lastReleaseWait(releases, r),
     }
   })
+}
+
+/** The latest release of a task that waits for checks or was refused, while the task is not released. */
+function lastReleaseWait(
+  rows: (typeof releaseWait.$inferSelect)[],
+  t: TaskRow,
+): ReleaseWaitView | null {
+  const last = rows.filter((w) => w.taskId === t.id).at(-1)
+  if (!last || last.status === 'merged' || t.stage !== 'done') return null
+  return {
+    status: last.status,
+    pullRequestUrl: last.pullRequestUrl,
+    checks: last.checks,
+    reason: last.detail,
+  }
 }
 
 type DeliveryRow = typeof delivery.$inferSelect

@@ -227,6 +227,21 @@ export type TaskCard = {
   release: { tag: string; url: string } | null
   /** The default branch went red after this task's release and nobody has dealt with it yet. */
   mainRed: boolean
+  /**
+   * A release of this task that waits for the release branch's required checks, or the last one that was
+   * refused, while the task is not released. Null when none waited, or once one merged.
+   */
+  releaseWait: ReleaseWaitView | null
+}
+
+/** A release that waits for the release branch's required checks, or why it did not happen. */
+export type ReleaseWaitView = {
+  status: 'waiting' | 'refused'
+  pullRequestUrl: string
+  /** The checks the release branch required when the release was asked for. */
+  checks: string[]
+  /** Why a refused release did not happen. */
+  reason: string | null
 }
 
 export type TimelineEvent = {
