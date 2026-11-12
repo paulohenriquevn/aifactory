@@ -1,4 +1,4 @@
-# ADR 0008: o construtor escreve um plano antes de mudar o código, e não pode enfraquecer os testes
+# ADR 0009: o construtor escreve um plano antes de mudar o código, e não pode enfraquecer os testes
 
 Status: aceita (2026-11-11). Issues: #33 (plano) e #34 (testes enfraquecidos).
 

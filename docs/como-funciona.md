@@ -253,7 +253,7 @@ não cita (calculada sem modelo; lockfiles ficam de fora). O revisor trata cada 
 motivo que a issue sustente, e a fábrica registra cada um como achado `minor`. Uma task retomada
 (resposta a uma pergunta, mudanças pedidas, checks obrigatórios que devolveram o trabalho) usa o último
 plano gravado. Não há aprovação humana do plano: quem confere é o revisor, contra o diff
-([ADR 0008](adr/0008-plano-antes-do-codigo-e-testes-que-nao-enfraquecem.md)).
+([ADR 0009](adr/0009-plano-antes-do-codigo-e-testes-que-nao-enfraquecem.md)).
 
 **Tentativas.** São no máximo 3, contadas juntas para checks e review.
 
