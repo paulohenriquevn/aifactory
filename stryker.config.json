@@ -34,6 +34,7 @@
     "src/server/factory/auto-retry.ts",
     "src/server/factory/changesets.ts",
     "src/server/factory/ci-wait.ts",
+    "src/server/factory/check-evidence.ts",
     "src/server/factory/agent-time.ts",
     "src/server/factory/test-weakening.ts",
     "src/server/factory/change-plan.ts",

@@ -362,8 +362,12 @@ O cron `integrate-after-ci` olha essas tasks a cada dois minutos:
   modo de release. O evento `done` novo leva `integratedBy: auto-merge`.
 - Um check obrigatório falhou: a fábrica desliga o auto-merge, para que o commit novo do agente não entre
   antes de ser verificado, e manda o trabalho de volta ao agente, na mesma branch. O feedback nomeia cada
-  check, com o link e o fim do que ele reportou. Conta como execução automática: depois de 3, vai para
-  uma pessoa com a lista dos checks.
+  check, com o link e a evidência que a fábrica leu no servidor com o token do repositório, porque o
+  sandbox não abre o link: as linhas de erro do log de um job do Actions, ou as anotações e o resumo de
+  outro check (o mesmo `readEvidence` do `watch-promotions`). Um commit status, que não tem check run,
+  leva o fim do que reportou. Se o GitHub não entrega a evidência, a nota diz isso, o motivo vai para o
+  log do cron e o trabalho volta mesmo assim. Conta como execução automática: depois de 3, vai para uma
+  pessoa com a lista dos checks.
 - O PR conflita com a base: recomeça sobre a base nova, como no conflito de um merge direto.
 - Um push depois da verificação, um PR fechado sem merge, um merge de outro commit, o auto-merge
   desligado por alguém, ou um check obrigatório que não reporta em 6 horas (um check que só roda em push

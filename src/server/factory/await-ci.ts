@@ -7,7 +7,8 @@ import type { GithubApi } from '../github/pulls'
 import { automaticRunsSincePerson } from '../panel/queries'
 
 import { integrationBranch } from './branches'
-import { decideWaitingIntegration, type WaitingStep } from './ci-wait'
+import { attachEvidence, type EvidenceApi } from './check-evidence'
+import { checksFeedback, decideWaitingIntegration, type WaitingStep } from './ci-wait'
 import { createPreRelease, type ReleaseMode } from './deliver'
 import {
   advancePreRelease,
@@ -22,6 +23,8 @@ export type AwaitCiDeps = {
   db: Database
   github: GithubApp
   api: GithubApi
+  /** Reads the log or annotations of a failed check, so the note carries what the sandbox cannot open. */
+  checks: EvidenceApi
   /** The factory's release mode, for a repository that sets none. */
   releaseMode: ReleaseMode | undefined
   now?: () => Date
@@ -39,6 +42,8 @@ export type AwaitCiResult = {
   waiting: number
   /** What stopped a task on this pass; it is looked at again on the next one. */
   errors: string[]
+  /** Failed checks whose evidence GitHub would not give: the work went back with their links only. */
+  unreadEvidence: string[]
 }
 
 type Waiting = {
@@ -206,12 +211,25 @@ async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: Aw
     case 'finish':
       if (await finish(deps, w, step.mergedSha)) result.merged.push(row.id)
       return
-    case 'send_back':
+    case 'send_back': {
+      const failed = await attachEvidence(
+        deps.checks,
+        row.repository,
+        token,
+        verifiedSha,
+        step.reports,
+      )
+      for (const check of failed) {
+        if (check.evidence && 'unreadable' in check.evidence) {
+          result.unreadEvidence.push(`task ${row.id}: ${check.name}: ${check.evidence.unreadable}`)
+        }
+      }
       // Off first: the new commit the agent pushes must not merge before the factory verifies it.
       await deps.api.disableAutoMerge(row.repository, token, number)
-      await deps.sendBack(row.id, step.note)
+      await deps.sendBack(row.id, checksFeedback(verifiedSha, failed))
       result.sentBack.push(row.id)
       return
+    }
     case 'start_over':
       // Starting over deletes the branch, which closes the pull request and its auto-merge with it.
       await deps.startOver(row.id)
@@ -235,6 +253,7 @@ export async function pollAwaitingIntegrations(deps: AwaitCiDeps): Promise<Await
     toPerson: [],
     waiting: 0,
     errors: [],
+    unreadEvidence: [],
   }
   const rows = await deps.db
     .select()

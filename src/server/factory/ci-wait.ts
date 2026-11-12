@@ -13,16 +13,28 @@ export const CI_SILENCE_MS = 6 * 60 * 60_000
 const NOTE_MAX = 4_000
 /** Below this much room for each check's report, the note lists the checks and their links only. */
 const TAIL_MIN = 80
-/** What surrounds a report in the note, besides the check's name: two line breaks, a colon and a fence. */
-const FRAME = 12
+/** What surrounds a report in the note, besides the check's name: `\n\n`, `:\n`, `~~~~text\n` and `\n~~~~`. */
+const FRAME = 18
+
+/**
+ * What the factory read on the server about a failed check run: the lines of its log (or its annotations and
+ * summary) that say why it failed, or why they could not be read.
+ */
+export type ServerEvidence = { lines: string[] } | { unreadable: string }
+
+/** A failed check as the note names it. A commit status has no check run, so it has no evidence. */
+export type FailedReport = CheckReport & { evidence?: ServerEvidence }
 
 /** What to do about a task whose pull request waits for the repository's required checks. */
 export type WaitingStep =
   | { kind: 'wait' }
   /** GitHub merged the verified commit: what follows a direct merge runs now. */
   | { kind: 'finish'; mergedSha: string }
-  /** A required check failed: the same agent works again on its branch, with the note as feedback. */
-  | { kind: 'send_back'; failed: string[]; note: string }
+  /**
+   * A required check failed: the same agent works again on its branch, with a note on what each failed
+   * check reported (`checksFeedback`) as feedback.
+   */
+  | { kind: 'send_back'; failed: string[]; reports: CheckReport[] }
   /** The pull request conflicts with its base: the task starts again from the new base. */
   | { kind: 'start_over'; reason: string }
   | { kind: 'person'; reason: string; stopAutoMerge: boolean }
@@ -125,7 +137,7 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
       }
     }
     const reports = failed.map((name) => input.reports.find((r) => r.name === name)!)
-    return { kind: 'send_back', failed, note: checksFeedback(input.verifiedSha, reports) }
+    return { kind: 'send_back', failed, reports }
   }
   if (silent.length > 0 && input.waitedMs > CI_SILENCE_MS) {
     return {
@@ -137,20 +149,44 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
   return { kind: 'wait' }
 }
 
+const unread = (r: FailedReport) => r.evidence !== undefined && 'unreadable' in r.evidence
+
+/** The lines read from the check's log or annotations, when the factory read any. */
+const evidenceLines = (r: FailedReport) =>
+  r.evidence && 'lines' in r.evidence ? r.evidence.lines : []
+
 /**
- * The feedback a run gets when the repository's required checks failed: every check with its link, and the
- * end of what each reported, cut so the whole note fits what a run takes.
+ * What the note quotes of a check, in at most `share` characters: the first of the lines that say why it
+ * failed, or else the end of what the check said of itself. Both are text from CI, so nothing in them may
+ * end the block they are quoted in.
  */
-export function checksFeedback(sha: string, failed: CheckReport[]): string {
+function quote(r: FailedReport, share: number): string {
+  const lines = evidenceLines(r)
+  const text = lines.length > 0 ? lines.join('\n').slice(0, share) : r.detail.trim().slice(-share)
+  return text.replace(/~{3,}/g, '~~')
+}
+
+const said = (r: FailedReport) => evidenceLines(r).length > 0 || r.detail.trim() !== ''
+
+/**
+ * The feedback a run gets when the repository's required checks failed: every check with its link, and what
+ * each reported, cut so the whole note fits what a run takes. A check whose evidence the factory read on the
+ * server is quoted from it, because the agent's sandbox cannot open the link; one whose evidence could not be
+ * read says so, and the reason goes to the factory's log rather than to the agent.
+ */
+export function checksFeedback(sha: string, failed: FailedReport[]): string {
   const head = [
     `The repository's required checks failed on ${short(sha)}, so the pull request was not merged. Fix what they report:`,
-    ...failed.map((r) => `- ${r.name}: ${r.url}`),
+    ...failed.map(
+      (r) =>
+        `- ${r.name}: ${r.url}${unread(r) ? ' (the factory could not read its log or annotations)' : ''}`,
+    ),
   ].join('\n')
-  const told = failed.filter((r) => r.detail.trim() !== '')
+  const told = failed.filter(said)
   // Each report gets an equal share of what is left once its frame (`\n\n<name>:\n` and a fence) is counted.
   const frames = told.reduce((sum, r) => sum + r.name.length + FRAME, 0)
   const share = Math.floor((NOTE_MAX - head.length - frames) / Math.max(told.length, 1))
   if (share < TAIL_MIN) return head.slice(0, NOTE_MAX)
-  const tails = told.map((r) => `\n\n${r.name}:\n\`\`\`\n${r.detail.trim().slice(-share)}\n\`\`\``)
-  return head + tails.join('')
+  const quotes = told.map((r) => `\n\n${r.name}:\n~~~~text\n${quote(r, share)}\n~~~~`)
+  return head + quotes.join('')
 }

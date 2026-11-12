@@ -7,9 +7,11 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { decision, delivery, ingress, review, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
+import type { FailedRun } from '../github/promotion-api'
 import type { CheckReport, GithubApi, PullRequestDetail, ReleaseInput } from '../github/pulls'
 
 import { pollAwaitingIntegrations, type AwaitCiDeps } from './await-ci'
+import type { EvidenceApi } from './check-evidence'
 import { CI_SILENCE_MS } from './ci-wait'
 
 beforeAll(async () => {
@@ -33,6 +35,11 @@ const gh = {
   branchMerges: [] as { base: string; head: string }[],
   releases: [] as ReleaseInput[],
   comments: [] as { issue: number; body: string }[],
+  /** The failed check runs of the verified commit, with their logs and annotations. */
+  failedRuns: [] as FailedRun[],
+  logs: {} as Record<number, string>,
+  annotations: {} as Record<number, string[]>,
+  logFails: false,
 }
 const sentBack: { taskId: number; note: string }[] = []
 const startedOver: number[] = []
@@ -62,6 +69,10 @@ beforeEach(async () => {
     branchMerges: [],
     releases: [],
     comments: [],
+    failedRuns: [],
+    logs: {},
+    annotations: {},
+    logFails: false,
   })
   sentBack.length = 0
   startedOver.length = 0
@@ -92,12 +103,22 @@ const api = {
   },
 } as unknown as GithubApi
 
+const checks: EvidenceApi = {
+  failedChecks: async (_repo, _token, sha) => (sha === VERIFIED ? gh.failedRuns : []),
+  jobLog: async (_repo, _token, jobId) => {
+    if (gh.logFails) throw new Error(`GitHub answered 410 reading the log of job ${jobId}`)
+    return gh.logs[jobId] ?? ''
+  },
+  annotations: async (_repo, _token, checkRunId) => gh.annotations[checkRunId] ?? [],
+}
+
 const deps = (over: Partial<AwaitCiDeps> = {}): AwaitCiDeps => ({
   db: getDb(),
   github: {
     installationToken: async () => ({ token: 't', expiresAt: new Date() }),
   } as unknown as GithubApp,
   api,
+  checks,
   releaseMode: undefined,
   now: () => NOW,
   sendBack: async (taskId, note) => {
@@ -265,6 +286,62 @@ describe('pollAwaitingIntegrations', () => {
     expect(sentBack[0].note).toContain('foo.test.ts failed')
   })
 
+  it('puts the error lines of a failed Actions job in the note, read with the repository token', async () => {
+    const link = 'https://github.com/paulo/app/actions/runs/431/job/1308'
+    gh.reports = [{ name: 'CI', state: 'failure', detail: '', url: link }]
+    gh.failedRuns = [{ id: 1308, name: 'CI', url: link, summary: '', actions: true }]
+    gh.logs = {
+      1308: [
+        '2026-11-12T10:00:00.0000000Z > npm run docs:coverage',
+        '2026-11-12T10:00:01.0000000Z [doc-coverage] FAIL 99.7% is below the 100% floor',
+        '2026-11-12T10:00:02.0000000Z ##[error]Process completed with exit code 1.',
+      ].join('\n'),
+    }
+    const id = await waitingTask()
+
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ sentBack: [id] })
+
+    expect(sentBack[0].note).toContain(`- CI: ${link}`)
+    expect(sentBack[0].note).toContain(
+      'CI:\n~~~~text\n[doc-coverage] FAIL 99.7% is below the 100% floor\n~~~~',
+    )
+  })
+
+  it('puts the annotations and summary of a failed check that is not an Actions job in the note', async () => {
+    gh.required = ['CodeQL']
+    gh.reports = [{ name: 'CodeQL', state: 'failure', detail: '', url: 'https://cq/1' }]
+    gh.failedRuns = [
+      { id: 77, name: 'CodeQL', url: 'https://cq/1', summary: '1 new alert', actions: false },
+    ]
+    gh.annotations = { 77: ['src/a.ts:3 Sink: tainted input'] }
+    const id = await waitingTask()
+
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ sentBack: [id] })
+
+    expect(sentBack[0].note).toContain('- CodeQL: https://cq/1')
+    expect(sentBack[0].note).toContain(
+      'CodeQL:\n~~~~text\nsrc/a.ts:3 Sink: tainted input\n1 new alert\n~~~~',
+    )
+  })
+
+  it('sends the work back with the link when the evidence cannot be read, and logs why', async () => {
+    gh.reports = [{ name: 'CI', state: 'failure', detail: '', url: 'https://ci/1' }]
+    gh.failedRuns = [{ id: 5, name: 'CI', url: 'https://ci/1', summary: '', actions: true }]
+    gh.logFails = true
+    const id = await waitingTask()
+
+    const result = await pollAwaitingIntegrations(deps())
+
+    expect(result).toMatchObject({
+      sentBack: [id],
+      errors: [],
+      unreadEvidence: [`task ${id}: CI: GitHub answered 410 reading the log of job 5`],
+    })
+    expect(sentBack[0].note).toContain(
+      '- CI: https://ci/1 (the factory could not read its log or annotations)',
+    )
+  })
+
   it('hands to a person the checks that still fail after the automatic runs, and says so on the issue', async () => {
     gh.reports = [{ name: 'CI', state: 'failure', detail: '', url: 'https://ci/1' }]
     const id = await waitingTask({ automaticRuns: 3 })
@@ -339,6 +416,7 @@ describe('pollAwaitingIntegrations', () => {
       toPerson: [],
       waiting: 0,
       errors: [],
+      unreadEvidence: [],
     })
   })
 

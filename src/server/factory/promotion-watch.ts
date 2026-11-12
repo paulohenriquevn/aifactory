@@ -8,12 +8,11 @@ import type { FailedRun, PromotionApi, PromotionPull, RerunAnswer } from '../git
 import type { GithubApi } from '../github/pulls'
 import { FACTORY_LABEL } from '../ingest/decide'
 
+import { readEvidence } from './check-evidence'
 import {
-  checkEvidence,
   findingSignature,
   issueBody,
   issueTitle,
-  logEvidence,
   needsPerson,
   promotionPullRequests,
   recurrenceComment,
@@ -153,8 +152,7 @@ async function failuresOf(pass: Pass, sha: string): Promise<Seen[]> {
 }
 
 async function checkFailure(pass: Pass, run: FailedRun): Promise<Seen> {
-  const annotations = await pass.deps.api.annotations(pass.repo, pass.token, run.id)
-  const evidence = checkEvidence(annotations, run.summary)
+  const evidence = await readEvidence(pass.deps.api, pass.repo, pass.token, run)
   return { name: run.name, url: run.url, evidence, rerun: 'not-actions' }
 }
 
@@ -172,8 +170,8 @@ async function jobFailure(
     if (answer.started) return undefined
     rerun = 'refused'
   }
-  const log = await api.jobLog(pass.repo, pass.token, run.id)
-  return { name: run.name, url: run.url, evidence: logEvidence(log), rerun }
+  const evidence = await readEvidence(api, pass.repo, pass.token, run)
+  return { name: run.name, url: run.url, evidence, rerun }
 }
 
 async function rerunOnce(pass: Pass, runId: number, reruns: Map<number, RerunAnswer>) {
