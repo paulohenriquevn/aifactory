@@ -1,6 +1,7 @@
 import { knowledgeRules } from '../knowledge/prompt'
 import type { CheckSpec } from './evidence'
 import { checksRule } from './harness'
+import type { RequiredByCheck } from './required-files'
 
 export type Severity = 'blocker' | 'major' | 'minor'
 
@@ -30,13 +31,16 @@ export function reviewPrompt(input: {
   unplanned?: string[]
   /** What the builder said when it finished, where it gives its reasons. */
   builderSummary?: string
+  /** The factory checks that failed on an earlier attempt and pass now, with the files added since. */
+  required?: RequiredByCheck[]
 }): string {
+  const required = input.required ?? []
   return `You are an independent code reviewer for the repository ${input.repo}. Another agent implemented the issue below on the branch ${input.branch}. You did not write this code and you must not change it.
 
 # ${input.title} (#${input.issueNumber})
 
 ${input.body || '(the issue has no description)'}
-${input.plan === undefined ? '' : planSection(input.plan, input.unplanned ?? [], input.builderSummary)}
+${input.plan === undefined ? '' : planSection(input.plan, input.unplanned ?? [], input.builderSummary, required)}${requiredSection(required)}
 Review the work:
 - Read the change with \`git diff ${input.baseSha}...HEAD\` and the files it touches.
 - Decide whether it does what the issue asks, no more and no less.
@@ -57,10 +61,18 @@ Use "changes" when there is any blocker or major finding. Use "approve" only whe
 }
 
 /** The plan in the review: what the builder meant to change, and where the diff left it. */
-function planSection(plan: string, unplanned: string[], builderSummary?: string): string {
+function planSection(
+  plan: string,
+  unplanned: string[],
+  builderSummary: string | undefined,
+  required: RequiredByCheck[],
+): string {
+  const covered = required.some((check) => check.files.length > 0)
+    ? 'Every file the diff changes is in the plan or was added after a factory check failed (see below).'
+    : 'Every file the diff changes is in the plan.'
   const outside =
     unplanned.length === 0
-      ? 'Every file the diff changes is in the plan.'
+      ? covered
       : `A check without a model found these files changed outside the plan:\n\n${unplanned.map((p) => `- \`${p}\``).join('\n')}`
   return `
 # The builder's plan
@@ -73,6 +85,31 @@ ${outside}
 
 Measure the diff against the plan. A file changed outside the plan is a finding, at least major, unless the builder's summary gives a reason the issue needs it; then judge the reason. Edits the issue does not need (a reformat, a lint fix in an unrelated file) are not a reason.
 ${builderSummary ? `\nWhat the builder said when it finished:\n\n${builderSummary.slice(0, 3_000)}\n` : ''}`
+}
+
+/**
+ * What the factory's own checks asked for. Without it the reviewer reads a file a check demanded (an empty
+ * changeset in a private package) as outside the plan and asks to remove it, which the builder cannot do
+ * without failing the check again.
+ */
+function requiredSection(required: RequiredByCheck[]): string {
+  if (required.length === 0) return ''
+  const checks = required.map((check) => {
+    const files =
+      check.files.length === 0
+        ? 'No file was added between the two commits.'
+        : `Files added between the two commits:\n\n${check.files.map((p) => `- \`${p}\``).join('\n')}`
+    return `The check \`${check.name}\` (\`${check.command}\`) failed on ${check.failedSha.slice(0, 7)} with:\n\n> ${check.error}\n\nIt passes on ${check.passedSha.slice(0, 7)} and on the commit under review. ${files}`
+  })
+  return `
+# What the factory's checks required
+
+The factory runs its own checks on every commit and accepts no work while one fails. On an earlier attempt of this task:
+
+${checks.join('\n\n')}
+
+A file listed here that the error of its check calls for is legitimate: the factory required it. Do not report it as outside the plan or as an unrelated change, and do not ask to remove it, even when a rule of the knowledge base says such a file is not needed. Its content is still yours to review, and so is any listed file the error does not explain.
+`
 }
 
 /**

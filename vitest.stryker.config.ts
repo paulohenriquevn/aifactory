@@ -23,6 +23,7 @@ export default defineConfig({
       'src/server/factory/evidence.test.ts',
       'src/server/factory/release.test.ts',
       'src/server/factory/review.test.ts',
+      'src/server/factory/required-files.test.ts',
       'src/server/factory/watch.test.ts',
       'src/server/factory/waiting.test.ts',
       'src/server/factory/harness.test.ts',

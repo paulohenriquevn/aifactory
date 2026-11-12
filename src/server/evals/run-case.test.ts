@@ -243,6 +243,50 @@ describe('runCase', () => {
     expect(builder.prompts[2]).toContain('These checks failed on your commit')
   })
 
+  it('tells the reviewer what a failed check required, and never sends that file back as outside the plan', async () => {
+    const [first, second] = ['c'.repeat(40), 'd'.repeat(40)]
+    const exits = [1, 1, 0]
+    let commits = 0
+    let statuses = 0
+    const provider = new FakeSandbox((command): Reply | undefined => {
+      if (command.includes('status --porcelain'))
+        return { stdout: statuses++ === 0 ? '' : ' M src/cli.ts\n' }
+      if (command.includes('commit -F')) commits += 1
+      if (command.includes('pnpm test'))
+        return { exitCode: exits.shift() ?? 0, stdout: 'error no changesets were found' }
+      if (command.includes('rev-parse HEAD')) return { stdout: commits <= 1 ? first : second }
+      if (command.includes('rev-list')) return { stdout: `${second}\n${first}\n` }
+      if (command.includes('diff --name-status'))
+        return { stdout: 'M\tsrc/cli.ts\nA\t.changeset/calm-owls.md\nM\tsrc/other.ts\n' }
+      if (command.includes('diff --name-only --diff-filter=A'))
+        return { stdout: '.changeset/calm-owls.md\n' }
+      return undefined
+    })
+    const builder = agent('builder', planned(built(), built('added a changeset'), built('again')))
+    const reviewer = agent('reviewer', [
+      { ok: true, summary: CHANGES },
+      { ok: true, summary: APPROVE },
+    ])
+
+    const result = await runCase(deps(provider, builder, reviewer), evalCase)
+
+    expect(result).toMatchObject({ passed: true, attempts: 3, reviewRounds: 2 })
+    expect(reviewer.prompts[0]).toContain("# What the factory's checks required")
+    expect(reviewer.prompts[0]).toContain('The check `tests` (`pnpm test`) failed on ccccccc')
+    expect(reviewer.prompts[0]).toContain('> error no changesets were found')
+    expect(reviewer.prompts[0]).toContain('- `.changeset/calm-owls.md`')
+    expect(builder.prompts[3]).toContain('`src/other.ts`: changed outside the plan')
+    expect(builder.prompts[3]).not.toContain('.changeset/calm-owls.md')
+  })
+
+  it('says nothing to the reviewer about the checks when none failed', async () => {
+    const reviewer = agent('reviewer', [{ ok: true, summary: APPROVE }])
+
+    await runCase(deps(sandbox(), agent('builder', planned(built())), reviewer), evalCase)
+
+    expect(reviewer.prompts[0]).not.toContain("# What the factory's checks required")
+  })
+
   it('sends a review that asks for changes back and passes when the next review approves', async () => {
     const builder = agent('builder', planned(built(), built('added the test')))
     const reviewer = agent('reviewer', [

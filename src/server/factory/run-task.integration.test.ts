@@ -1496,6 +1496,7 @@ describe('runTask planning before it builds', () => {
     expect(reviewer.prompts[0]).toContain("# The builder's plan")
     expect(reviewer.prompts[0]).toContain('- `src/other.js`')
     expect(reviewer.prompts[0]).toContain('implemented the plan')
+    expect(reviewer.prompts[0]).not.toContain("# What the factory's checks required")
     const [stored] = await reviewsOf(id)
     expect(stored.findings).toContainEqual({
       severity: 'minor',
@@ -1504,6 +1505,44 @@ describe('runTask planning before it builds', () => {
     })
     expect(githubApi.bodies[0]).toContain('<summary>Plan</summary>')
     expect(githubApi.bodies[0]).toContain('`src/truncate.js`: the function')
+  })
+
+  it('tells the reviewer what a failed check required and does not record that file as outside the plan', async () => {
+    const id = await seedTask()
+    const reviewer = approving()
+    let runs = 0
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        // The check fails on the first commit, both times it runs there, and passes on the second.
+        if (c.endsWith('npm test'))
+          return ++runs <= 2 ? { exitCode: 1, stdout: 'error no changesets were found' } : undefined
+        if (c.includes('rev-list')) return { stdout: 'abc123def2\nabc123def\n' }
+        if (c.includes('diff --name-status'))
+          return { stdout: 'M\tsrc/truncate.js\nA\t.changeset/calm-owls.md\nM\tsrc/other.js\n' }
+        if (c.includes('diff --name-only --diff-filter=A'))
+          return { stdout: '.changeset/calm-owls.md\n' }
+        return undefined
+      }),
+    )
+
+    const result = await runTask(
+      deps(sandbox, {
+        harness: planningBuilder([JSON.stringify(plan)]),
+        reviewer,
+        planFirst: true,
+      }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done', sha: 'abc123def2' })
+    expect(reviewer.prompts[0]).toContain("# What the factory's checks required")
+    expect(reviewer.prompts[0]).toContain('The check `test` (`npm test`) failed on abc123d with:')
+    expect(reviewer.prompts[0]).toContain('> error no changesets were found')
+    expect(reviewer.prompts[0]).toContain('- `.changeset/calm-owls.md`')
+    const [stored] = await reviewsOf(id)
+    expect(stored.findings).toEqual([
+      { severity: 'minor', file: 'src/other.js', issue: 'changed outside the plan' },
+    ])
   })
 
   describe('on a branch the integration branch moved past', () => {

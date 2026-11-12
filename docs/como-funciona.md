@@ -253,7 +253,10 @@ falha em `plan`. O turno tem teto de 15 minutos. O build continua a mesma sessã
 seguir o plano e de explicar no resumo final qualquer arquivo fora dele. O plano vai no corpo do PR, na
 seção "Plan" da task no painel e no prompt do revisor, junto com a lista dos arquivos do diff que o plano
 não cita (calculada sem modelo; lockfiles ficam de fora). O revisor trata cada um como achado, salvo
-motivo que a issue sustente, e a fábrica registra cada um como achado `minor`. Uma task retomada
+motivo que a issue sustente, e a fábrica registra cada um como achado `minor`. Quando uma checagem da
+fábrica falhou num commit anterior da task e passa no commit em revisão, o prompt do revisor diz qual
+checagem, a linha do erro e os arquivos adicionados entre os dois commits: arquivo que a checagem exigiu
+(um changeset vazio, por exemplo) é legítimo, e esses arquivos não entram na lista de fora do plano. Uma task retomada
 (resposta a uma pergunta, mudanças pedidas, checks obrigatórios que devolveram o trabalho) usa o último
 plano gravado. Não há aprovação humana do plano: quem confere é o revisor, contra o diff
 ([ADR 0009](adr/0009-plano-antes-do-codigo-e-testes-que-nao-enfraquecem.md)).

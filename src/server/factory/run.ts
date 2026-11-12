@@ -1033,11 +1033,7 @@ export class Run {
       this.timeouts.checkMs ?? DEFAULT_CHECK_MS,
     )
     for (const check of results) await db.insert(evidence).values({ taskId, sha, ...check })
-    const rows = await db
-      .select()
-      .from(evidence)
-      .where(eq(evidence.taskId, taskId))
-      .orderBy(asc(evidence.id))
+    const rows = await this.checkRuns()
     const verdict = gate({ headSha: sha, required: this.checks.map((c) => c.name), evidence: rows })
     const here = rows.filter((r) => r.sha === sha)
     // A commit of the integration branch that the run did not make gets no check run of the factory.
@@ -1052,15 +1048,26 @@ export class Run {
     return { results, here, verdict }
   }
 
+  /** Every result of the factory's checks on this task, oldest first. */
+  private checkRuns() {
+    const { deps, taskId } = this.c
+    return deps.db
+      .select()
+      .from(evidence)
+      .where(eq(evidence.taskId, taskId))
+      .orderBy(asc(evidence.id))
+  }
+
   /** Has the reviewer read the commit, adds the facts about the diff, and records the outcome. */
   private async review(sha: string, attempt: number): Promise<ReviewVerdict> {
     const { deps, taskId, row, issue, branch, state } = this.c
     state.current = 'review'
     await enterStage(deps.db, taskId, 'review', { sha, attempt, reviewer: this.reviewer.name })
-    const { guards, unplanned } = await diffFacts(this.backend, this.repoDir, {
+    const { guards, unplanned, required } = await diffFacts(this.backend, this.repoDir, {
       baseSha: this.baseSha,
       plan: this.plan,
       issue,
+      checkRuns: await this.checkRuns(),
     })
     const result = await this.settle(this.reviewer, 'reviewer', attempt, (onEvent) =>
       this.reviewer.run(this.backend, {
@@ -1075,6 +1082,7 @@ export class Run {
           branch,
           baseSha: this.baseSha,
           knowledgeDir: this.feed?.dir,
+          required,
           ...(this.plan
             ? { plan: this.renderedPlan, unplanned, builderSummary: this.summary }
             : {}),

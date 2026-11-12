@@ -22,13 +22,15 @@ function git(dir: string, ...args: string[]): string {
   return run.stdout.trim()
 }
 
-function commit(dir: string, files: Files, message: string): void {
+/** Commits `files` on the branch checked out in `dir`, and answers the commit. */
+export function commit(dir: string, files: Files, message: string): string {
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(dirname(join(dir, path)), { recursive: true })
     writeFileSync(join(dir, path), content)
   }
   git(dir, 'add', '-A')
   git(dir, 'commit', '-q', '-m', message)
+  return git(dir, 'rev-parse', 'HEAD')
 }
 
 const TEST_SCRIPT = (script: string) => `${JSON.stringify({ scripts: { test: script } })}\n`
@@ -75,6 +77,8 @@ it('cuts long text', () => {
 export function divergedRepository(options: { behind: boolean; branch?: Files }): {
   dir: string
   baseSha: string
+  /** The commit of the task branch. */
+  taskSha: string
 } {
   const dir = mkdtempSync(join(tmpdir(), 'diverged-'))
   git(dir, 'init', '-q', '-b', 'workspace')
@@ -84,22 +88,25 @@ export function divergedRepository(options: { behind: boolean; branch?: Files })
     'start',
   )
   git(dir, 'switch', '-q', '-c', 'factory/7')
-  commit(dir, options.branch ?? PLANNED_CHANGE, 'the task')
+  const taskSha = commit(dir, options.branch ?? PLANNED_CHANGE, 'the task')
   git(dir, 'switch', '-q', 'workspace')
   if (options.behind) commit(dir, INTEGRATION_CHANGES, 'release 16.5.0')
   const baseSha = git(dir, 'rev-parse', 'HEAD')
   git(dir, 'switch', '-q', 'factory/7')
-  return { dir, baseSha }
+  return { dir, baseSha, taskSha }
 }
 
 /**
- * Answers the commands that read history (`merge-base`, `diff`, `show`) addressed to `repoDir` from the real
+ * Answers the commands that read history (`merge-base`, `rev-list`, `diff`, `show`) addressed to `repoDir` from the real
  * repository in `dir`, and leaves every other command to the caller.
  */
 export function readsHistory(dir: string, repoDir: string): (command: string) => Reply | undefined {
   const prefix = `git -C ${repoDir} `
   return (command) => {
-    if (!/^git -C \S+ (merge-base|diff|show) /.test(command) || !command.startsWith(prefix))
+    if (
+      !/^git -C \S+ (merge-base|rev-list|diff|show) /.test(command) ||
+      !command.startsWith(prefix)
+    )
       return undefined
     const run = spawnSync('sh', ['-c', `git -C ${dir} ${command.slice(prefix.length)}`], {
       encoding: 'utf8',

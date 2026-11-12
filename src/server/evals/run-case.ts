@@ -17,6 +17,7 @@ import {
 import { cloneRepository } from '../factory/clone'
 import { failingChecks, runChecks, type CheckResult } from '../factory/evidence'
 import { diffFacts } from '../factory/diff-facts'
+import type { CheckRun, RequiredByCheck } from '../factory/required-files'
 import {
   buildPrompt,
   type CodingHarness,
@@ -83,6 +84,8 @@ class CaseRun {
   private plan: ChangePlan | undefined
   /** What the builder said when it last finished, where it gives its reasons. */
   private summary = ''
+  /** Every result of the checks in this case, with the commit it ran on. */
+  private readonly checkRuns: CheckRun[] = []
   private readonly started = Date.now()
 
   constructor(
@@ -208,7 +211,8 @@ class CaseRun {
     return (await must(this.backend, `${this.git} rev-parse HEAD`)).stdout.trim()
   }
 
-  private async check(): Promise<CheckResult[]> {
+  /** Runs the checks on the commit and keeps every result, as the factory keeps its evidence. */
+  private async check(sha: string): Promise<CheckResult[]> {
     await must(this.backend, `git -C ${this.repoDir} clean -fdxq`)
     const results = await runChecks(
       this.backend,
@@ -216,10 +220,15 @@ class CaseRun {
       this.c.checks,
       this.limits.checkMs ?? DEFAULT_CHECK_MS,
     )
+    this.checkRuns.push(...results.map((result) => ({ ...result, sha })))
     return failingChecks(results)
   }
 
-  private async review(sha: string, unplanned: string[]): Promise<ReviewVerdict> {
+  private async review(
+    sha: string,
+    unplanned: string[],
+    required: RequiredByCheck[],
+  ): Promise<ReviewVerdict> {
     this.reviewRounds++
     const { c } = this
     const result = await this.deps.reviewer.run(this.backend, {
@@ -233,6 +242,7 @@ class CaseRun {
         branch: `factory/${c.issueNumber}`,
         baseSha: c.baseSha,
         knowledgeDir: this.knowledgeDir,
+        required,
         ...(this.plan
           ? { plan: renderChangePlan(this.plan), unplanned, builderSummary: this.summary }
           : {}),
@@ -257,7 +267,7 @@ class CaseRun {
   async loop(): Promise<CaseEnd> {
     for (;;) {
       const sha = await this.commit()
-      const failed = await this.check()
+      const failed = await this.check(sha)
       if (failed.length > 0) {
         if (!this.canRework()) {
           return {
@@ -270,13 +280,14 @@ class CaseRun {
         await this.rework([], failed)
         continue
       }
-      const { guards, unplanned } = await diffFacts(this.backend, this.repoDir, {
+      const { guards, unplanned, required } = await diffFacts(this.backend, this.repoDir, {
         baseSha: this.c.baseSha,
         plan: this.plan,
         issue: { labels: this.c.labels, title: this.c.title, body: this.c.body },
+        checkRuns: this.checkRuns,
       })
       const blocking = guards.filter((g) => g.severity !== 'minor')
-      const read = await this.review(sha, unplanned)
+      const read = await this.review(sha, unplanned, required)
       if (read.verdict === 'approve' && blocking.length === 0) {
         return { checksPassed: true, verdict: 'approve', blockingGuards: [] }
       }

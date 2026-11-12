@@ -129,6 +129,66 @@ describe('prompts', () => {
     expect(prompt).toContain('Every file the diff changes is in the plan.')
   })
 
+  const reviewOf = (extra: Partial<Parameters<typeof reviewPrompt>[0]>) =>
+    reviewPrompt({
+      repo: 'o/r',
+      issueNumber: 3,
+      title: 'T',
+      body: 'B',
+      branch: 'factory/3',
+      baseSha: 'abc',
+      ...extra,
+    })
+  const changesetCheck = {
+    name: 'changeset',
+    command: 'pnpm exec changeset status --since=origin/workspace',
+    error: 'error Some packages have been changed but no changesets were found.',
+    failedSha: 'f'.repeat(40),
+    passedSha: 'a'.repeat(40),
+    files: ['.changeset/quiet-pens-wave.md'],
+  }
+
+  it('names the check that failed on an earlier attempt, its error and the files added since', () => {
+    const prompt = reviewOf({ required: [changesetCheck] })
+
+    expect(prompt).toContain("# What the factory's checks required")
+    expect(prompt).toContain('`changeset` (`pnpm exec changeset status --since=origin/workspace`)')
+    expect(prompt).toContain('failed on fffffff with:')
+    expect(prompt).toContain('It passes on aaaaaaa and on the commit under review.')
+    expect(prompt).toContain(
+      '> error Some packages have been changed but no changesets were found.',
+    )
+    expect(prompt).toContain('- `.changeset/quiet-pens-wave.md`')
+    expect(prompt).toContain('is legitimate')
+  })
+
+  it('does not call a file added for a check part of the plan', () => {
+    const prompt = reviewOf({ plan: 'p', unplanned: [], required: [changesetCheck] })
+
+    expect(prompt).not.toContain('Every file the diff changes is in the plan.')
+    expect(prompt).toContain(
+      'Every file the diff changes is in the plan or was added after a factory check failed',
+    )
+  })
+
+  it('says when a check was repaired without adding a file', () => {
+    const prompt = reviewOf({
+      plan: 'p',
+      unplanned: [],
+      required: [{ ...changesetCheck, files: [] }],
+    })
+
+    expect(prompt).toContain('No file was added between the two commits.')
+    expect(prompt).toContain('Every file the diff changes is in the plan.')
+  })
+
+  it('says nothing about the checks when none failed on an earlier attempt', () => {
+    const base = { plan: 'p', unplanned: ['src/extra.ts'], builderSummary: 'done' }
+
+    expect(reviewOf({ ...base, required: [] })).toBe(reviewOf(base))
+    expect(reviewOf(base)).not.toContain("# What the factory's checks required")
+  })
+
   it('gives the builder the failing output and the findings, and forbids committing', () => {
     const prompt = reworkPrompt({
       findings: [{ severity: 'major', file: 'a.js', issue: 'rejects nothing' }],
