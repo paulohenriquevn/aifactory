@@ -351,7 +351,30 @@ describe('inbox', () => {
 
     expect(await inbox(getDb())).toEqual([])
     const [card] = await listTasks(getDb())
-    expect(card).toMatchObject({ id: resolved, column: 'review', resolved: true })
+    expect(card).toMatchObject({ id: resolved, column: 'resolved', resolved: true })
+  })
+})
+
+describe('the Delivered column', () => {
+  it('leaves out a task that finished with no change: no pull request, nothing merged', async () => {
+    const unchanged = await seed('done', { headSha: 'abc', resolvedSha: 'abc' })
+
+    const cards = await listTasks(getDb())
+
+    expect(cards.filter((c) => c.column === 'review')).toEqual([])
+    expect(cards.find((c) => c.id === unchanged)?.column).toBe('resolved')
+  })
+
+  it('counts a task integrated and not released yet', async () => {
+    const integrated = await seed('done', {
+      headSha: 'abc',
+      pullRequestUrl: 'https://github.com/paulo/app/pull/7',
+      mergedSha: 'merged1',
+    })
+
+    const cards = await listTasks(getDb())
+
+    expect(cards.filter((c) => c.column === 'review').map((c) => c.id)).toEqual([integrated])
   })
 })
 
@@ -507,7 +530,7 @@ describe('actions', () => {
       { taskId: handed, kind: 'resolve', sha: 'head1' },
     ])
     const [card] = (await listTasks(getDb())).filter((c) => c.id === failed)
-    expect(card).toMatchObject({ column: 'review', resolved: true })
+    expect(card).toMatchObject({ column: 'resolved', resolved: true })
     expect(queued).toEqual([])
   })
 

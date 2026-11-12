@@ -126,7 +126,10 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       issueNumber: r.issueNumber,
       title: r.issueTitle,
       stage: r.stage as Stage,
-      column: columnOf(r.stage as Stage, again?.retryable ?? null),
+      column: columnOf(r.stage as Stage, again?.retryable ?? null, {
+        resolved: r.resolvedSha !== null,
+        integrated: r.mergedSha !== null,
+      }),
       pullRequestUrl: r.pullRequestUrl,
       headSha: r.headSha,
       costUsd: r.costUsd,

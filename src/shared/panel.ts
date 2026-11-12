@@ -17,7 +17,7 @@ export type Stage =
 
 /** Where a stage sits on the board. */
 export type Column =
-  'queued' | 'working' | 'waiting' | 'retrying' | 'review' | 'released' | 'attention'
+  'queued' | 'working' | 'waiting' | 'retrying' | 'review' | 'released' | 'resolved' | 'attention'
 
 export const COLUMNS: { id: Column; title: string }[] = [
   { id: 'queued', title: 'Queued' },
@@ -26,6 +26,7 @@ export const COLUMNS: { id: Column; title: string }[] = [
   { id: 'retrying', title: 'Will retry itself' },
   { id: 'review', title: 'Delivered' },
   { id: 'released', title: 'Released' },
+  { id: 'resolved', title: 'Already resolved' },
   { id: 'attention', title: 'Needs a person' },
 ]
 
@@ -57,8 +58,21 @@ export function retryableFailure(detail: Record<string, unknown> | null | undefi
   return ENVIRONMENT.test(detail.error) ? 'environment' : null
 }
 
-export function columnOf(stage: Stage, retryable: Retryable = null): Column {
+/** What a done task left behind, which decides whether a release still has something to carry. */
+export type DoneOutcome = { resolved?: boolean; integrated?: boolean }
+
+/**
+ * Delivered means waiting for a release. A done task resolved with no change (the code already did what
+ * the issue asks, or a person resolved it another way) has nothing merged for a release to carry, so it
+ * goes to its own column instead of staying in Delivered forever.
+ */
+export function columnOf(
+  stage: Stage,
+  retryable: Retryable = null,
+  { resolved = false, integrated = false }: DoneOutcome = {},
+): Column {
   if (stage === 'failed' && retryable) return 'retrying'
+  if (stage === 'done' && resolved && !integrated) return 'resolved'
   switch (stage) {
     case 'intake':
       return 'queued'

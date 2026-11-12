@@ -278,8 +278,8 @@ faz o que ela pede, a fábrica trata isso como uma alegação. Os checks rodam n
 construtor disse, com a instrução de conferir no código e nos testes, sem confiar no texto. Se os dois
 confirmam, a fábrica comenta na issue o commit, os checks que passaram, a conclusão do revisor e o que o
 construtor encontrou, fecha a issue como concluída e marca a task `done`, sem PR (`resolved_sha` na
-task). No painel ela aparece em Delivered como "already resolved" e não entra na caixa de entrada. Se os
-checks falham, a issue fica aberta e a task vai para uma pessoa, com o motivo. Se o revisor aponta algo
+task). No painel ela aparece na coluna "Already resolved", e não em Delivered, que guarda só o que
+espera uma release; também não entra na caixa de entrada. Se os checks falham, a issue fica aberta e a task vai para uma pessoa, com o motivo. Se o revisor aponta algo
 faltando e o construtor tem sessão para retomar, a revisão volta uma vez à sessão dele, com a instrução de
 fazer a mudança construindo sobre o que existe (e dizer o que assumiu) e de não mudar nada só quando faltar
 algo de fora do repositório. Uma mudança feita aí segue o caminho normal (push, checks, review, PR); nenhuma
@@ -821,12 +821,12 @@ enquanto o agente trabalha, e uma conexão que caiu.
 **Ações.** Todas passam pelo servidor, que confere o estágio da task de novo, então uma página velha não
 consegue fazer o que a task já não permite.
 
-| Ação                  | Quando                                                        | O que faz                                                                                                                                                                                                                |
-| --------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Aprovar               | task com PR (`done`, `handoff`)                               | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.                                                                                                          |
-| Pedir mudanças        | task com PR, com um texto                                     | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review.                                                                                                    |
-| Tentar de novo        | task `failed` ou `handoff`, ou `done` com o PR nunca mergeado | Apaga a branch (o que fecha o PR) e recomeça do zero, sobre a base atual. É o caminho para um PR que o GitHub recusou por conflito.                                                                                      |
-| Marcar como resolvida | task `failed` ou `handoff`, com um texto                      | Para o que uma pessoa resolveu por outro caminho (à mão, ou dividindo a issue em outras já entregues). O texto diz onde. A task vai para Delivered, marcada como resolvida no commit em que a branch de integração está. |
+| Ação                  | Quando                                                        | O que faz                                                                                                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Aprovar               | task com PR (`done`, `handoff`)                               | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.                                                                                                                   |
+| Pedir mudanças        | task com PR, com um texto                                     | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review.                                                                                                             |
+| Tentar de novo        | task `failed` ou `handoff`, ou `done` com o PR nunca mergeado | Apaga a branch (o que fecha o PR) e recomeça do zero, sobre a base atual. É o caminho para um PR que o GitHub recusou por conflito.                                                                                               |
+| Marcar como resolvida | task `failed` ou `handoff`, com um texto                      | Para o que uma pessoa resolveu por outro caminho (à mão, ou dividindo a issue em outras já entregues). O texto diz onde. A task vai para "Already resolved", marcada como resolvida no commit em que a branch de integração está. |
 
 Se o agente, ao receber um pedido de mudança, concluir que não há o que mudar (o teste já existia, por
 exemplo), a task volta a `done` e a resposta dele vira um comentário na issue, em vez de falhar.

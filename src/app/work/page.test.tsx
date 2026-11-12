@@ -110,7 +110,7 @@ describe('board', () => {
     expect(inColumn('Needs a person').queryByText('Out of quota')).toBeNull()
   })
 
-  it('always draws all seven columns, in the same order and the same width, with cards in them or not', async () => {
+  it('always draws all eight columns, in the same order and the same width, with cards in them or not', async () => {
     serve({
       tasks: [
         card({ id: 1, title: 'Building one' }),
@@ -131,10 +131,11 @@ describe('board', () => {
       'Will retry itself',
       'Delivered',
       'Released',
+      'Already resolved',
       'Needs a person',
     ])
     const grid = regions[0].parentElement as HTMLElement
-    expect(grid.style.gridTemplateColumns).toBe('repeat(7, minmax(150px, 1fr))')
+    expect(grid.style.gridTemplateColumns).toBe('repeat(8, minmax(150px, 1fr))')
     for (const name of [
       'Queued',
       'Waiting for you',

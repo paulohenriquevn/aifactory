@@ -33,6 +33,7 @@ describe('columnOf', () => {
       'retrying',
       'review',
       'released',
+      'resolved',
       'attention',
     ])
     const known = new Set(COLUMNS.map((c) => c.id))
@@ -47,8 +48,29 @@ describe('columnOf', () => {
       'Will retry itself',
       'Delivered',
       'Released',
+      'Already resolved',
       'Needs a person',
     ])
+  })
+})
+
+describe('a task that finished with no change', () => {
+  it('leaves Delivered, since no release will ever carry it', () => {
+    expect(columnOf('done', null, { resolved: true })).toBe('resolved')
+  })
+
+  it('stays in Delivered once its work is integrated, until a release carries it', () => {
+    expect(columnOf('done', null, { integrated: true })).toBe('review')
+    expect(columnOf('done', null, { resolved: true, integrated: true })).toBe('review')
+  })
+
+  it('keeps a pull request that is not integrated yet in Delivered', () => {
+    expect(columnOf('done', null, { resolved: false, integrated: false })).toBe('review')
+  })
+
+  it('only changes the column of a done task', () => {
+    expect(columnOf('released', null, { resolved: true })).toBe('released')
+    expect(columnOf('failed', null, { resolved: true })).toBe('attention')
   })
 })
 
