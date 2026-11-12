@@ -57,6 +57,12 @@ const gh = {
   compared: [] as string[],
   /** The commits whose checks were read. */
   checksRead: [] as string[],
+  /** The version branch changesets pushes, as its comparison with the release branch reads. */
+  versionBranch: undefined as { sha: string; aheadBy: number; committedAt: Date } | undefined,
+  /** The branch comparisons asked for, as `base...head`. */
+  branchesRead: [] as string[],
+  /** The pull requests the factory opened. */
+  opened: [] as { head: string; base?: string; title: string; body: string }[],
 }
 beforeEach(async () => {
   await getPool().query(
@@ -78,6 +84,9 @@ beforeEach(async () => {
     created: [],
     compared: [],
     checksRead: [],
+    versionBranch: undefined,
+    branchesRead: [],
+    opened: [],
   })
 })
 
@@ -129,6 +138,18 @@ const api = {
   },
   closeIssue: async (_repo: string, _token: string, issue: number) => {
     gh.closed.push(issue)
+  },
+  branchAhead: async (_repo: string, _token: string, base: string, head: string) => {
+    gh.branchesRead.push(`${base}...${head}`)
+    return gh.versionBranch
+  },
+  openPullRequest: async (
+    _repo: string,
+    _token: string,
+    pull: { head: string; base?: string; title: string; body: string },
+  ) => {
+    gh.opened.push(pull)
+    return { number: 1975, url: 'https://github.com/usetheokit/ui/pull/1975' }
   },
 } as unknown as GithubApi
 const github: GithubApp = { installationToken: async () => ({ token: 't', expiresAt: new Date() }) }
@@ -517,6 +538,102 @@ describe('a publication whose release run finished without a Version Packages pu
       releaseError: expect.stringMatching(/@theokit\/plugin-voice/),
     })
     expect((await pollPublications(deps(LATER))).failed).toEqual([])
+  })
+})
+
+describe('a version branch the release workflow pushed without a pull request', () => {
+  const LATER = new Date(STARTED.getTime() + 60 * 60_000)
+  /** A promotion whose package changed: with nothing published, the publication would fail. */
+  function promotionOfAPackage() {
+    gh.changed = [{ path: 'packages/ui/src/index.ts', status: 'modified' }]
+    gh.tree = {
+      'package.json': '{"name":"ui-repo","private":true}',
+      '.changeset/config.json': '{"ignore":[]}',
+      'packages/ui/package.json': '{"name":"@theokit/ui"}',
+    }
+  }
+  const pushed = (committedAt: Date, aheadBy = 1) => {
+    gh.versionBranch = { sha: 'version1', aheadBy, committedAt }
+  }
+  const afterPromotion = new Date(STARTED.getTime() + 4 * 60_000)
+
+  it('opens the Version Packages pull request from it, and the publication keeps waiting', async () => {
+    await waitingPublication()
+    promotionOfAPackage()
+    pushed(afterPromotion)
+    // Version Packages #250 merged before this promotion: it belongs to the earlier release.
+    gh.versionPr = versionPr({
+      number: 250,
+      state: 'closed',
+      merged: true,
+      mergedAt: new Date('2026-11-11T11:11:04Z'),
+    })
+
+    const result = await pollPublications(deps(LATER))
+
+    expect(result).toMatchObject({ failed: [], published: [], waiting: 1, errors: [] })
+    expect(gh.branchesRead).toEqual(['main...changeset-release/main'])
+    expect(gh.opened).toEqual([
+      expect.objectContaining({
+        head: 'changeset-release/main',
+        base: 'main',
+        title: 'Version Packages',
+        body: expect.stringContaining('promoted1'),
+      }),
+    ])
+    expect(await row()).toMatchObject({ status: 'waiting', versionPullRequest: null })
+    expect((await row()).detail).toMatch(
+      /opened Version Packages #1975 from changeset-release\/main/,
+    )
+    expect(gh.created).toEqual([])
+    expect(gh.merges).toEqual([])
+  })
+
+  it('opens it as soon as the branch is there, before the grace window ends', async () => {
+    await waitingPublication()
+    pushed(afterPromotion)
+
+    const result = await pollPublications(deps())
+
+    expect(result.waiting).toBe(1)
+    expect(gh.opened).toHaveLength(1)
+  })
+
+  it('ends the publication as before when there is no version branch and no pull request', async () => {
+    await waitingPublication()
+    promotionOfAPackage()
+
+    const result = await pollPublications(deps(LATER))
+
+    expect(result.failed).toHaveLength(1)
+    expect(gh.opened).toEqual([])
+    expect(await row()).toMatchObject({ status: 'failed' })
+    expect((await row()).detail).toMatch(/changes @theokit\/ui/)
+  })
+
+  it('ignores a version branch committed before the promotion', async () => {
+    await waitingPublication()
+    promotionOfAPackage()
+    pushed(new Date(STARTED.getTime() - 60_000))
+
+    const result = await pollPublications(deps(LATER))
+
+    expect(result.failed).toHaveLength(1)
+    expect(gh.branchesRead).toEqual(['main...changeset-release/main'])
+    expect(gh.opened).toEqual([])
+    expect(await row()).toMatchObject({ status: 'failed' })
+  })
+
+  it('ignores a version branch the release branch already holds', async () => {
+    await waitingPublication()
+    promotionOfAPackage()
+    pushed(afterPromotion, 0)
+
+    const result = await pollPublications(deps(LATER))
+
+    expect(result.failed).toHaveLength(1)
+    expect(gh.branchesRead).toEqual(['main...changeset-release/main'])
+    expect(gh.opened).toEqual([])
   })
 })
 

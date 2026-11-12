@@ -59,6 +59,9 @@ export type OpenPullRequest = {
  */
 export type ChangedFile = { path: string; status: string; previousPath?: string }
 
+/** A branch as its comparison with another reads: its head, how far ahead it is, and when the head was committed. */
+export type BranchAhead = { sha: string; aheadBy: number; committedAt: Date }
+
 /** A full release a repository published, as its own release workflow names it. */
 export type PublishedRelease = { tag: string; url: string; publishedAt: Date }
 
@@ -193,6 +196,16 @@ export type GithubApi = {
   defaultBranch(repo: string, token: string): Promise<string>
   /** The commit a branch points at, or undefined when the branch does not exist. */
   branchHead(repo: string, token: string, branch: string): Promise<string | undefined>
+  /**
+   * How far the branch `head` is ahead of `base`, with its head and when that was committed; undefined when
+   * `head` does not exist.
+   */
+  branchAhead(
+    repo: string,
+    token: string,
+    base: string,
+    head: string,
+  ): Promise<BranchAhead | undefined>
   /** Creates a branch at a commit. */
   createBranch(repo: string, token: string, branch: string, sha: string): Promise<void>
   /**
@@ -313,6 +326,19 @@ export function createGithubApi(
     if (result.errors?.length) return { why: result.errors.map((e) => e.message).join('; ') }
     if (!response.ok || !result.data) return { why: `HTTP ${response.status}` }
     return { data: result.data }
+  }
+
+  async function branchHead(repo: string, token: string, branch: string) {
+    const response = await call(
+      repo,
+      token,
+      `/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`,
+    )
+    if (response.status === 404) return undefined
+    const body = (await (
+      await ensure(response, `reading the branch ${branch} of ${repo}`, [200])
+    ).json()) as { object: { sha: string } }
+    return body.object.sha
   }
 
   return {
@@ -582,17 +608,30 @@ export function createGithubApi(
       return body.default_branch
     },
 
-    async branchHead(repo, token, branch) {
-      const response = await call(
-        repo,
-        token,
-        `/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`,
-      )
-      if (response.status === 404) return undefined
-      const body = (await (
-        await ensure(response, `reading the branch ${branch} of ${repo}`, [200])
-      ).json()) as { object: { sha: string } }
-      return body.object.sha
+    branchHead,
+
+    async branchAhead(repo, token, base, head) {
+      const sha = await branchHead(repo, token, head)
+      if (sha === undefined) return undefined
+      const compared = (await (
+        await ensure(
+          await call(repo, token, `/compare/${base}...${sha}`),
+          `comparing ${head} with ${base} on ${repo}`,
+          [200],
+        )
+      ).json()) as { ahead_by: number }
+      const commit = (await (
+        await ensure(
+          await call(repo, token, `/commits/${sha}`),
+          `reading the commit ${sha.slice(0, 7)} of ${repo}`,
+          [200],
+        )
+      ).json()) as { commit: { committer: { date: string } } }
+      return {
+        sha,
+        aheadBy: compared.ahead_by,
+        committedAt: new Date(commit.commit.committer.date),
+      }
     },
 
     async createBranch(repo, token, branch, sha) {

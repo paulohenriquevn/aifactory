@@ -17,6 +17,8 @@ import {
   releaseRunGraceOver,
   releaseRunOf,
   versionBranchFor,
+  versionBranchWaits,
+  versionPullRequestFrom,
   withChangesetCheck,
 } from './changesets'
 
@@ -107,6 +109,46 @@ describe('releaseRunOf', () => {
 describe('versionBranchFor', () => {
   it('is the branch changesets/action opens its Version Packages pull request from', () => {
     expect(versionBranchFor('main')).toBe('changeset-release/main')
+  })
+})
+
+describe('versionBranchWaits', () => {
+  const started = new Date('2026-11-12T10:00:00Z')
+  const branch = (aheadBy: number, committedAt: string) => ({
+    sha: 'v1',
+    aheadBy,
+    committedAt: new Date(committedAt),
+  })
+
+  it('is true for a branch ahead of the release branch, committed after the promotion', () => {
+    expect(versionBranchWaits(branch(1, '2026-11-12T10:04:00Z'), started)).toBe(true)
+  })
+
+  it('is false when there is no such branch', () => {
+    expect(versionBranchWaits(undefined, started)).toBe(false)
+  })
+
+  it('is false for a branch the release branch already holds', () => {
+    expect(versionBranchWaits(branch(0, '2026-11-12T10:04:00Z'), started)).toBe(false)
+  })
+
+  it('is false for a branch committed before the promotion, or at the same instant', () => {
+    expect(versionBranchWaits(branch(1, '2026-11-12T09:59:59Z'), started)).toBe(false)
+    expect(versionBranchWaits(branch(1, '2026-11-12T10:00:00Z'), started)).toBe(false)
+  })
+})
+
+describe('versionPullRequestFrom', () => {
+  it('opens Version Packages from the version branch into the release branch, naming the promoted commit', () => {
+    const pull = versionPullRequestFrom('main', 'c06b4731234567')
+
+    expect(pull).toMatchObject({
+      head: 'changeset-release/main',
+      base: 'main',
+      title: 'Version Packages',
+    })
+    expect(pull.body).toContain('c06b4731234567')
+    expect(pull.body).toContain('changeset-release/main')
   })
 })
 

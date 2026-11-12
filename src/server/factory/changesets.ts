@@ -1,4 +1,4 @@
-import type { ChangedFile, OpenPullRequest } from '../github/pulls'
+import type { BranchAhead, ChangedFile, OpenPullRequest } from '../github/pulls'
 
 import type { CheckSpec } from './evidence'
 import type { MainState } from './watch'
@@ -143,6 +143,25 @@ export const NOT_OPENED =
 
 /** The branch changesets/action opens its Version Packages pull request from. */
 export const versionBranchFor = (releaseBranch: string) => `changeset-release/${releaseBranch}`
+
+/**
+ * Whether the version branch holds versions for this publication: ahead of the release branch and committed
+ * after the promotion. A release workflow that may not open pull requests (usetheokit/theokit) pushes it and
+ * stops there. One committed before the promotion belongs to an earlier release.
+ */
+export const versionBranchWaits = (branch: BranchAhead | undefined, startedAt: Date) =>
+  branch !== undefined && branch.aheadBy > 0 && branch.committedAt.getTime() > startedAt.getTime()
+
+/** The Version Packages pull request the factory opens from a version branch the release workflow pushed. */
+export function versionPullRequestFrom(releaseBranch: string, promotedSha: string) {
+  const head = versionBranchFor(releaseBranch)
+  return {
+    head,
+    base: releaseBranch,
+    title: 'Version Packages',
+    body: `The release workflow pushed \`${head}\` after the promotion of ${promotedSha} without opening a pull request, so the factory opened this one. Merging it lets the workflow publish the versions.`,
+  }
+}
 
 /**
  * The back-merge a repository's own workflow opens after a release: from the release branch into the

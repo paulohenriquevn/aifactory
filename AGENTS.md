@@ -128,8 +128,11 @@ reads that file, not a convention.
   factory's own, tagged after the highest `v` tag, since no changeset can exist for those. The `publish-changesets` cron merges the Version Packages pull
   request (`changeset-release/<release branch>`) once its checks are green, under the same decision, and
   only that pull request; when the workflow has published, it releases the tasks in the promoted commit and
-  closes their issues with the versions. When the run on the promoted commit finished without opening a Version
-  Packages pull request (`publication-end.ts`, after a 10 minute grace window), the publication ends: a failed
+  closes their issues with the versions. When the release workflow pushed the version branch after the promotion,
+  ahead of the release branch, without opening a pull request from it, the factory opens Version Packages itself
+  and the publication keeps waiting; it never ends while such a branch waits. When the run on the promoted commit
+  finished without a Version Packages pull request or such a branch
+  (`publication-end.ts`, after a 10 minute grace window), the publication ends: a failed
   check, or a promotion that changes a published package, fails it with the reason on the task; otherwise the
   promotion becomes the factory's own patch release. Such a repository also gets a `changeset` check.
 - **The factory opens a revert and never merges it.** `watch-main` may open a pull request that

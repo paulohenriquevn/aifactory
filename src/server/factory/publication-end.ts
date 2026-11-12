@@ -5,7 +5,14 @@ import { publication, task } from '../db/schema'
 import type { GithubApi } from '../github/pulls'
 
 import { publishedPackagesChanged } from './changed-packages'
-import { NOT_OPENED, releaseRunGraceOver, releaseRunOf } from './changesets'
+import {
+  NOT_OPENED,
+  releaseRunGraceOver,
+  releaseRunOf,
+  versionBranchFor,
+  versionBranchWaits,
+  versionPullRequestFrom,
+} from './changesets'
 import { createOwnTag, latestPreRelease, nextOwnTag } from './deliver'
 import { shipContained, unclosedNote } from './ship'
 import { enterStage } from './stages'
@@ -33,12 +40,17 @@ export type Ending = { wait: string } | { failed: string } | { released: string 
  *   promotion contains is released and its issue closed.
  *
  * A failure is recorded on the publication and on the task's `released` stage, where the panel shows it.
+ *
+ * Before any of that, a version branch the release workflow pushed for this promotion without a pull request
+ * gets one, and the publication waits for it: it never ends while such a branch waits.
  */
 export async function endWithoutVersionPullRequest(
   deps: EndDeps,
   p: Publication,
   token: string,
 ): Promise<Ending> {
+  const opened = await openFromVersionBranch(deps, p, token)
+  if (opened) return opened
   if (!releaseRunGraceOver(p.startedAt, deps.now?.() ?? new Date())) return { wait: NOT_OPENED }
   const checks = await deps.api.commitChecks(p.repository, token, p.promotedSha)
   const run = releaseRunOf(classify(checks), p.promotedSha)
@@ -63,6 +75,29 @@ export async function endWithoutVersionPullRequest(
     )
   }
   return releaseOwn(deps, p, token)
+}
+
+/**
+ * Opens the Version Packages pull request from the version branch when the release workflow pushed it after
+ * the promotion and opened none, which it does where the organisation does not let Actions open pull requests
+ * (usetheokit/theokit). The next pass finds it and merges it once its checks are green.
+ */
+async function openFromVersionBranch(
+  deps: EndDeps,
+  p: Publication,
+  token: string,
+): Promise<Ending | undefined> {
+  const head = versionBranchFor(p.releaseBranch)
+  const branch = await deps.api.branchAhead(p.repository, token, p.releaseBranch, head)
+  if (!versionBranchWaits(branch, p.startedAt)) return undefined
+  const pr = await deps.api.openPullRequest(
+    p.repository,
+    token,
+    versionPullRequestFrom(p.releaseBranch, p.promotedSha),
+  )
+  return {
+    wait: `opened Version Packages #${pr.number} from ${head}, which the release workflow pushed without a pull request`,
+  }
 }
 
 const finishedWithout = (p: Publication) =>

@@ -479,6 +479,14 @@ do release e toda task `done` integrada antes dela, conferido pela API de compar
 ganha o comentário "Available in <tags>" na issue e tem a issue fechada. Uma issue que não fecha fica
 registrada na task e no `detail` da `publication`, e a publicação segue.
 
+Há workflows de release que fazem o versionamento, empurram `changeset-release/<release>` e param, porque a
+organização não deixa o Actions abrir pull request (o `release.yml` do usetheokit/theokit). Quando não há PR
+"Version Packages" aberto ou mergeado depois da promoção e essa branch existe, está à frente da branch de release
+e tem o commit da ponta mais novo que a promoção, a fábrica abre ela mesma o PR "Version Packages" a partir dela
+(título "Version Packages", corpo citando o commit promovido), e a `publication` continua esperando; na passada
+seguinte o PR é mergeado como qualquer outro. Uma branch com commit anterior à promoção é de um release antigo e
+é ignorada. Enquanto uma branch dessas espera, a `publication` nunca é encerrada pelo caminho abaixo.
+
 Se o workflow de release roda no commit promovido e não abre o PR "Version Packages" (porque não havia
 changeset para aplicar), nada é publicado, e a `publication` esperaria para sempre. Por isso, passados 10
 minutos da promoção, quando ainda não há PR "Version Packages" aberto ou mergeado depois dela, o cron lê os

@@ -617,6 +617,63 @@ describe('the branches of a repository', () => {
     expect(calls[0].url).toContain('/git/ref/heads/release/1')
   })
 
+  it('reads how far a branch is ahead of another, and when its head was committed', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /git/ref/heads/changeset-release/main': { status: 200, body: { object: { sha: 'v1' } } },
+      'GET /compare/main...v1': { status: 200, body: { status: 'ahead', ahead_by: 1 } },
+      'GET /commits/v1': {
+        status: 200,
+        body: { sha: 'v1', commit: { committer: { date: '2026-11-12T10:04:00Z' } } },
+      },
+    })
+
+    const ahead = await createGithubApi(fetch).branchAhead(
+      'o/r',
+      'tok',
+      'main',
+      'changeset-release/main',
+    )
+
+    expect(ahead).toEqual({ sha: 'v1', aheadBy: 1, committedAt: new Date('2026-11-12T10:04:00Z') })
+    expect(calls.map((c) => c.url)).toEqual([
+      '/git/ref/heads/changeset-release/main',
+      '/compare/main...v1',
+      '/commits/v1',
+    ])
+  })
+
+  it('says a branch that does not exist is not ahead of anything, without comparing', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /git/ref/heads/changeset-release/main': { status: 404, body: { message: 'Not Found' } },
+    })
+
+    expect(
+      await createGithubApi(fetch).branchAhead('o/r', 'tok', 'main', 'changeset-release/main'),
+    ).toBeUndefined()
+    expect(calls).toHaveLength(1)
+  })
+
+  it('fails when the comparison or the commit cannot be read', async () => {
+    const head = { status: 200, body: { object: { sha: 'v1' } } }
+    const compare = { status: 200, body: { status: 'ahead', ahead_by: 1 } }
+    const noCompare = fakeFetch({
+      'GET /git/ref/heads/b': head,
+      'GET /compare/main...v1': { status: 500, body: 'boom' },
+    }).fetch
+    const noCommit = fakeFetch({
+      'GET /git/ref/heads/b': head,
+      'GET /compare/main...v1': compare,
+      'GET /commits/v1': { status: 500, body: 'boom' },
+    }).fetch
+
+    await expect(createGithubApi(noCompare).branchAhead('o/r', 't', 'main', 'b')).rejects.toThrow(
+      /500/,
+    )
+    await expect(createGithubApi(noCommit).branchAhead('o/r', 't', 'main', 'b')).rejects.toThrow(
+      /500/,
+    )
+  })
+
   it('fails on any other answer when reading a branch', async () => {
     const { fetch } = fakeFetch({ 'GET /git/ref/heads/x': { status: 500, body: 'boom' } })
     await expect(createGithubApi(fetch).branchHead('o/r', 'tok', 'x')).rejects.toThrow(/500/)

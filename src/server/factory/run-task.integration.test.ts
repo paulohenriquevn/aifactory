@@ -267,6 +267,7 @@ const githubApi: GithubApi & {
   },
   defaultBranch: async () => githubApi.branches.defaultName,
   branchHead: async (repo, token, branch) => githubApi.branches.api.branchHead(repo, token, branch),
+  branchAhead: async () => undefined,
   createBranch: async (repo, token, branch, sha) =>
     githubApi.branches.api.createBranch(repo, token, branch, sha),
   async mergeBranch(_repo, _token, base, head) {
