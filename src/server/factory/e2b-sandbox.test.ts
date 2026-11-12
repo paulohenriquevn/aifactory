@@ -1,4 +1,13 @@
-import { ALL_TRAFFIC, CommandExitError, SandboxNotRunningError, TimeoutError } from 'e2b'
+import {
+  ALL_TRAFFIC,
+  CommandExitError,
+  FileNotFoundError,
+  NotFoundError,
+  SandboxError,
+  SandboxNotRunningError,
+  SandboxUnreachableError,
+  TimeoutError,
+} from 'e2b'
 import { shellEscapePosix } from '@theokit/agents/sandbox'
 import { describe, expect, it } from 'vitest'
 
@@ -49,22 +58,56 @@ describe('the sandbox environment', () => {
 })
 
 type Run = (command: string, opts: Record<string, unknown>) => Promise<unknown>
+type Connect = (pid: number, opts: Record<string, unknown>) => Promise<unknown>
+const PID = 7
+/** What E2B throws when the HTTP/2 stream drops while the sandbox still answers its health probe. */
+const dropped = () => new SandboxError('2: [unknown] terminated')
+
+/**
+ * A fake E2B sandbox. `run` is what waiting on the started command does, `connect` what waiting on a reattached
+ * one does, and `files` are the files the command left in its output directory, by name.
+ */
 const backendThat = (
   run: Run,
-  write: (...args: unknown[]) => Promise<unknown> = async () => ({}),
+  more: {
+    connect?: Connect
+    files?: Record<string, string>
+    write?: (...args: unknown[]) => Promise<unknown>
+  } = {},
 ) => {
   const calls: { command: string; opts: Record<string, unknown> }[] = []
+  const connects: { pid: number; opts: Record<string, unknown> }[] = []
   const writes: unknown[][] = []
+  const clock = { now: 1_000_000, slept: [] as number[] }
+  const { connect = async () => ({}), files = {}, write = async () => ({}) } = more
   const fake = {
     commands: {
-      run: (command: string, opts: Record<string, unknown>) => {
+      run: async (command: string, opts: Record<string, unknown>) => {
         calls.push({ command, opts })
-        return run(command, opts)
+        return { pid: PID, wait: () => run(command, opts) }
+      },
+      connect: async (pid: number, opts: Record<string, unknown>) => {
+        connects.push({ pid, opts })
+        return { pid, wait: () => connect(pid, opts) }
       },
     },
-    files: { write: (...args: unknown[]) => (writes.push(args), write(...args)) },
+    files: {
+      write: (...args: unknown[]) => (writes.push(args), write(...args)),
+      read: async (path: string) => {
+        const content = files[path.slice(path.lastIndexOf('/') + 1)]
+        if (content === undefined) throw new FileNotFoundError(`${path} not found`)
+        return content
+      },
+    },
   }
-  return { backend: new E2BBackend(fake as never), calls, writes }
+  const timing = {
+    now: () => clock.now,
+    sleep: async (ms: number) => {
+      clock.slept.push(ms)
+      clock.now += ms
+    },
+  }
+  return { backend: new E2BBackend(fake as never, timing), calls, connects, writes, clock }
 }
 
 describe('E2BBackend', () => {
@@ -80,7 +123,12 @@ describe('E2BBackend', () => {
       exitCode: 0,
       timedOut: false,
     })
-    expect(calls[0]?.opts).toMatchObject({ user: 'node', cwd: '/work', timeoutMs: 5_000 })
+    expect(calls[0]?.opts).toMatchObject({
+      user: 'node',
+      cwd: '/work',
+      timeoutMs: 5_000,
+      background: true,
+    })
   })
 
   it('returns the real exit code of a command that fails, which E2B throws for', async () => {
@@ -103,10 +151,19 @@ describe('E2BBackend', () => {
   })
 
   it('throws when the sandbox itself is gone, rather than calling it a slow command', async () => {
-    const { backend } = backendThat(async () =>
+    const { backend, connects } = backendThat(async () =>
       Promise.reject(new SandboxNotRunningError('stopped')),
     )
     await expect(backend.execute('true')).rejects.toBeInstanceOf(SandboxNotRunningError)
+    expect(connects).toHaveLength(0)
+  })
+
+  it('throws at once when the sandbox cannot be reached, without reattaching', async () => {
+    const { backend, connects } = backendThat(async () =>
+      Promise.reject(new SandboxUnreachableError('no answer')),
+    )
+    await expect(backend.execute('true')).rejects.toBeInstanceOf(SandboxUnreachableError)
+    expect(connects).toHaveLength(0)
   })
 
   it('hands the output over line by line while a command runs', async () => {
@@ -128,7 +185,8 @@ describe('E2BBackend', () => {
       exitCode: 0,
     }))
     await backend.uploadFile("/tmp/factory prompt's.md", 'again')
-    expect(calls[0]?.command).toBe(`rm -f -- ${shellEscapePosix("/tmp/factory prompt's.md")}`)
+    const rm = `rm -f -- ${shellEscapePosix("/tmp/factory prompt's.md")}`
+    expect(calls[0]?.command).toContain(shellEscapePosix(rm))
     expect(writes).toHaveLength(1)
   })
 
@@ -138,5 +196,109 @@ describe('E2BBackend', () => {
     await backend.uploadFile('/work/b.bin', Buffer.from([1, 2]))
     expect(writes[0]).toEqual(['/work/a.txt', 'hi', { user: 'node' }])
     expect(new Uint8Array(writes[1]?.[1] as ArrayBuffer)).toEqual(new Uint8Array([1, 2]))
+  })
+})
+
+describe('E2BBackend after the stream to a running command drops', () => {
+  it('reattaches and returns the real exit code and the whole output of the command', async () => {
+    const full = '{"type":"start"}\n{"type":"result"}\n'
+    const { backend, connects } = backendThat(async () => Promise.reject(dropped()), {
+      connect: async () =>
+        Promise.reject(
+          new CommandExitError({ stdout: '{"type":"result"}\n', stderr: '', exitCode: 3 }),
+        ),
+      files: { stdout: full, stderr: 'warn\n', exit: '3\n' },
+    })
+    expect(await backend.execute('claude -p', { timeoutMs: 60_000 })).toEqual({
+      stdout: full,
+      stderr: 'warn\n',
+      exitCode: 3,
+      timedOut: false,
+    })
+    expect(connects.map((c) => c.pid)).toEqual([PID])
+  })
+
+  it('reads the exit code the command left when it ended before the reattach', async () => {
+    const { backend } = backendThat(async () => Promise.reject(dropped()), {
+      connect: async () => Promise.reject(new NotFoundError('process with pid 7 not found')),
+      files: { stdout: 'all of it', stderr: '', exit: '0' },
+    })
+    expect(await backend.execute('npm test')).toEqual({
+      stdout: 'all of it',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+    })
+  })
+
+  it('hands a watcher the lines it missed, after the ones it already had', async () => {
+    const { backend } = backendThat(
+      async (_command, opts) => {
+        ;(opts.onStdout as (chunk: string) => void)('one\ntw')
+        throw dropped()
+      },
+      {
+        connect: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+        files: { stdout: 'one\ntwo\nthree\n', stderr: '', exit: '0' },
+      },
+    )
+    const lines: string[] = []
+    await backend.executeStreaming('agent', { onStdoutLine: (line) => lines.push(line) })
+    expect(lines).toEqual(['one', 'two', 'three'])
+  })
+
+  it('fails naming the pid and the last error when reattaching keeps failing, within the timeout', async () => {
+    const { backend, clock, connects } = backendThat(async () => Promise.reject(dropped()), {
+      connect: async () => Promise.reject(dropped()),
+    })
+    const start = clock.now
+    const failure = backend.execute('claude -p', { timeoutMs: 60_000 })
+    await expect(failure).rejects.toThrow(/pid 7/)
+    await expect(failure).rejects.toThrow(/2: \[unknown\] terminated/)
+    expect(connects.length).toBeGreaterThan(1)
+    expect(clock.now - start).toBeLessThanOrEqual(60_000)
+  })
+
+  it('gives each reattach only the time the command has left', async () => {
+    const { backend, connects, clock } = backendThat(async () => Promise.reject(dropped()), {
+      connect: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+      files: { stdout: '', stderr: '', exit: '0' },
+    })
+    await backend.execute('true', { timeoutMs: 60_000 })
+    expect(connects[0]?.opts.timeoutMs).toBe(60_000 - (clock.slept[0] ?? 0))
+  })
+
+  it('still fails at once when the sandbox stopped', async () => {
+    const { backend, connects } = backendThat(async () => Promise.reject(dropped()), {
+      connect: async () => Promise.reject(new SandboxNotRunningError('stopped')),
+    })
+    await expect(backend.execute('true')).rejects.toBeInstanceOf(SandboxNotRunningError)
+    expect(connects).toHaveLength(1)
+  })
+
+  it('reports a reattached command that runs out of time as exit 124, as before', async () => {
+    const { backend } = backendThat(async () => Promise.reject(dropped()), {
+      connect: async () => Promise.reject(new TimeoutError('deadline')),
+    })
+    expect(await backend.execute('sleep 99', { timeoutMs: 5_000 })).toMatchObject({
+      exitCode: 124,
+      timedOut: true,
+    })
+  })
+
+  it('fails loudly when the command is gone and left no exit code', async () => {
+    const { backend } = backendThat(async () => Promise.reject(dropped()), {
+      connect: async () => Promise.reject(new NotFoundError('process with pid 7 not found')),
+      files: { stdout: 'partial', stderr: '' },
+    })
+    await expect(backend.execute('true')).rejects.toThrow(/pid 7.*exit code/)
+  })
+
+  it('does not reattach on another error E2B has no class for', async () => {
+    const { backend, connects } = backendThat(async () =>
+      Promise.reject(new SandboxError('2: [unknown] something else')),
+    )
+    await expect(backend.execute('true')).rejects.toThrow('something else')
+    expect(connects).toHaveLength(0)
   })
 })

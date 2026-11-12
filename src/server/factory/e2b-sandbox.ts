@@ -1,7 +1,10 @@
+import { randomUUID } from 'node:crypto'
+
 import { SandboxBackend, shellEscapePosix } from '@theokit/agents/sandbox'
 import {
   ALL_TRAFFIC,
   CommandExitError,
+  FileNotFoundError,
   Sandbox,
   SandboxNotRunningError,
   SandboxUnreachableError,
@@ -11,6 +14,13 @@ import {
 } from 'e2b'
 
 import { lineSplitter } from './docker-sandbox'
+import {
+  isDroppedStream,
+  outputFiles,
+  recordedExitCode,
+  waitAfterDrop,
+  wrapCommand,
+} from './e2b-reattach'
 import { E2B_TEMPLATE } from './e2b-template'
 import type {
   ExecuteResult,
@@ -65,13 +75,27 @@ export function networkFor(spec: SandboxSpec): SandboxNetworkOpts {
   return { allowOut: spec.egress.map((rule) => rule.domain), denyOut: [ALL_TRAFFIC], rules }
 }
 
+/** Where a wrapped command keeps its output, one directory per command; the sandbox's disk goes with it. */
+const OUTPUT_ROOT = '/tmp/factory-commands'
+
+/** The clock and the pause the reattach waits with, replaced in tests. */
+export type Timing = { now(): number; sleep(ms: number): Promise<void> }
+
+const realTiming: Timing = {
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}
+
 /**
  * A `SandboxBackend` over an E2B sandbox, here because the SDK ships none (usetheokit/theokit-sdk#985). The contract can state an egress policy (usetheokit/theokit#1130)
  * but not enforce one, attach credentials outside, renew them or snapshot a disk, so those live beside it. A command that fails comes back with its exit
  * code; E2B throws for it, and for a timeout, which becomes exit 124.
  */
 export class E2BBackend extends SandboxBackend {
-  constructor(private readonly sandbox: Pick<Sandbox, 'commands' | 'files'>) {
+  constructor(
+    private readonly sandbox: Pick<Sandbox, 'commands' | 'files'>,
+    private readonly timing: Timing = realTiming,
+  ) {
     super()
   }
 
@@ -110,13 +134,7 @@ export class E2BBackend extends SandboxBackend {
     onStdout?: (chunk: string) => void,
   ): Promise<ExecuteResult> {
     try {
-      const done = await this.sandbox.commands.run(command, {
-        user: USER,
-        cwd: WORKDIR,
-        timeoutMs,
-        ...(onStdout ? { onStdout } : {}),
-      })
-      return { stdout: done.stdout, stderr: done.stderr, exitCode: done.exitCode, timedOut: false }
+      return await this.follow(command, timeoutMs, onStdout)
     } catch (error) {
       if (error instanceof CommandExitError) {
         return {
@@ -139,6 +157,62 @@ export class E2BBackend extends SandboxBackend {
       }
       throw error
     }
+  }
+
+  /**
+   * Starts the command in the background, in a wrapper that keeps its output in files, and waits for it. When
+   * the stream drops while the sandbox still answers (#41), the command is most likely still running: the
+   * wait reattaches to it by pid, within the same `timeoutMs`, and the result comes from the files, so it
+   * holds the whole output and not only what arrived after the reconnect.
+   */
+  private async follow(
+    command: string,
+    timeoutMs: number,
+    onStdout?: (chunk: string) => void,
+  ): Promise<ExecuteResult> {
+    const deadline = this.timing.now() + timeoutMs
+    const dir = `${OUTPUT_ROOT}/${randomUUID()}`
+    let delivered = 0
+    const deliver = (chunk: string) => {
+      delivered += chunk.length
+      onStdout?.(chunk)
+    }
+    const handle = await this.sandbox.commands.run(wrapCommand(command, dir), {
+      background: true,
+      user: USER,
+      cwd: WORKDIR,
+      timeoutMs,
+      ...(onStdout ? { onStdout: deliver } : {}),
+    })
+    try {
+      const done = await handle.wait()
+      return { stdout: done.stdout, stderr: done.stderr, exitCode: done.exitCode, timedOut: false }
+    } catch (error) {
+      if (!isDroppedStream(error)) throw error
+      await waitAfterDrop(handle.pid, error, {
+        wait: async (remaining) =>
+          (await this.sandbox.commands.connect(handle.pid, { timeoutMs: remaining })).wait(),
+        now: this.timing.now,
+        sleep: this.timing.sleep,
+        deadline,
+      })
+      const result = await this.readOutput(handle.pid, dir)
+      // The watcher missed what came while the stream was down: it gets the rest, in order, at the end.
+      if (onStdout && result.stdout.length > delivered) onStdout(result.stdout.slice(delivered))
+      return result
+    }
+  }
+
+  private async readOutput(pid: number, dir: string): Promise<ExecuteResult> {
+    const files = outputFiles(dir)
+    const read = (path: string) => this.sandbox.files.read(path, { user: USER })
+    const written = await read(files.exit).catch((error: unknown) => {
+      if (error instanceof FileNotFoundError) return undefined
+      throw error
+    })
+    const exitCode = recordedExitCode(pid, written)
+    const [stdout, stderr] = await Promise.all([read(files.stdout), read(files.stderr)])
+    return { stdout, stderr, exitCode, timedOut: false }
   }
 }
 

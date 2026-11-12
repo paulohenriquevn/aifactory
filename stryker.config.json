@@ -24,6 +24,7 @@
     "src/app/lib/repo-form.ts",
     "src/server/factory/branches.ts",
     "src/server/factory/docker-sandbox.ts",
+    "src/server/factory/e2b-reattach.ts",
     "src/server/factory/sandbox-provider.ts",
     "src/server/knowledge/format.ts",
     "src/server/knowledge/okf.ts",
