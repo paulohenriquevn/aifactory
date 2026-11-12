@@ -1,7 +1,7 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { promotionFinding, repository } from '../db/schema'
+import { promotionFinding, repository, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { IssuesApi } from '../github/issues-api'
 import type { FailedRun, PromotionApi, PromotionPull, RerunAnswer } from '../github/promotion-api'
@@ -16,9 +16,11 @@ import {
   needsPerson,
   promotionPullRequests,
   recurrenceComment,
+  recurrenceIsNewIssue,
   withEvidence,
   type FailedCheck,
   type FailureAt,
+  type IssueLink,
   type Rerun,
 } from './promotion'
 
@@ -76,7 +78,8 @@ type Pass = {
 /**
  * Looks at the open promotion pull requests of every enabled repository. A check that failed on a head
  * commit becomes an issue the factory's agents fix (or, for what no change can fix, an issue for a person),
- * once: the same failure later is a comment on its issue. An Actions job is rerun once before it counts.
+ * once: the same failure later is a comment on its issue while its fix is not integrated, and a new issue
+ * once it is. An Actions job is rerun once before it counts.
  * Nothing in here reads a log with a model, and nothing merges.
  */
 export async function pollPromotions(deps: PromotionWatchDeps): Promise<PromotionWatchResult> {
@@ -182,7 +185,10 @@ async function rerunOnce(pass: Pass, runId: number, reruns: Map<number, RerunAns
   return answer
 }
 
-/** Files a failure once: a new one opens an issue, a known one on a new commit comments or opens again. */
+/**
+ * Files a failure once: a new one opens an issue, a known one on a new commit comments on its issue, or
+ * opens a new one when that issue is closed or its fix is already integrated (`recurrenceIsNewIssue`).
+ */
 async function report(pass: Pass, check: FailedCheck, where: FailureAt) {
   const signature = findingSignature(check.name, check.evidence)
   const [known] = await pass.deps.db
@@ -196,10 +202,29 @@ async function report(pass: Pass, check: FailedCheck, where: FailureAt) {
       ),
     )
   if (!known) return fileNew(pass, check, where, signature)
-  if (known.issueNumber === null || known.lastSha === where.sha) return
-  const open = await pass.deps.api.issueOpen(pass.repo, pass.token, known.issueNumber)
-  if (open) return commentAgain(pass, check, where, { ...known, issueNumber: known.issueNumber })
-  return fileAgain(pass, check, where, known)
+  if (known.issueNumber === null || known.issueUrl === null || known.lastSha === where.sha) return
+  const previous: IssueLink = { number: known.issueNumber, url: known.issueUrl }
+  const issueOpen = await pass.deps.api.issueOpen(pass.repo, pass.token, previous.number)
+  const fixIntegrated = issueOpen && (await integrated(pass, previous.number))
+  if (recurrenceIsNewIssue({ issueOpen, fixIntegrated })) {
+    return fileAgain(pass, check, where, known, previous)
+  }
+  return commentAgain(pass, check, where, { ...known, issueNumber: previous.number })
+}
+
+/** Whether the factory's task for an issue of this repository has been merged into the integration branch. */
+async function integrated(pass: Pass, issueNumber: number): Promise<boolean> {
+  const [merged] = await pass.deps.db
+    .select({ id: task.id })
+    .from(task)
+    .where(
+      and(
+        eq(task.repository, pass.repo),
+        eq(task.issueNumber, issueNumber),
+        isNotNull(task.mergedSha),
+      ),
+    )
+  return merged !== undefined
 }
 
 const capReached = (pass: Pass) => {
@@ -270,19 +295,34 @@ async function commentAgain(
   pass.result.commented.push(`${pass.repo}#${known.issueNumber}`)
 }
 
-/** The failure is back after its issue was closed: the fix did not hold, so it gets a new issue. */
-async function fileAgain(pass: Pass, check: FailedCheck, where: FailureAt, known: Known) {
+/**
+ * The failure is back after its issue was closed or its fix was integrated: the fix did not hold, so it
+ * gets a new issue that links the previous one.
+ */
+async function fileAgain(
+  pass: Pass,
+  check: FailedCheck,
+  where: FailureAt,
+  known: Known,
+  previous: IssueLink,
+) {
   if (capReached(pass)) return
   if (!(await takeCommit(pass, known, where.sha))) return
   try {
-    await openIssue(pass, check, where, known.id)
+    await openIssue(pass, check, where, known.id, previous)
   } catch (error) {
     await giveCommitBack(pass, known)
     throw error
   }
 }
 
-async function openIssue(pass: Pass, check: FailedCheck, where: FailureAt, findingId: number) {
+async function openIssue(
+  pass: Pass,
+  check: FailedCheck,
+  where: FailureAt,
+  findingId: number,
+  previous?: IssueLink,
+) {
   const forFactory = !needsPerson(check.name)
   const { deps, repo, token } = pass
   if (forFactory) {
@@ -294,7 +334,7 @@ async function openIssue(pass: Pass, check: FailedCheck, where: FailureAt, findi
   }
   const issue = await deps.issues.createIssue(repo, token, {
     title: issueTitle(check, where),
-    body: issueBody(check, where),
+    body: issueBody(check, where, previous),
     labels: forFactory ? [FACTORY_LABEL] : [],
   })
   await deps.db

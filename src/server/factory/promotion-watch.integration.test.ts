@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
-import { promotionFinding, repository } from '../db/schema'
+import { ingress, promotionFinding, repository, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { NewIssue } from '../github/issues-api'
 import type { FailedRun, PromotionApi } from '../github/promotion-api'
@@ -46,7 +46,9 @@ const actionsRun = (id: number, name: string): FailedRun => ({
 })
 
 beforeEach(async () => {
-  await getPool().query('truncate table promotion_finding, repository restart identity cascade')
+  await getPool().query(
+    'truncate table promotion_finding, repository, task, ingress restart identity cascade',
+  )
   await getDb().insert(repository).values({ fullName: 'paulo/app', enabled: true })
   world = {
     head: 'sha0001aaaa',
@@ -210,12 +212,82 @@ describe('the promotion watch', () => {
     expect(result.commented).toEqual(['paulo/app#51'])
   })
 
+  /** The factory's task for an issue, integrated when `mergedSha` is set. */
+  async function taskFor(issueNumber: number, mergedSha: string | null) {
+    const [delivery] = await getDb()
+      .insert(ingress)
+      .values({
+        deliveryId: `d-${issueNumber}`,
+        event: 'issues',
+        payload: {},
+        outcome: 'task_created',
+        code: 'labelled',
+        reason: 'labelled',
+      })
+      .returning({ id: ingress.id })
+    await getDb().insert(task).values({
+      ingressId: delivery.id,
+      repository: 'paulo/app',
+      issueNumber,
+      issueTitle: 'promotion: `validate` fails on workspace -> develop',
+      mergedSha,
+    })
+  }
+
+  describe('when the same failure is back while its issue is still open', () => {
+    it('opens a new issue for the factory, linking the old one, once the fix was integrated', async () => {
+      await pollPromotions(deps())
+      await taskFor(51, 'merged0fix')
+      world.head = 'sha0002bbbb'
+      const result = await pollPromotions(deps())
+      expect(comments).toEqual([])
+      expect(created).toHaveLength(2)
+      expect(created[1].labels).toEqual(['factory'])
+      expect(created[1].body).toContain('#51 (https://github.com/paulo/app/issues/51)')
+      expect(result.opened).toEqual(['https://github.com/paulo/app/issues/52'])
+      const [row] = await getDb().select().from(promotionFinding)
+      expect(row).toMatchObject({ issueNumber: 52, lastSha: 'sha0002bbbb' })
+    })
+
+    it('comments on the open issue while its task is not integrated yet', async () => {
+      await pollPromotions(deps())
+      await taskFor(51, null)
+      world.head = 'sha0002bbbb'
+      const result = await pollPromotions(deps())
+      expect(created).toHaveLength(1)
+      expect(result.commented).toEqual(['paulo/app#51'])
+    })
+
+    it('ignores an integrated task of another repository with the same issue number', async () => {
+      await pollPromotions(deps())
+      await taskFor(51, 'merged0fix')
+      await getPool().query(`update task set repository = 'paulo/other'`)
+      world.head = 'sha0002bbbb'
+      const result = await pollPromotions(deps())
+      expect(created).toHaveLength(1)
+      expect(result.commented).toEqual(['paulo/app#51'])
+    })
+
+    it('keeps to the cap on new issues in a pass', async () => {
+      await pollPromotions(deps())
+      await taskFor(51, 'merged0fix')
+      world.head = 'sha0002bbbb'
+      const result = await pollPromotions(deps({ maxNewIssuesPerRepository: 0 }))
+      expect(created).toHaveLength(1)
+      expect(comments).toEqual([])
+      expect(result.capped).toBe(1)
+      const [row] = await getDb().select().from(promotionFinding)
+      expect(row).toMatchObject({ issueNumber: 51, lastSha: 'sha0001aaaa' })
+    })
+  })
+
   it('opens a new issue when the issue for the same failure was closed', async () => {
     await pollPromotions(deps())
     world.head = 'sha0002bbbb'
     world.issueOpen = false
     await pollPromotions(deps())
     expect(created).toHaveLength(2)
+    expect(created[1].body).toContain('#51 (https://github.com/paulo/app/issues/51)')
     const [row] = await getDb().select().from(promotionFinding)
     expect(row).toMatchObject({ issueNumber: 52, lastSha: 'sha0002bbbb' })
   })

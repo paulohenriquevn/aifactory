@@ -177,6 +177,17 @@ const RERUN_TOLD: Record<Rerun, string> = {
     '. GitHub refused to rerun it, so it could not be rerun: the evidence is from its first attempt.',
 }
 
+/** An issue on the tracker, as a new issue links it. */
+export type IssueLink = { number: number; url: string }
+
+/**
+ * Whether a known failure seen on a new commit gets a new issue instead of a comment on its old one. A
+ * factory issue stays open after its fix is integrated, until the release, and nothing works on it then:
+ * a comment there starts no task. So only an open issue whose fix is not integrated yet gets the comment.
+ */
+export const recurrenceIsNewIssue = (state: { issueOpen: boolean; fixIntegrated: boolean }) =>
+  !state.issueOpen || state.fixIntegrated
+
 export const issueTitle = (check: FailedCheck, at: FailureAt): string =>
   `promotion: \`${check.name}\` fails on ${at.head} -> ${at.base}`
 
@@ -185,7 +196,7 @@ export const issueTitle = (check: FailedCheck, at: FailureAt): string =>
  * the log said it, and what done means. The evidence is text from the log, fenced so that nothing in it
  * can end the block.
  */
-export function issueBody(check: FailedCheck, at: FailureAt): string {
+export function issueBody(check: FailedCheck, at: FailureAt, previous?: IssueLink): string {
   const person = needsPerson(check.name)
   const evidence =
     check.evidence.length > 0
@@ -198,6 +209,12 @@ export function issueBody(check: FailedCheck, at: FailureAt): string {
     '## Description',
     '',
     `The check \`${check.name}\` failed on the promotion ${at.head} -> ${at.base} (#${at.pullRequest.number}) at \`${at.sha.slice(0, 7)}\`${RERUN_TOLD[at.rerun]}`,
+    ...(previous
+      ? [
+          '',
+          `The same failure was filed before as #${previous.number} (${previous.url}), and it is back after that fix.`,
+        ]
+      : []),
     ...(person
       ? [
           '',

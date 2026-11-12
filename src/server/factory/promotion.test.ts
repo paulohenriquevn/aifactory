@@ -4,6 +4,7 @@ import {
   checkEvidence,
   findingSignature,
   recurrenceComment,
+  recurrenceIsNewIssue,
   issueBody,
   issueTitle,
   logEvidence,
@@ -343,7 +344,32 @@ describe('the issue', () => {
     expect(body.match(/^~~~~/gm)).toHaveLength(2)
   })
 
+  it('links the issue the same failure was filed in before', () => {
+    const body = issueBody(check, at, { number: 51, url: 'https://github.com/o/r/issues/51' })
+    expect(body).toContain(
+      'The same failure was filed before as #51 (https://github.com/o/r/issues/51), and it is back after that fix.',
+    )
+  })
+
+  it('links no earlier issue for a failure seen for the first time', () => {
+    expect(issueBody(check, at)).not.toContain('filed before')
+  })
+
   it('says when the log had no line to show', () => {
     expect(issueBody({ ...check, evidence: [] }, at)).toContain('No error line')
+  })
+})
+
+describe('recurrenceIsNewIssue', () => {
+  it('comments on an open issue whose fix is not integrated yet', () => {
+    expect(recurrenceIsNewIssue({ issueOpen: true, fixIntegrated: false })).toBe(false)
+  })
+
+  it("opens a new issue when the open issue's fix was already integrated", () => {
+    expect(recurrenceIsNewIssue({ issueOpen: true, fixIntegrated: true })).toBe(true)
+  })
+
+  it('opens a new issue when the issue was closed', () => {
+    expect(recurrenceIsNewIssue({ issueOpen: false, fixIntegrated: false })).toBe(true)
   })
 })
