@@ -1,4 +1,4 @@
-import type { GithubApi } from '../github/pulls'
+import type { ChangedFile, GithubApi } from '../github/pulls'
 
 import {
   changesetIgnore,
@@ -6,6 +6,7 @@ import {
   packageDirs,
   parseManifest,
   publishedTouched,
+  touchedPaths,
   type PackageManifest,
 } from './changesets'
 
@@ -23,19 +24,19 @@ async function mustRead(
 }
 
 /**
- * The packages changesets would publish that `head` changes since `base`, read from GitHub: the files the
- * comparison lists, the package.json of every package one of them is under, and the `ignore` list of
- * `.changeset/config.json`, all as they are on `head`. Empty means the change is only in packages that are
- * private or ignored, or in no package at all.
+ * The packages changesets would publish that the files a comparison lists change, read from GitHub on its
+ * `head`: the package.json of every package one of them is under, and the `ignore` list of
+ * `.changeset/config.json`. Empty means the change is only in packages that are private or ignored, or in no
+ * package at all.
  */
 export async function publishedPackagesChanged(
   api: GithubApi,
   repo: string,
   token: string,
-  branches: { base: string; head: string },
+  compared: { head: string; files: ChangedFile[] },
 ): Promise<string[]> {
-  const { base, head } = branches
-  const files = await api.changedFiles(repo, token, base, head)
+  const { head } = compared
+  const files = touchedPaths(compared.files)
   const dirs = packageDirs(await api.filePaths(repo, token, head))
   const touched = [...new Set(files.flatMap((file) => enclosingPackages(file, dirs)))]
   const manifests = new Map<string, PackageManifest>()

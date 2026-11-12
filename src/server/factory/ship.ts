@@ -30,6 +30,10 @@ export type Shipped = {
   issueErrors: string[]
 }
 
+/** What a publication's detail adds when issues of the release could not be closed. */
+export const unclosedNote = (shipped: Shipped) =>
+  shipped.issueErrors.length ? `; issues not closed: ${shipped.issueErrors.join('; ')}` : ''
+
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** What every released issue is told: where the fix is, and how it got there. */

@@ -238,7 +238,11 @@ export const publication = pgTable('publication', {
   promotedSha: text('promoted_sha').notNull(),
   /** Who decided the release, which also covers merging the Version Packages pull request. */
   actor: text('actor').notNull(),
-  status: text('status', { enum: ['waiting', 'published'] })
+  /**
+   * `failed` when the release workflow finished without a Version Packages pull request and the factory
+   * could not release the promotion as its own; the reason is in `detail` and on the task.
+   */
+  status: text('status', { enum: ['waiting', 'published', 'failed'] })
     .notNull()
     .default('waiting'),
   /** The Version Packages pull request, once the factory merged it or saw it merged. */

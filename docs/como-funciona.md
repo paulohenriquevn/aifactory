@@ -454,7 +454,11 @@ repositórios do theokit), a versão não é da fábrica: vem dos arquivos `.cha
 npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio repositório, ao mergear o PR
 "Version Packages" que ele abre a partir de `changeset-release/main`. Nesse caso o `release()`:
 
-- quando `develop` não tem nenhum changeset além do README, lê pela API de comparação os arquivos que
+- um changeset só conta como esperando quando a API de comparação entre a branch de release e `develop` o
+  lista como adicionado desde a base comum das duas (`.changeset/*.md`, menos o README). Um changeset que um
+  release anterior consumiu na branch de release, e que `develop` ainda guarda porque ninguém fez o
+  back-merge, não conta (o theokit-plugins depois do Version Packages #250);
+- quando nenhum changeset foi adicionado, lê na mesma comparação os arquivos que
   `develop` muda desde a branch de release e liga cada um aos pacotes em que está (todo `package.json` de
   `develop` acima dele, a raiz incluída). Se algum desses pacotes é publicado pelo changesets (tem nome, não
   é `private` e não está no `ignore` do `.changeset/config.json`), recusa e diz o nome do pacote, porque ele
@@ -474,6 +478,23 @@ do GitHub, grava uma entrega `release` com cada tag, e cada task cujo trabalho e
 do release e toda task `done` integrada antes dela, conferido pela API de comparação) vai para `released`,
 ganha o comentário "Available in <tags>" na issue e tem a issue fechada. Uma issue que não fecha fica
 registrada na task e no `detail` da `publication`, e a publicação segue.
+
+Se o workflow de release roda no commit promovido e não abre o PR "Version Packages" (porque não havia
+changeset para aplicar), nada é publicado, e a `publication` esperaria para sempre. Por isso, passados 10
+minutos da promoção, quando ainda não há PR "Version Packages" aberto ou mergeado depois dela, o cron lê os
+checks do commit promovido (a API de checks, a mesma permissão que a fábrica já tem; a de workflow runs pediria
+a permissão Actions):
+
+- algum check ainda roda, ou nenhum reportou: espera, e diz isso na `publication`;
+- algum check falhou: a `publication` fica `failed`, e o motivo vai para a task, onde o painel o mostra
+  ("merged by …, but the release could not be created: …");
+- todos terminaram sem falha: o run acabou e não vai abrir o PR. A fábrica lê o que a promoção mudou (a
+  comparação do commit promovido com o seu primeiro pai). Se mudou um pacote que o changesets publica, a
+  `publication` fica `failed` com o nome do pacote, porque uma tag da fábrica não o publicaria. Se não, a
+  promoção vira um release da própria fábrica, como no caso sem changeset acima: o patch depois da maior tag
+  `vX.Y.Z`, as tasks contidas na promoção liberadas e as issues comentadas e fechadas. A tag é escolhida
+  uma vez e gravada na `publication` antes de ser criada, então uma passada que falha depois e roda de novo
+  cria a mesma tag, não a seguinte.
 
 Depois do release, o workflow do repositório abre o back-merge: o PR da branch de release para a branch de
 integração (`main → workspace`). Enquanto ele não entra, `workspace` fica com as versões de antes do release,

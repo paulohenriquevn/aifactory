@@ -30,7 +30,11 @@ export default defineCron('publish-changesets', {
       github: deps.github,
       api: createGithubApi(),
     })
-    const changed = result.merged.length + result.published.length + result.backMerged.length
+    const changed =
+      result.merged.length +
+      result.published.length +
+      result.failed.length +
+      result.backMerged.length
     if (changed > 0 || result.errors.length > 0) {
       console.log(JSON.stringify({ event: 'publish_changesets', ...result }))
     }

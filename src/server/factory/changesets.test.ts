@@ -2,31 +2,105 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CHANGESET_CHECK,
+  addedChangesets,
   changesetIgnore,
-  changesetsOn,
   enclosingPackages,
   isIgnored,
   packageDirs,
   parseManifest,
   publishedTouched,
   isPackageTag,
+  touchedPaths,
+  usesChangesets,
   pickBackMerge,
+  RELEASE_RUN_GRACE_MS,
+  releaseRunGraceOver,
+  releaseRunOf,
   versionBranchFor,
   withChangesetCheck,
 } from './changesets'
 
-describe('changesetsOn', () => {
-  it('is nothing for a repository without a .changeset directory or without its config', () => {
-    expect(changesetsOn(undefined)).toEqual({ uses: false, pending: [] })
-    expect(changesetsOn(['README.md', 'brave-fox.md'])).toEqual({ uses: false, pending: [] })
+describe('usesChangesets', () => {
+  it('is false for a repository without a .changeset directory or without its config', () => {
+    expect(usesChangesets(undefined)).toBe(false)
+    expect(usesChangesets(['README.md', 'brave-fox.md'])).toBe(false)
   })
 
-  it('lists the changesets waiting to be applied, which are the markdown files but the README', () => {
-    expect(changesetsOn(['config.json', 'README.md', 'brave-fox.md', 'pre.json'])).toEqual({
-      uses: true,
-      pending: ['brave-fox.md'],
+  it('is true when .changeset holds its config, with or without changesets', () => {
+    expect(usesChangesets(['config.json', 'README.md'])).toBe(true)
+  })
+})
+
+describe('addedChangesets', () => {
+  const file = (path: string, status = 'added') => ({ path, status })
+
+  it('is the markdown files a comparison adds under .changeset, the README left out', () => {
+    expect(
+      addedChangesets([
+        file('.changeset/brave-fox.md'),
+        file('.changeset/README.md'),
+        file('.changeset/config.json'),
+        file('.changeset/pre.json'),
+        file('docs/notes.md'),
+        file('.changeset/nested/deep.md'),
+      ]),
+    ).toEqual(['.changeset/brave-fox.md'])
+  })
+
+  it('is nothing for changesets the base already had: a release branch that consumed them does not make them pending', () => {
+    expect(
+      addedChangesets([
+        file('.changeset/wake-word-detector.md', 'modified'),
+        file('.changeset/old-one.md', 'removed'),
+        file('.changeset/moved.md', 'renamed'),
+        file('CHANGELOG.md'),
+      ]),
+    ).toEqual([])
+  })
+})
+
+describe('touchedPaths', () => {
+  it('names every file a comparison lists, a rename by both names', () => {
+    expect(
+      touchedPaths([
+        { path: 'a.ts', status: 'modified' },
+        { path: 'b.md', status: 'renamed', previousPath: 'old/b.md' },
+      ]),
+    ).toEqual(['a.ts', 'b.md', 'old/b.md'])
+  })
+})
+
+describe('releaseRunGraceOver', () => {
+  const started = new Date('2026-11-12T13:28:51Z')
+  const after = (ms: number) => new Date(started.getTime() + ms)
+
+  it('is over once the grace window after the promotion has passed, and not a moment before', () => {
+    expect(RELEASE_RUN_GRACE_MS).toBe(10 * 60_000)
+    expect(releaseRunGraceOver(started, after(RELEASE_RUN_GRACE_MS - 1))).toBe(false)
+    expect(releaseRunGraceOver(started, after(RELEASE_RUN_GRACE_MS))).toBe(true)
+  })
+})
+
+describe('releaseRunOf', () => {
+  const sha = 'c06b47361e6316a06e0e7630535814b087cbf52e'
+
+  it('is finished when every check on the promoted commit completed and none failed', () => {
+    expect(releaseRunOf({ state: 'green', failing: [] }, sha)).toEqual({ finished: true })
+  })
+
+  it('failed, naming the checks, when one failed', () => {
+    expect(releaseRunOf({ state: 'red', failing: ['Release via Changesets', 'CI'] }, sha)).toEqual({
+      failed: 'Release via Changesets, CI failed on c06b473',
     })
-    expect(changesetsOn(['config.json', 'README.md'])).toEqual({ uses: true, pending: [] })
+  })
+
+  it('waits while a check still runs, and while none has reported', () => {
+    expect(releaseRunOf({ state: 'pending', failing: [] }, sha)).toEqual({
+      wait: expect.stringMatching(/the checks on c06b473 still run$/),
+    })
+    expect(releaseRunOf({ state: 'none', failing: [] }, sha)).toEqual({
+      wait: expect.stringMatching(/no check has reported on c06b473$/),
+    })
   })
 })
 

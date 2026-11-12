@@ -53,6 +53,12 @@ export type OpenPullRequest = {
   draft: boolean
 }
 
+/**
+ * A file a comparison lists: where it is on the head, how the head changed it since the merge base
+ * (`added`, `modified`, `removed`, `renamed`...), and the name it had before a rename.
+ */
+export type ChangedFile = { path: string; status: string; previousPath?: string }
+
 /** A full release a repository published, as its own release workflow names it. */
 export type PublishedRelease = { tag: string; url: string; publishedAt: Date }
 
@@ -122,10 +128,10 @@ export type GithubApi = {
    */
   versionTags(repo: string, token: string): Promise<string[]>
   /**
-   * The files `head` changes since `base`, a rename by both names. A change too large for GitHub to list
-   * whole is an error, never a partial list.
+   * The files `head` changes since its merge base with `base`, each with its status. A change too large for
+   * GitHub to list whole is an error, never a partial list.
    */
-  changedFiles(repo: string, token: string, base: string, head: string): Promise<string[]>
+  changedFiles(repo: string, token: string, base: string, head: string): Promise<ChangedFile[]>
   /** The path of every file on a branch. */
   filePaths(repo: string, token: string, ref: string): Promise<string[]>
   /** What a file holds on a branch, or undefined when it is not there. */
@@ -414,7 +420,7 @@ export function createGithubApi(
     },
 
     async changedFiles(repo, token, base, head) {
-      const files: string[] = []
+      const files: ChangedFile[] = []
       for (let page = 1; ; page += 1) {
         const body = (await (
           await ensure(
@@ -422,10 +428,16 @@ export function createGithubApi(
             `comparing ${base} with ${head} on ${repo}`,
             [200],
           )
-        ).json()) as { files?: { filename: string; previous_filename?: string }[] }
+        ).json()) as { files?: { filename: string; status: string; previous_filename?: string }[] }
         const listed = body.files ?? []
         if (listed.length === 0) return files
-        files.push(...listed.flatMap((f) => [f.filename, f.previous_filename ?? []].flat()))
+        files.push(
+          ...listed.map((f) => ({
+            path: f.filename,
+            status: f.status,
+            ...(f.previous_filename ? { previousPath: f.previous_filename } : {}),
+          })),
+        )
         if (files.length >= MAX_COMPARE_FILES) {
           throw new Error(
             `${base}...${head} on ${repo} changes ${MAX_COMPARE_FILES} files or more, the most GitHub lists, so what it changes cannot be told`,

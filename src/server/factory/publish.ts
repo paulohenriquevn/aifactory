@@ -7,16 +7,22 @@ import type { GithubApi } from '../github/pulls'
 
 import { integrationBranch } from './branches'
 import { isPackageTag, pickBackMerge, versionBranchFor } from './changesets'
-import { shipContained } from './ship'
+import { endWithoutVersionPullRequest, type Ending } from './publication-end'
+import { shipContained, unclosedNote } from './ship'
 import { classify } from './watch'
 
-export type PublishDeps = { db: Database; github: GithubApp; api: GithubApi }
+export type PublishDeps = { db: Database; github: GithubApp; api: GithubApi; now?: () => Date }
 
 export type PublishResult = {
   /** Publications whose Version Packages pull request was merged, by the factory or seen merged. */
   merged: number[]
   /** Publications whose packages are out, with their tasks released. */
   published: number[]
+  /**
+   * Publications that ended without anything published: the release workflow opened no Version Packages
+   * pull request, and the factory could not release the promotion as its own.
+   */
+  failed: number[]
   waiting: number
   /** Back-merges from the release branch into the integration branch merged on this pass, as `repo#number`. */
   backMerged: string[]
@@ -26,11 +32,13 @@ export type PublishResult = {
 
 type Publication = typeof publication.$inferSelect
 
-/** Where the Version Packages pull request is: merged (its number), or why the publication waits. */
-type VersionStep = { merged: number } | { wait: string }
+/**
+ * Where the Version Packages pull request is: merged (its number), not opened since the promotion, or why
+ * the publication waits.
+ */
+type VersionStep = { merged: number } | { unopened: true } | { wait: string }
 
-const NOT_OPENED =
-  'no Version Packages pull request yet: the release workflow opens it after the promotion'
+const UNOPENED: VersionStep = { unopened: true }
 
 /**
  * Takes the Version Packages pull request as far as it can: merged when its checks are green, pinned to the
@@ -43,12 +51,12 @@ async function mergeVersionPullRequest(
   token: string,
 ): Promise<VersionStep> {
   const pr = await deps.api.findPullRequest(p.repository, token, versionBranchFor(p.releaseBranch))
-  if (!pr) return { wait: NOT_OPENED }
+  if (!pr) return UNOPENED
   const name = `Version Packages #${pr.number}`
   if (pr.merged) {
     // One merged before this promotion belongs to an earlier release.
     const after = pr.mergedAt !== undefined && pr.mergedAt.getTime() >= p.startedAt.getTime()
-    return after ? { merged: pr.number } : { wait: NOT_OPENED }
+    return after ? { merged: pr.number } : UNOPENED
   }
   if (pr.state === 'closed') return { wait: `${name} was closed without being merged` }
   return mergeWhenGreen(deps, p.repository, token, pr, name)
@@ -76,6 +84,16 @@ async function mergeWhenGreen(
   return { merged: pr.number }
 }
 
+/** Counts how a publication with no Version Packages pull request ended, or notes why it still waits. */
+async function count(deps: PublishDeps, p: Publication, end: Ending, result: PublishResult) {
+  if ('released' in end) result.published.push(p.id)
+  else if ('failed' in end) result.failed.push(p.id)
+  else {
+    await note(deps.db, p.id, end.wait)
+    result.waiting += 1
+  }
+}
+
 const note = (db: Database, id: number, detail: string) =>
   db.update(publication).set({ detail }).where(eq(publication.id, id))
 
@@ -85,6 +103,9 @@ async function advance(deps: PublishDeps, p: Publication, result: PublishResult)
   let merged = ''
   if (p.versionPullRequest === null) {
     const step = await mergeVersionPullRequest(deps, p, token)
+    if ('unopened' in step) {
+      return count(deps, p, await endWithoutVersionPullRequest(deps, p, token), result)
+    }
     if ('wait' in step) {
       await note(deps.db, p.id, step.wait)
       result.waiting += 1
@@ -116,9 +137,7 @@ async function advance(deps: PublishDeps, p: Publication, result: PublishResult)
     publishedBy: "the repository's release workflow",
     detail: { published: 'changesets' },
   })
-  const unclosed = shipped.issueErrors.length
-    ? `; issues not closed: ${shipped.issueErrors.join('; ')}`
-    : ''
+  const unclosed = unclosedNote(shipped)
   await deps.db
     .update(publication)
     .set({
@@ -191,6 +210,7 @@ export async function pollPublications(deps: PublishDeps): Promise<PublishResult
   const result: PublishResult = {
     merged: [],
     published: [],
+    failed: [],
     waiting: 0,
     backMerged: [],
     errors: [],

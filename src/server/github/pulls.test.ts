@@ -259,7 +259,9 @@ describe('releases', () => {
 
 describe('what changed between two branches, and the files of a branch', () => {
   /** A compare that answers one page of files per request, then none. */
-  function comparePages(pages: { filename: string; previous_filename?: string }[][]) {
+  function comparePages(
+    pages: { filename: string; status?: string; previous_filename?: string }[][],
+  ) {
     const urls: string[] = []
     const fetch = async (url: string) => {
       urls.push(url.replace('https://api.github.com/repos/o/r', ''))
@@ -269,17 +271,19 @@ describe('what changed between two branches, and the files of a branch', () => {
     return { fetch, urls }
   }
 
-  it('lists every file the head changed since the base, page by page, with the old name of a rename', async () => {
+  it('lists every file the head changed since the base, page by page, with its status and the old name of a rename', async () => {
     const { fetch, urls } = comparePages([
-      [{ filename: 'apps/theoclaw/a.ts' }, { filename: 'b.md', previous_filename: 'old/b.md' }],
-      [{ filename: 'pnpm-lock.yaml' }],
+      [
+        { filename: 'apps/theoclaw/a.ts', status: 'modified' },
+        { filename: 'b.md', status: 'renamed', previous_filename: 'old/b.md' },
+      ],
+      [{ filename: '.changeset/brave-fox.md', status: 'added' }],
     ])
 
     expect(await createGithubApi(fetch).changedFiles('o/r', 't', 'main', 'develop')).toEqual([
-      'apps/theoclaw/a.ts',
-      'b.md',
-      'old/b.md',
-      'pnpm-lock.yaml',
+      { path: 'apps/theoclaw/a.ts', status: 'modified' },
+      { path: 'b.md', status: 'renamed', previousPath: 'old/b.md' },
+      { path: '.changeset/brave-fox.md', status: 'added' },
     ])
     expect(urls).toEqual([
       '/compare/main...develop?per_page=100&page=1',
@@ -289,7 +293,7 @@ describe('what changed between two branches, and the files of a branch', () => {
   })
 
   it('refuses to answer for a change larger than GitHub lists, rather than leave files out', async () => {
-    const page = Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` }))
+    const page = Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}`, status: 'added' }))
     const { fetch } = comparePages(Array.from({ length: 10 }, () => page))
     await expect(
       createGithubApi(fetch).changedFiles('o/r', 't', 'main', 'develop'),

@@ -17,7 +17,7 @@ import type { GithubApi } from '../github/pulls'
 
 import { PRE_RELEASE_BRANCH, releaseBranchOf } from './branches'
 import { publishedPackagesChanged } from './changed-packages'
-import { changesetsOn } from './changesets'
+import { addedChangesets, usesChangesets } from './changesets'
 import { highestVersion, nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
 import { shipContained } from './ship'
 import { enterStage } from './stages'
@@ -409,9 +409,9 @@ export async function completeRelease(
 }
 
 /**
- * Whether the release is left to changesets, read on the pre-release branch: true when the repository
- * publishes with changesets and a changeset waits. With none waiting, what the pre-release branch changes
- * since the release branch decides. A change only to packages changesets never publishes (private, ignored,
+ * Whether the release is left to changesets: true when the repository publishes with changesets and a
+ * changeset waits, which is one the pre-release branch added since its merge base with the release branch
+ * (`addedChangesets`). With none waiting, what the same comparison lists decides. A change only to packages changesets never publishes (private, ignored,
  * or no package at all) is the factory's own release, since no changeset can exist for them and reaching the
  * release branch is what makes them available. A change to a published package is refused, naming it: the
  * promotion would land and the package would not be published.
@@ -422,13 +422,16 @@ async function changesetsToShip(
   token: string,
   target: string,
 ): Promise<boolean> {
-  const state = changesetsOn(
-    await deps.api.listDirectory(repo, token, '.changeset', PRE_RELEASE_BRANCH),
-  )
-  if (!state.uses || state.pending.length > 0) return state.uses
+  if (
+    !usesChangesets(await deps.api.listDirectory(repo, token, '.changeset', PRE_RELEASE_BRANCH))
+  ) {
+    return false
+  }
+  const files = await deps.api.changedFiles(repo, token, target, PRE_RELEASE_BRANCH)
+  if (addedChangesets(files).length > 0) return true
   const published = await publishedPackagesChanged(deps.api, repo, token, {
-    base: target,
     head: PRE_RELEASE_BRANCH,
+    files,
   })
   if (published.length > 0) {
     throw new ReleaseRefused(
@@ -456,6 +459,54 @@ async function handToChangesets(
   return { publishing: 'changesets' }
 }
 
+/** The version the factory's own release of a repository takes next: the one after its highest `v` tag. */
+export async function nextOwnTag(
+  api: GithubApi,
+  repo: string,
+  token: string,
+  bump: Bump,
+): Promise<string> {
+  return nextVersion(highestVersion(await api.versionTags(repo, token)), bump)
+}
+
+/** What the factory's own release of a promotion is made of. */
+export type OwnRelease = {
+  row: typeof task.$inferSelect
+  pre: typeof delivery.$inferSelect
+  /** What the notes link the promotion by: the release pull request, or the merge commit. */
+  promotion: { label: string; url: string }
+  token: string
+  mergeSha: string
+  tag: string
+  actor: string
+}
+
+/**
+ * Creates the full release of a promotion, and its tag, on the merge commit. Asking twice for one tag returns
+ * the first (`createRelease`), so a pass that runs again releases once.
+ */
+export async function createOwnTag(
+  api: GithubApi,
+  input: OwnRelease,
+): Promise<{ tag: string; url: string }> {
+  const { row, pre, tag } = input
+  const made = await api.createRelease(row.repository, input.token, {
+    tag,
+    sha: input.mergeSha,
+    name: `${tag}: ${row.issueTitle}`,
+    body: [
+      `Release of #${row.issueNumber}: ${row.issueTitle}.`,
+      '',
+      `Promoted from the pre-release \`${pre.tag}\` (${pre.url}) by ${input.actor}.`,
+      `${input.promotion.label}: ${input.promotion.url}`,
+      `Pull request of the work: ${row.pullRequestUrl ?? input.promotion.url}`,
+      '',
+    ].join('\n'),
+    prerelease: false,
+  })
+  return { tag: made.tag, url: made.url }
+}
+
 /**
  * Tags the promotion with the version after the highest `v` tag and creates its release, for a repository
  * that does not publish with changesets, or one whose promotion changes no package changesets publishes.
@@ -463,35 +514,13 @@ async function handToChangesets(
  */
 async function createOwnRelease(
   deps: Pick<DeliverDeps, 'api'>,
-  input: {
-    row: typeof task.$inferSelect
-    pre: typeof delivery.$inferSelect
-    pr: { url: string }
-    token: string
-    mergeSha: string
-    bump: Bump
-    actor: string
-  },
+  input: Omit<OwnRelease, 'tag' | 'promotion'> & { pr: { url: string }; bump: Bump },
 ): Promise<Published> {
-  const { row, pre, pr, token } = input
+  const { row, pr, token } = input
   try {
-    const latest = highestVersion(await deps.api.versionTags(row.repository, token))
-    const tag = nextVersion(latest, input.bump)
-    const made = await deps.api.createRelease(row.repository, token, {
-      tag,
-      sha: input.mergeSha,
-      name: `${tag}: ${row.issueTitle}`,
-      body: [
-        `Release of #${row.issueNumber}: ${row.issueTitle}.`,
-        '',
-        `Promoted from the pre-release \`${pre.tag}\` (${pre.url}) by ${input.actor}.`,
-        `Release pull request: ${pr.url}`,
-        `Pull request of the work: ${row.pullRequestUrl ?? pr.url}`,
-        '',
-      ].join('\n'),
-      prerelease: false,
-    })
-    return { created: { tag: made.tag, url: made.url } }
+    const tag = await nextOwnTag(deps.api, row.repository, token, input.bump)
+    const promotion = { label: 'Release pull request', url: pr.url }
+    return { created: await createOwnTag(deps.api, { ...input, tag, promotion }) }
   } catch (error) {
     return { releaseError: error instanceof Error ? error.message : String(error) }
   }

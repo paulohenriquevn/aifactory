@@ -23,6 +23,7 @@ import {
 } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type {
+  ChangedFile,
   CheckRun,
   GithubApi,
   IssueComment,
@@ -140,8 +141,8 @@ const githubApi: GithubApi & {
   openFailsFor: string | undefined
   /** What `.changeset` on the pre-release branch holds; undefined when the repository has none. */
   changesets: string[] | undefined
-  /** The files `develop` changes since the release branch. */
-  changed: string[]
+  /** The files `develop` changes since its merge base with the release branch, with their status. */
+  changed: ChangedFile[]
   /** The files on `develop`, with what each holds. */
   tree: Record<string, string>
   /** The release branch each comparison was made from. */
@@ -2329,6 +2330,10 @@ describe('what the factory does with a release', () => {
   })
 })
 
+/** A file a comparison lists as new since the merge base, and one it lists as changed. */
+const added = (path: string): ChangedFile => ({ path, status: 'added' })
+const modified = (path: string): ChangedFile => ({ path, status: 'modified' })
+
 describe('release', () => {
   const dependencies = () => ({ db: getDb(), github, api: githubApi })
   const reset = async () => {
@@ -2457,6 +2462,7 @@ describe('release', () => {
   it('hands a repository that publishes with changesets to its own workflow: no tag of the factory, a publication waits', async () => {
     const id = await delivered()
     githubApi.changesets = ['config.json', 'README.md', 'brave-fox.md']
+    githubApi.changed = [added('.changeset/brave-fox.md')]
     githubApi.latest = 'v1.2.3'
 
     const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
@@ -2493,7 +2499,7 @@ describe('release', () => {
   /** A changesets repository like theokit: a private root, one published package and one ignored app. */
   function changesetsMonorepo(changed: string[]) {
     githubApi.changesets = ['config.json', 'README.md']
-    githubApi.changed = changed
+    githubApi.changed = changed.map(modified)
     githubApi.tree = {
       'package.json': '{"name":"theokit-monorepo","private":true}',
       '.changeset/config.json': '{"ignore":["theoclaw"]}',
@@ -2535,16 +2541,44 @@ describe('release', () => {
     expect(await getDb().select().from(publication)).toEqual([])
   })
 
-  it('reads no change when a changeset waits: the publication goes on as before', async () => {
+  it('takes the changesets path when develop added a changeset since its merge base with the release branch', async () => {
     const id = await delivered()
     changesetsMonorepo(['packages/ui/src/index.ts'])
     githubApi.changesets = ['config.json', 'brave-fox.md']
+    githubApi.changed.push(added('.changeset/brave-fox.md'))
 
     const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
 
     expect(result).toMatchObject({ publishing: 'changesets', tag: undefined })
-    expect(githubApi.compared).toEqual([])
+    expect(githubApi.compared).toEqual(['main'])
+    expect(githubApi.releases.filter((r) => !r.prerelease)).toEqual([])
     expect(await getDb().select().from(publication)).toHaveLength(1)
+  })
+
+  it('does not count changesets the release branch already consumed: develop still holds them, none was added since the merge base', async () => {
+    const id = await delivered()
+    // theokit-plugins after Version Packages #250: main deleted the changesets, develop kept them.
+    changesetsMonorepo(['.github/workflows/ci.yml', 'CHANGELOG.md'])
+    githubApi.changesets = ['config.json', 'README.md', 'wake-word-detector.md', 'brave-fox.md']
+    githubApi.latest = 'v0.3.0'
+
+    const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: 'v0.3.1', mergeSha: 'merge0001' })
+    expect(result.publishing).toBeUndefined()
+    expect(githubApi.compared).toEqual(['main'])
+    expect(await getDb().select().from(publication)).toEqual([])
+  })
+
+  it('still refuses when develop only holds consumed changesets and changes a package changesets publishes', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['packages/ui/src/index.ts'])
+    githubApi.changesets = ['config.json', 'brave-fox.md']
+
+    await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+      /develop has no changeset, and it changes @theokit\/ui since main/,
+    )
+    expect(await getDb().select().from(publication)).toEqual([])
   })
 
   it('waits for the release branch checks as its own release, when only unpublished packages changed', async () => {
@@ -2730,6 +2764,7 @@ describe('release', () => {
       const id = await delivered()
       githubApi.releaseRequired = ['CI']
       githubApi.changesets = ['config.json', 'brave-fox.md']
+      githubApi.changed = [added('.changeset/brave-fox.md')]
 
       const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
 

@@ -8,7 +8,9 @@ import { storageFromUrl } from '../db/config'
 import { delivery, ingress, publication, repository, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type {
+  ChangedFile,
   CommitChecks,
+  ReleaseInput,
   GithubApi,
   OpenPullRequest,
   PublishedRelease,
@@ -43,6 +45,18 @@ const gh = {
   asked: [] as string[],
   comments: [] as { issue: number; body: string }[],
   closed: [] as number[],
+  /** What the promotion brought to the release branch, as the comparison with its first parent lists it. */
+  changed: [] as ChangedFile[],
+  /** The files on the promoted commit, with what each holds. */
+  tree: {} as Record<string, string>,
+  /** The `v` tags the repository has. */
+  versionTags: [] as string[],
+  /** The releases the factory created. */
+  created: [] as ReleaseInput[],
+  /** The comparisons asked for, as `base...head`. */
+  compared: [] as string[],
+  /** The commits whose checks were read. */
+  checksRead: [] as string[],
 }
 beforeEach(async () => {
   await getPool().query(
@@ -58,6 +72,12 @@ beforeEach(async () => {
     asked: [],
     comments: [],
     closed: [],
+    changed: [],
+    tree: {},
+    versionTags: [],
+    created: [],
+    compared: [],
+    checksRead: [],
   })
 })
 
@@ -70,7 +90,25 @@ const api = {
     gh.asked.push(`${head} -> ${base}`)
     return gh.open
   },
-  commitChecks: async () => gh.checks,
+  commitChecks: async (_repo: string, _token: string, sha: string) => {
+    gh.checksRead.push(sha)
+    return gh.checks
+  },
+  changedFiles: async (_repo: string, _token: string, base: string, head: string) => {
+    gh.compared.push(`${base}...${head}`)
+    return gh.changed
+  },
+  filePaths: async () => Object.keys(gh.tree),
+  readFile: async (_repo: string, _token: string, path: string) => gh.tree[path],
+  versionTags: async () => gh.versionTags,
+  createRelease: async (_repo: string, _token: string, release: ReleaseInput) => {
+    gh.created.push(release)
+    return {
+      id: gh.created.length,
+      tag: release.tag,
+      url: `https://github.com/usetheokit/ui/releases/tag/${release.tag}`,
+    }
+  },
   mergePullRequest: async (
     _repo: string,
     _token: string,
@@ -94,7 +132,9 @@ const api = {
   },
 } as unknown as GithubApi
 const github: GithubApp = { installationToken: async () => ({ token: 't', expiresAt: new Date() }) }
-const deps = () => ({ db: getDb(), github, api })
+/** A minute after the promotion: the release workflow has had no time to run. */
+const SOON = new Date(STARTED.getTime() + 60_000)
+const deps = (now = SOON) => ({ db: getDb(), github, api, now: () => now })
 
 let seeded = 0
 async function seedTask(stage: 'done' | 'released', mergedSha: string | null = `m${seeded + 1}`) {
@@ -126,6 +166,14 @@ async function seedTask(stage: 'done' | 'released', mergedSha: string | null = `
 
 async function waitingPublication() {
   const released = await seedTask('released')
+  await getDb().insert(delivery).values({
+    taskId: released,
+    kind: 'prerelease',
+    tag: 'pre/101-abc1234',
+    url: 'https://github.com/usetheokit/ui/releases/tag/pre/101-abc1234',
+    sha: 'abc1234',
+    actor: 'factory',
+  })
   await getDb().insert(publication).values({
     taskId: released,
     repository: 'usetheokit/ui',
@@ -337,6 +385,138 @@ describe('publishing a changesets release', () => {
     expect(result.errors).toEqual([expect.stringMatching(/502/)])
     expect((await row()).detail).toMatch(/502/)
     expect((await row()).status).toBe('waiting')
+  })
+})
+
+describe('a publication whose release run finished without a Version Packages pull request', () => {
+  /** An hour after the promotion: the release run on the promoted commit has long finished. */
+  const LATER = new Date(STARTED.getTime() + 60 * 60_000)
+  const modified = (path: string): ChangedFile => ({ path, status: 'modified' })
+  /** theokit-plugins after #269: the promotion changed CI and the changelog, no package. */
+  function promotionOutsidePackages() {
+    gh.changed = [modified('.github/workflows/ci.yml'), modified('CHANGELOG.md')]
+    gh.tree = {
+      'package.json': '{"name":"theokit-plugins","private":true}',
+      '.changeset/config.json': '{"ignore":[]}',
+      'packages/voice/package.json': '{"name":"@theokit/plugin-voice"}',
+    }
+    gh.versionTags = ['v0.2.0', 'v0.3.0']
+  }
+  const stageOf = async (id: number) =>
+    (await getDb().select().from(task).where(eq(task.id, id)))[0].stage
+  const lastEvent = async (id: number) =>
+    (await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, id))).at(-1)
+
+  it('ends as the factory release of the promoted commit when the promotion changes no package changesets publishes', async () => {
+    const asked = await waitingPublication()
+    const contained = await seedTask('done', 'shipped1')
+    promotionOutsidePackages()
+    // Version Packages #250 merged before this promotion: it belongs to the earlier release.
+    gh.versionPr = versionPr({
+      number: 250,
+      state: 'closed',
+      merged: true,
+      mergedAt: new Date('2026-11-11T11:11:04Z'),
+    })
+
+    const result = await pollPublications(deps(LATER))
+
+    expect(result).toMatchObject({ published: [expect.any(Number)], waiting: 0, errors: [] })
+    expect(gh.checksRead).toEqual(['promoted1'])
+    expect(gh.compared).toEqual(['promoted1^...promoted1'])
+    expect(gh.created).toEqual([
+      expect.objectContaining({ tag: 'v0.3.1', sha: 'promoted1', prerelease: false }),
+    ])
+    expect(await row()).toMatchObject({ status: 'published', tags: ['v0.3.1'] })
+    expect((await row()).detail).toMatch(
+      /release workflow finished on promote without a Version Packages pull request.*v0\.3\.1/,
+    )
+    expect(await stageOf(asked)).toBe('released')
+    expect(await stageOf(contained)).toBe('released')
+    expect((await lastEvent(asked))?.detail).toMatchObject({ tag: 'v0.3.1', actor: 'human' })
+    expect(gh.closed).toHaveLength(2)
+    expect(gh.comments[0].body).toContain('Available in `v0.3.1`')
+    expect(gh.merges).toEqual([])
+  })
+
+  it('makes one tag: a pass that runs again after the tag was made takes the same version', async () => {
+    await waitingPublication()
+    promotionOutsidePackages()
+    await getDb()
+      .update(publication)
+      .set({ tags: ['v0.3.1'] })
+    gh.versionTags = ['v0.3.0', 'v0.3.1']
+
+    await pollPublications(deps(LATER))
+
+    expect(gh.created.map((r) => r.tag)).toEqual(['v0.3.1'])
+    expect(await row()).toMatchObject({ status: 'published', tags: ['v0.3.1'] })
+  })
+
+  it('keeps waiting before the grace window, while the run still goes, and while no check reported', async () => {
+    await waitingPublication()
+    promotionOutsidePackages()
+
+    expect((await pollPublications(deps())).waiting).toBe(1)
+    expect(gh.checksRead).toEqual([])
+    expect((await row()).detail).toMatch(/no Version Packages pull request yet/)
+
+    gh.checks = {
+      checkRuns: [{ name: 'Release via Changesets', status: 'in_progress', conclusion: null }],
+      statuses: 'none',
+    }
+    expect((await pollPublications(deps(LATER))).waiting).toBe(1)
+    expect((await row()).detail).toMatch(/the checks on promote still run/)
+
+    gh.checks = { checkRuns: [], statuses: 'none' }
+    expect((await pollPublications(deps(LATER))).waiting).toBe(1)
+    expect((await row()).detail).toMatch(/no check has reported on promote\b/)
+
+    expect(await row()).toMatchObject({ status: 'waiting', tags: null })
+    expect(gh.created).toEqual([])
+  })
+
+  it('fails, visibly on its task, when the run on the promoted commit failed', async () => {
+    const asked = await waitingPublication()
+    promotionOutsidePackages()
+    gh.checks = {
+      checkRuns: [
+        { name: 'Release via Changesets', status: 'completed', conclusion: 'failure' },
+        { name: 'CI', status: 'completed', conclusion: 'success' },
+      ],
+      statuses: 'none',
+    }
+
+    const result = await pollPublications(deps(LATER))
+
+    expect(result).toMatchObject({ failed: [expect.any(Number)], published: [], waiting: 0 })
+    expect(await row()).toMatchObject({ status: 'failed' })
+    expect((await row()).detail).toMatch(/Release via Changesets failed on promote\b/)
+    expect(gh.created).toEqual([])
+    expect(gh.closed).toEqual([])
+    expect(await stageOf(asked)).toBe('released')
+    expect((await lastEvent(asked))?.detail).toMatchObject({
+      actor: 'human',
+      mergeSha: 'promoted1',
+      releaseError: expect.stringMatching(/Release via Changesets failed/),
+    })
+  })
+
+  it('fails, naming the package, when the promotion changed a package changesets publishes and nothing was published', async () => {
+    const asked = await waitingPublication()
+    promotionOutsidePackages()
+    gh.changed.push(modified('packages/voice/src/index.ts'))
+
+    const result = await pollPublications(deps(LATER))
+
+    expect(result.failed).toHaveLength(1)
+    expect(await row()).toMatchObject({ status: 'failed' })
+    expect((await row()).detail).toMatch(/changes @theokit\/plugin-voice/)
+    expect(gh.created).toEqual([])
+    expect((await lastEvent(asked))?.detail).toMatchObject({
+      releaseError: expect.stringMatching(/@theokit\/plugin-voice/),
+    })
+    expect((await pollPublications(deps(LATER))).failed).toEqual([])
   })
 })
 

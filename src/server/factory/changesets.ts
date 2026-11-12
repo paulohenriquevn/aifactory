@@ -1,6 +1,7 @@
-import type { OpenPullRequest } from '../github/pulls'
+import type { ChangedFile, OpenPullRequest } from '../github/pulls'
 
 import type { CheckSpec } from './evidence'
+import type { MainState } from './watch'
 
 /**
  * Repositories that publish with changesets (https://github.com/changesets/changesets): the version comes
@@ -9,17 +10,28 @@ import type { CheckSpec } from './evidence'
  * factory makes no tag of its own: a release is the promotion to the release branch, then that merge.
  */
 
-/** What `.changeset` holds on a branch: whether the repository uses changesets, and what waits to ship. */
-export type ChangesetState = { uses: boolean; pending: string[] }
+/** Whether a listing of `.changeset` (undefined when the directory is missing) holds its config. */
+export const usesChangesets = (names: string[] | undefined) =>
+  names?.includes('config.json') === true
 
-/** Reads a listing of `.changeset` (undefined when the directory is missing). */
-export function changesetsOn(names: string[] | undefined): ChangesetState {
-  if (!names?.includes('config.json')) return { uses: false, pending: [] }
-  return {
-    uses: true,
-    pending: names.filter((name) => name.endsWith('.md') && name !== 'README.md'),
-  }
+const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/
+
+/**
+ * The changesets that wait to ship: the `.changeset/*.md` files, the README aside, that a comparison of the
+ * pre-release branch with the release branch lists as added since their merge base. Being on the branch is
+ * not enough: a release whose Version Packages pull request consumed changesets deletes them on the release
+ * branch only, and with no back-merge the pre-release branch keeps them (theokit-plugins after #250).
+ */
+export function addedChangesets(files: ChangedFile[]): string[] {
+  return files
+    .filter((file) => file.status === 'added' && CHANGESET_FILE.test(file.path))
+    .map((file) => file.path)
+    .filter((path) => path !== '.changeset/README.md')
 }
+
+/** Every path a comparison touches, a rename by both its names. */
+export const touchedPaths = (files: ChangedFile[]) =>
+  files.flatMap((file) => (file.previousPath ? [file.path, file.previousPath] : [file.path]))
 
 /** What changesets reads of a package: its name, and whether it is kept off the registry. */
 export type PackageManifest = { name: string | undefined; private: boolean }
@@ -95,6 +107,39 @@ export function publishedTouched(
   }
   return [...names].sort()
 }
+
+/**
+ * How long a publication waits after the promotion before the checks on the promoted commit say whether its
+ * release run is over. Until the run is queued its check runs do not exist, and the other checks may all have
+ * completed already.
+ */
+export const RELEASE_RUN_GRACE_MS = 10 * 60_000
+
+export const releaseRunGraceOver = (startedAt: Date, now: Date) =>
+  now.getTime() - startedAt.getTime() >= RELEASE_RUN_GRACE_MS
+
+/** What the checks on the promoted commit say of its release run, once no Version Packages pull request came. */
+export type ReleaseRun = { finished: true } | { failed: string } | { wait: string }
+
+/**
+ * Reads the run on a promoted commit when the release workflow opened no Version Packages pull request. Every
+ * check completed, none failing, means it finished and will open none. A failed one needs a person. A check
+ * still running, or none reported yet, may still open one.
+ */
+export function releaseRunOf(seen: MainState, sha: string): ReleaseRun {
+  const short = sha.slice(0, 7)
+  if (seen.state === 'green') return { finished: true }
+  if (seen.state === 'red') return { failed: `${seen.failing.join(', ')} failed on ${short}` }
+  const why =
+    seen.state === 'pending'
+      ? `the checks on ${short} still run`
+      : `no check has reported on ${short}`
+  return { wait: `${NOT_OPENED}; ${why}` }
+}
+
+/** Why a publication waits before the release workflow opened its Version Packages pull request. */
+export const NOT_OPENED =
+  'no Version Packages pull request yet: the release workflow opens it after the promotion'
 
 /** The branch changesets/action opens its Version Packages pull request from. */
 export const versionBranchFor = (releaseBranch: string) => `changeset-release/${releaseBranch}`
