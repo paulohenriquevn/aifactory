@@ -206,6 +206,12 @@ describe('describeEvent', () => {
     )
   })
 
+  it('says a task resolved with no change reached the release branch, with the commit it was resolved at', () => {
+    expect(
+      line('released', { actor: 'factory', releaseBranch: 'main', resolvedSha: 'abc1234def' }),
+    ).toBe('already resolved at abc1234, now on main')
+  })
+
   it('says a changesets release waits for the repository to publish it', () => {
     expect(line('released', { actor: 'human', publishing: 'changesets' })).toBe(
       "promoted by human; the repository's release workflow publishes it",

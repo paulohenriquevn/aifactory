@@ -279,7 +279,8 @@ construtor disse, com a instrução de conferir no código e nos testes, sem con
 confirmam, a fábrica comenta na issue o commit, os checks que passaram, a conclusão do revisor e o que o
 construtor encontrou, fecha a issue como concluída e marca a task `done`, sem PR (`resolved_sha` na
 task). No painel ela aparece na coluna "Already resolved", e não em Delivered, que guarda só o que
-espera uma release; também não entra na caixa de entrada. Se os checks falham, a issue fica aberta e a task vai para uma pessoa, com o motivo. Se o revisor aponta algo
+espera uma release; também não entra na caixa de entrada. Ela vai para `released` quando a branch de
+release passa a conter o commit em que foi resolvida (ver "Task resolvida sem mudança" em Release). Se os checks falham, a issue fica aberta e a task vai para uma pessoa, com o motivo. Se o revisor aponta algo
 faltando e o construtor tem sessão para retomar, a revisão volta uma vez à sessão dele, com a instrução de
 fazer a mudança construindo sobre o que existe (e dizer o que assumiu) e de não mudar nada só quando faltar
 algo de fora do repositório. Uma mudança feita aí segue o caminho normal (push, checks, review, PR); nenhuma
@@ -421,6 +422,18 @@ comparação) ganha uma entrega `release` com a tag, vai para `released`, recebe
 release: o motivo fica no estágio `released` da task (`issueError`) e na resposta (`issueErrors`). Se o merge
 acontece mas a release não pôde ser criada, só a task do release fica `released`, com o erro registrado,
 porque o merge não se desfaz.
+
+**Task resolvida sem mudança.** Uma task `done` com `resolved_sha` e sem `merged_sha` não tem nada que uma
+tag carregue, e a issue dela já foi fechada quando foi resolvida. Ela vai para `released` quando o commit em
+que foi resolvida está na branch de release (a que o dono escolheu, ou a branch padrão), conferido pela API
+de comparação. Isso acontece em dois momentos. Toda release que termina (a da própria fábrica ou uma
+publicação de changesets, pelo mesmo `shipContained`) confere as tasks resolvidas do repositório contra o
+commit promovido. E o cron `catch-up`, a cada 5 minutos, confere até 25 delas contra a ponta da branch de
+release, continuando de onde a passada anterior parou e recomeçando do início ao chegar ao fim, o que pega
+as que já estavam lá antes de existir essa regra. O estágio `released` registra `releaseBranch`,
+`resolvedSha` e quem moveu (`actor`; `factory` no cron, e na release também o `mergeSha` promovido). Não há
+entrega `release` nem tag, nenhum comentário na issue, e uma task cujo commit ainda não está na branch de
+release fica onde está. Uma comparação que o GitHub recusa vira log e a passada seguinte tenta de novo.
 
 **Release que espera o CI da branch de release.** Um PR `develop → main` aberto há um segundo ainda não tem
 os checks que a `main` exige, e o GitHub recusa o merge (`405 ... required status checks have not
@@ -1302,7 +1315,8 @@ ficar entre as duas).
 novo as que falharam, enquanto o servidor ou o túnel estavam fora. Uma entrega é deixada em paz se alguma
 tentativa dela foi aceita, se a fábrica já a gravou ou se já foi pedida três vezes. O GitHub guarda três
 dias. Os ids de entrega passam do que um número do JavaScript guarda sem arredondar, então são lidos
-como texto.
+como texto. A mesma passada move para `released` as tasks resolvidas sem mudança cujo commit já está na
+branch de release (ver "Task resolvida sem mudança").
 
 ### Memória e quantas execuções ao mesmo tempo
 

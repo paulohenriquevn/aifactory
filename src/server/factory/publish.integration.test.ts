@@ -333,6 +333,32 @@ describe('publishing a changesets release', () => {
     expect(events.at(-1)?.detail).toMatchObject({ tag: '@theokit/ui@1.13.0', actor: 'human' })
   })
 
+  it('releases a task resolved with no change whose commit the promotion carries, and leaves one it does not', async () => {
+    await waitingPublication()
+    const carried = await seedTask('done', null)
+    const notYet = await seedTask('done', null)
+    await getDb().update(task).set({ resolvedSha: 'resolved1' }).where(eq(task.id, carried))
+    await getDb().update(task).set({ resolvedSha: 'later2' }).where(eq(task.id, notYet))
+    gh.outside.add('later2')
+    gh.versionPr = versionPr()
+    gh.published = [published('@theokit/ui@1.13.0')]
+
+    await pollPublications(deps())
+
+    const stageOf = async (id: number) =>
+      (await getDb().select().from(task).where(eq(task.id, id)))[0].stage
+    expect(await stageOf(carried)).toBe('released')
+    expect(await stageOf(notYet)).toBe('done')
+    const events = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, carried))
+    expect(events.at(-1)?.detail).toEqual({
+      actor: 'human',
+      releaseBranch: 'main',
+      resolvedSha: 'resolved1',
+      mergeSha: 'promoted1',
+    })
+    expect(await getDb().select().from(delivery).where(eq(delivery.taskId, carried))).toEqual([])
+  })
+
   it('waits for the release workflow after the merge, and does not release anything before it publishes', async () => {
     await waitingPublication()
     const other = await seedTask('done', 'shipped1')

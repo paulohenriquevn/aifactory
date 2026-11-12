@@ -4,6 +4,7 @@ import type { Database } from '../db'
 import { delivery, task } from '../db/schema'
 import type { GithubApi } from '../github/pulls'
 
+import { releaseResolved } from './resolved-release'
 import { enterStage } from './stages'
 
 /** A release that reached the release branch: what it promoted, under which tags, and who decided. */
@@ -26,6 +27,8 @@ export type Shipment = {
 
 export type Shipped = {
   released: number[]
+  /** Tasks resolved with no change whose resolving commit the promotion carries, now released too. */
+  resolved: number[]
   /** Issues that could not be commented on or closed, as `#<number>: <why>`. The release stands. */
   issueErrors: string[]
 }
@@ -99,7 +102,7 @@ export async function shipContained(
         or(eq(task.stage, 'done'), eq(task.id, s.askedTaskId)),
       ),
     )
-  const shipped: Shipped = { released: [], issueErrors: [] }
+  const shipped: Shipped = { released: [], resolved: [], issueErrors: [] }
   for (const t of candidates) {
     if (!(await belongs(deps, s, t))) continue
     await deps.db.insert(delivery).values(
@@ -124,5 +127,32 @@ export async function shipContained(
     shipped.released.push(t.id)
     if (issueError) shipped.issueErrors.push(issueError)
   }
+  await shipResolved(deps, s, shipped)
   return shipped
+}
+
+/**
+ * Releases the tasks resolved with no change that the promotion carries. Their issues were closed when
+ * they were resolved and no tag names them, so nothing is commented. A task that could not be compared is
+ * logged and left for the `catch-up` cron; the release stands.
+ */
+async function shipResolved(deps: { db: Database; api: GithubApi }, s: Shipment, shipped: Shipped) {
+  const resolved = await releaseResolved(deps, {
+    repository: s.repository,
+    token: s.token,
+    releaseRef: s.promotedSha,
+    releaseBranch: s.releaseBranch,
+    actor: s.actor,
+    mergeSha: s.promotedSha,
+  })
+  shipped.resolved = resolved.released
+  if (resolved.errors.length > 0) {
+    console.error(
+      JSON.stringify({
+        event: 'resolved_release_failed',
+        repository: s.repository,
+        errors: resolved.errors,
+      }),
+    )
+  }
 }

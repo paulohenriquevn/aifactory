@@ -2423,6 +2423,44 @@ describe('release', () => {
     expect(await releasedDetail(contained)).toMatchObject({ tag: 'v1.3.0', mergeSha: 'merge0001' })
   })
 
+  /** A task finished with no change: done, resolved at a commit of the integration branch, nothing merged. */
+  async function resolvedAt(issueNumber: number, resolvedSha: string) {
+    const id = await seedTask(issueNumber)
+    await getDb().update(task).set({ stage: 'done', resolvedSha }).where(eq(task.id, id))
+    return id
+  }
+
+  it('releases a task resolved with no change once a release puts its resolving commit on the release branch', async () => {
+    const asked = await delivered()
+    const resolved = await resolvedAt(8, 'resolved01')
+    githubApi.latest = 'v1.2.3'
+
+    await release(dependencies(), asked, { bump: 'minor', actor: 'human' })
+
+    expect(await stageOf(resolved)).toBe('released')
+    expect(await releasedDetail(resolved)).toEqual({
+      actor: 'human',
+      releaseBranch: 'main',
+      resolvedSha: 'resolved01',
+      mergeSha: 'merge0001',
+    })
+    // Its issue was closed when it was resolved, and no tag carries it.
+    expect(githubApi.closed).not.toContain(8)
+    expect(await deliveries(resolved)).toEqual([])
+  })
+
+  it('leaves a task resolved with no change alone while the release branch does not contain its commit', async () => {
+    const asked = await delivered()
+    const resolved = await resolvedAt(8, 'outside01')
+    githubApi.outside.add('outside01')
+    githubApi.latest = 'v1.2.3'
+
+    await release(dependencies(), asked, { bump: 'minor', actor: 'human' })
+
+    expect(await stageOf(resolved)).toBe('done')
+    expect(await releasedDetail(resolved)).toBeUndefined()
+  })
+
   it('comments the version and its release on every released issue, the asked one included, and closes them', async () => {
     const asked = await delivered()
     await integrated(8, 'inside01')

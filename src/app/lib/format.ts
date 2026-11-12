@@ -126,6 +126,9 @@ export function describeEvent(event: TimelineEvent): string {
     case 'done':
       return describeDone(d)
     case 'released':
+      if (d.resolvedSha) {
+        return `already resolved at ${shortSha(d.resolvedSha as string)}, now on ${text(d.releaseBranch)}`
+      }
       if (d.publishing === 'changesets') {
         return `promoted by ${text(d.actor)}; the repository's release workflow publishes it`
       }

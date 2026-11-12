@@ -64,7 +64,8 @@ export type DoneOutcome = { resolved?: boolean; integrated?: boolean }
 /**
  * Delivered means waiting for a release. A done task resolved with no change (the code already did what
  * the issue asks, or a person resolved it another way) has nothing merged for a release to carry, so it
- * goes to its own column instead of staying in Delivered forever.
+ * goes to its own column until its resolving commit is on the release branch, when it becomes `released`
+ * (`factory/resolved-release.ts`).
  */
 export function columnOf(
   stage: Stage,
