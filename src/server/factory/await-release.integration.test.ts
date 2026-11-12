@@ -41,6 +41,8 @@ const gh = {
   autoMergeOff: [] as number[],
   releases: [] as ReleaseInput[],
   latest: 'v1.2.3' as string | undefined,
+  /** The issues the release closed. */
+  closed: [] as number[],
 }
 
 const openPull = (over: Partial<PullRequestDetail> = {}): PullRequestDetail => ({
@@ -67,6 +69,7 @@ beforeEach(async () => {
     autoMergeOff: [],
     releases: [],
     latest: 'v1.2.3',
+    closed: [],
   })
 })
 
@@ -82,6 +85,11 @@ const api = {
     gh.autoMergeOff.push(number)
   },
   latestReleaseTag: async () => gh.latest,
+  contains: async () => true,
+  commentOnIssue: async () => 'c',
+  closeIssue: async (_repo: string, _token: string, issue: number) => {
+    gh.closed.push(issue)
+  },
   createRelease: async (_repo: string, _token: string, release: ReleaseInput) => {
     gh.releases.push(release)
     return { id: 1, tag: release.tag, url: `https://github.com/paulo/app/releases/${release.tag}` }
@@ -197,6 +205,7 @@ describe('pollAwaitingReleases', () => {
       .from(stageEvent)
       .where(eq(stageEvent.stage, 'released'))
     expect(released.detail).toMatchObject({ actor: 'human', mergeSha: 'main0001', tag: 'v1.3.0' })
+    expect(gh.closed).toEqual([7])
   })
 
   it('finishes a release only once, however many passes see the merge', async () => {

@@ -18,6 +18,7 @@ import type { GithubApi } from '../github/pulls'
 import { PRE_RELEASE_BRANCH, releaseBranchOf } from './branches'
 import { changesetsOn } from './changesets'
 import { nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
+import { shipContained } from './ship'
 import { enterStage } from './stages'
 
 /** How the factory treats a release (the promotion), as opposed to the pre-release it always makes. */
@@ -139,6 +140,11 @@ export type ReleaseResult = {
   awaitingChecks?: string[]
   /** The release pull request, when the release waits for its checks. */
   pullRequestUrl?: string
+  /**
+   * Issues of released tasks that could not be commented on or closed, as `#<number>: <why>`. The release
+   * stands; each is also on its task's `released` stage.
+   */
+  issueErrors?: string[]
 }
 
 /** What came of the promotion: the factory's own release, or a publication left to changesets. */
@@ -348,7 +354,9 @@ async function waitForChecks(
 
 /**
  * What follows the promotion's merge, however it was made: the factory's own release or the publication a
- * changesets repository makes, the watch on the merge commit, and the task's move to `released`.
+ * changesets repository makes, the watch on the merge commit, and the task's move to `released`. With its own
+ * tag, every task whose merge the promotion contains is released too, and each issue is told the version
+ * and closed; a changesets publication does the same once its packages are out (`publish.ts`).
  */
 export async function completeRelease(
   deps: DeliverDeps,
@@ -376,24 +384,27 @@ export async function completeRelease(
     note: [actor, created?.tag, publishing].filter(Boolean).join(' -> '),
   })
   if (created) {
-    await deps.db.insert(delivery).values({
-      taskId,
-      kind: 'release',
-      tag: created.tag,
-      url: created.url,
-      sha: mergeSha,
+    // Every task whose work the promotion carries is released with this one, and its issue closed.
+    const shipped = await shipContained(deps, {
+      repository: row.repository,
+      token,
+      promotedSha: mergeSha,
+      releaseBranch: target,
+      askedTaskId: taskId,
       actor,
+      tags: [created],
+      detail: { sha },
     })
+    return { tag: created.tag, url: created.url, mergeSha, issueErrors: shipped.issueErrors }
   }
   await enterStage(deps.db, taskId, 'released', {
     actor,
     mergeSha,
     sha,
-    ...(created ? { tag: created.tag, url: created.url } : {}),
     ...(releaseError ? { releaseError } : {}),
     publishing,
   })
-  return { tag: created?.tag, url: created?.url, mergeSha, releaseError, publishing }
+  return { tag: undefined, url: undefined, mergeSha, releaseError, publishing }
 }
 
 /**

@@ -114,7 +114,9 @@ reads that file, not a convention.
   `FACTORY_RELEASE_MODE=auto`, an agent's verdict may start it. When the release branch requires status
   checks, `release()` merges nothing either: it turns on auto-merge pinned to the head it saw and records a
   `release_wait`, and the `integrate-after-ci` cron finishes the release after GitHub merges, or refuses it
-  with the reason when a required check fails. A refused release is never retried on its own. `ensureBranches` creates the two missing
+  with the reason when a required check fails. A refused release is never retried on its own. Every release, tagged by the factory or published by changesets, releases each finished task
+  whose merge is in the promoted commit and closes its issue through `shipContained` in `factory/ship.ts`; an
+  issue that will not close is recorded, never thrown. `ensureBranches` creates the two missing
   branches, never touches one that exists, and refuses the default branch as the integration branch.
 - **A repository that publishes with changesets tags its own releases.** When `.changeset/config.json` is on
   `develop`, `release()` makes no tag: it refuses when no changeset waits (nothing would be published),

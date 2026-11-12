@@ -412,8 +412,14 @@ vai junto** com o item pedido. Quem a faz:
 - o PR `develop → main` não pôde ser aberto (por exemplo, `develop` não tem nada que `main` já não tenha),
   está fechado ou é um rascunho.
 
-O merge é fixado ao commit que a fábrica viu em `develop`. Se o merge acontece mas a release não pôde ser
-criada, a task fica `released` com o erro registrado, porque o merge não se desfaz.
+O merge é fixado ao commit que a fábrica viu em `develop`. Com a release criada, toda task cujo trabalho
+está no commit promovido (a do release e toda task `done` integrada antes dela, conferido pela API de
+comparação) ganha uma entrega `release` com a tag, vai para `released`, recebe na issue o comentário
+"Available in `<tag>` (<url da release>)" e tem a issue fechada. É o mesmo código do cron
+`publish-changesets` (`factory/ship.ts`). Uma issue que o GitHub não deixa comentar ou fechar não desfaz o
+release: o motivo fica no estágio `released` da task (`issueError`) e na resposta (`issueErrors`). Se o merge
+acontece mas a release não pôde ser criada, só a task do release fica `released`, com o erro registrado,
+porque o merge não se desfaz.
 
 **Release que espera o CI da branch de release.** Um PR `develop → main` aberto há um segundo ainda não tem
 os checks que a `main` exige, e o GitHub recusa o merge (`405 ... required status checks have not
@@ -458,7 +464,8 @@ release. Checks vermelhos, pendentes ou ausentes, rascunho ou PR fechado: ele es
 `publication`. Depois que o workflow publica, ele lê as releases novas
 do GitHub, grava uma entrega `release` com cada tag, e cada task cujo trabalho está no commit promovido (a
 do release e toda task `done` integrada antes dela, conferido pela API de comparação) vai para `released`,
-ganha o comentário "Available in <tags>" na issue e tem a issue fechada.
+ganha o comentário "Available in <tags>" na issue e tem a issue fechada. Uma issue que não fecha fica
+registrada na task e no `detail` da `publication`, e a publicação segue.
 
 Depois do release, o workflow do repositório abre o back-merge: o PR da branch de release para a branch de
 integração (`main → workspace`). Enquanto ele não entra, `workspace` fica com as versões de antes do release,

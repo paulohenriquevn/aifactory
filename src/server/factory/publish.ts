@@ -1,13 +1,13 @@
-import { and, desc, eq, isNotNull, or } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { delivery, publication, repository, task } from '../db/schema'
+import { publication, repository } from '../db/schema'
 import type { GithubApp } from '../github/app'
-import type { GithubApi, PublishedRelease } from '../github/pulls'
+import type { GithubApi } from '../github/pulls'
 
 import { integrationBranch } from './branches'
 import { isPackageTag, pickBackMerge, versionBranchFor } from './changesets'
-import { enterStage } from './stages'
+import { shipContained } from './ship'
 import { classify } from './watch'
 
 export type PublishDeps = { db: Database; github: GithubApp; api: GithubApi }
@@ -76,67 +76,6 @@ async function mergeWhenGreen(
   return { merged: pr.number }
 }
 
-const availableIn = (tags: PublishedRelease[], p: Publication) =>
-  [
-    `Available in ${tags.map((t) => `\`${t.tag}\` (${t.url})`).join(', ')}.`,
-    '',
-    `Released by ${p.actor}: the promotion \`${p.promotedSha.slice(0, 7)}\` to \`${p.releaseBranch}\`, published by the repository's release workflow.`,
-    '',
-  ].join('\n')
-
-/**
- * Releases every task whose work is in the promoted commit: the one that asked for the release, and each
- * finished task integrated before it. A task already holding a delivery of these tags is left alone, so a
- * pass that runs again does not comment twice.
- */
-async function shipTasks(
-  deps: PublishDeps,
-  p: Publication,
-  token: string,
-  tags: PublishedRelease[],
-) {
-  const candidates = await deps.db
-    .select()
-    .from(task)
-    .where(
-      and(
-        eq(task.repository, p.repository),
-        isNotNull(task.mergedSha),
-        or(eq(task.stage, 'done'), eq(task.id, p.taskId)),
-      ),
-    )
-  for (const t of candidates) {
-    const known = await deps.db
-      .select({ id: delivery.id })
-      .from(delivery)
-      .where(and(eq(delivery.taskId, t.id), eq(delivery.tag, tags[0].tag)))
-    if (known.length > 0) continue
-    const shipped =
-      t.id === p.taskId ||
-      (await deps.api.contains(p.repository, token, p.promotedSha, t.mergedSha!))
-    if (!shipped) continue
-    await deps.db.insert(delivery).values(
-      tags.map((tag) => ({
-        taskId: t.id,
-        kind: 'release' as const,
-        tag: tag.tag,
-        url: tag.url,
-        sha: p.promotedSha,
-        actor: p.actor,
-      })),
-    )
-    await enterStage(deps.db, t.id, 'released', {
-      actor: p.actor,
-      tag: tags.map((tag) => tag.tag).join(', '),
-      url: tags[0].url,
-      mergeSha: p.promotedSha,
-      published: 'changesets',
-    })
-    await deps.api.commentOnIssue(p.repository, token, t.issueNumber, availableIn(tags, p))
-    await deps.api.closeIssue(p.repository, token, t.issueNumber)
-  }
-}
-
 const note = (db: Database, id: number, detail: string) =>
   db.update(publication).set({ detail }).where(eq(publication.id, id))
 
@@ -166,14 +105,27 @@ async function advance(deps: PublishDeps, p: Publication, result: PublishResult)
     result.waiting += 1
     return
   }
-  await shipTasks(deps, p, token, tags)
+  const shipped = await shipContained(deps, {
+    repository: p.repository,
+    token,
+    promotedSha: p.promotedSha,
+    releaseBranch: p.releaseBranch,
+    askedTaskId: p.taskId,
+    actor: p.actor,
+    tags,
+    publishedBy: "the repository's release workflow",
+    detail: { published: 'changesets' },
+  })
+  const unclosed = shipped.issueErrors.length
+    ? `; issues not closed: ${shipped.issueErrors.join('; ')}`
+    : ''
   await deps.db
     .update(publication)
     .set({
       status: 'published',
       tags: tags.map((t) => t.tag),
       publishedAt: new Date(),
-      detail: `${merged}published ${tags.map((t) => t.tag).join(', ')}`,
+      detail: `${merged}published ${tags.map((t) => t.tag).join(', ')}${unclosed}`,
     })
     .where(eq(publication.id, p.id))
   result.published.push(p.id)

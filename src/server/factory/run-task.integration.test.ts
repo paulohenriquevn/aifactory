@@ -113,8 +113,14 @@ const githubApi: GithubApi & {
   bases: (string | undefined)[]
   drafts: boolean[]
   comments: string[]
+  /** Each comment with the issue it went to. */
+  commentsOn: { issue: number; body: string }[]
   /** The issues the factory closed. */
   closed: number[]
+  /** Issues GitHub refuses to close. */
+  closeFails: Set<number>
+  /** Merges that are not in the history of the commit a release promoted. */
+  outside: Set<string>
   replies: IssueComment[]
   releases: ReleaseInput[]
   releaseFails: boolean
@@ -159,7 +165,10 @@ const githubApi: GithubApi & {
   bases: [],
   drafts: [],
   comments: [],
+  commentsOn: [],
   closed: [],
+  closeFails: new Set(),
+  outside: new Set(),
   replies: [],
   releases: [],
   releaseFails: false,
@@ -198,8 +207,8 @@ const githubApi: GithubApi & {
   async releasesSince() {
     return []
   },
-  async contains() {
-    return true
+  async contains(_repo, _token, _descendant, ancestor) {
+    return !this.outside.has(ancestor)
   },
   async commitChecks() {
     return { checkRuns: [], statuses: 'none' as const }
@@ -246,11 +255,14 @@ const githubApi: GithubApi & {
     this.branchMerges.push({ base, head })
     return { sha: 'develop0001', changed: true }
   },
-  async commentOnIssue(_repo, _token, _issue, body) {
+  async commentOnIssue(_repo, _token, issue, body) {
     this.comments.push(body)
+    this.commentsOn.push({ issue, body })
     return `comment-${this.comments.length}`
   },
   async closeIssue(_repo, _token, issue) {
+    if (this.closeFails.has(issue))
+      throw new Error(`GitHub answered 403 closing paulo/app#${issue}`)
     this.closed.push(issue)
   },
   async listIssueComments() {
@@ -266,7 +278,10 @@ beforeEach(() => {
   githubApi.bases = []
   githubApi.drafts = []
   githubApi.comments = []
+  githubApi.commentsOn = []
   githubApi.closed = []
+  githubApi.closeFails = new Set()
+  githubApi.outside = new Set()
   githubApi.replies = []
   githubApi.releases = []
   githubApi.releaseFails = false
@@ -2346,6 +2361,75 @@ describe('release', () => {
         repository: 'paulo/app',
       },
     ])
+  })
+
+  /** A task integrated before the one released: done, with its merge on the integration branch. */
+  async function integrated(issueNumber: number, mergedSha: string) {
+    const id = await seedTask(issueNumber)
+    await getDb().update(task).set({ stage: 'done', mergedSha }).where(eq(task.id, id))
+    return id
+  }
+  const stageOf = async (id: number) =>
+    (await getDb().select().from(task).where(eq(task.id, id)))[0].stage
+  const releasedDetail = async (id: number) =>
+    (await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, id))).find(
+      (e) => e.stage === 'released',
+    )?.detail
+
+  it('releases every integrated task the promotion contains, and leaves out one it does not', async () => {
+    const asked = await delivered()
+    const contained = await integrated(8, 'inside01')
+    const later = await integrated(9, 'outside01')
+    githubApi.outside.add('outside01')
+    githubApi.latest = 'v1.2.3'
+
+    await release(dependencies(), asked, { bump: 'minor', actor: 'human' })
+
+    expect(await stageOf(asked)).toBe('released')
+    expect(await stageOf(contained)).toBe('released')
+    expect(await stageOf(later)).toBe('done')
+    expect((await deliveries(contained)).map((d) => [d.kind, d.tag, d.sha, d.actor])).toEqual([
+      ['release', 'v1.3.0', 'merge0001', 'human'],
+    ])
+    expect(await deliveries(later)).toEqual([])
+    expect(await releasedDetail(contained)).toMatchObject({ tag: 'v1.3.0', mergeSha: 'merge0001' })
+  })
+
+  it('comments the version and its release on every released issue, the asked one included, and closes them', async () => {
+    const asked = await delivered()
+    await integrated(8, 'inside01')
+    await integrated(9, 'outside01')
+    githubApi.outside.add('outside01')
+    githubApi.latest = 'v1.2.3'
+
+    await release(dependencies(), asked, { bump: 'minor', actor: 'human' })
+
+    expect(githubApi.closed.sort()).toEqual([7, 8])
+    const announced = githubApi.commentsOn.filter((c) => c.body.includes('Available in'))
+    expect(announced.map((c) => c.issue).sort()).toEqual([7, 8])
+    for (const c of announced) {
+      expect(c.body).toContain(
+        'Available in `v1.3.0` (https://github.com/paulo/app/releases/tag/v1.3.0).',
+      )
+      expect(c.body).toContain('Released by human: the promotion `merge00` to `main`')
+    }
+  })
+
+  it('keeps the release when an issue cannot be closed, and records why on that task', async () => {
+    const asked = await delivered()
+    const contained = await integrated(8, 'inside01')
+    githubApi.closeFails.add(8)
+
+    const result = await release(dependencies(), asked, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: 'v0.1.0', mergeSha: 'merge0001' })
+    expect(result.issueErrors).toEqual([expect.stringMatching(/#8: .*403 closing paulo\/app#8/)])
+    expect(await stageOf(asked)).toBe('released')
+    expect(await stageOf(contained)).toBe('released')
+    expect(githubApi.closed).toEqual([7])
+    expect(await releasedDetail(contained)).toMatchObject({
+      issueError: expect.stringContaining('403 closing paulo/app#8'),
+    })
   })
 
   it('hands a repository that publishes with changesets to its own workflow: no tag of the factory, a publication waits', async () => {

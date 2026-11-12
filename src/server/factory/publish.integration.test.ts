@@ -292,6 +292,37 @@ describe('publishing a changesets release', () => {
     expect(gh.closed).toHaveLength(2)
   })
 
+  it('publishes and releases every task when one issue cannot be closed, and records why on that task', async () => {
+    const released = await waitingPublication()
+    const refusing = await seedTask('done', 'shipped1')
+    const refusedIssue = (await getDb().select().from(task).where(eq(task.id, refusing)))[0]
+      .issueNumber
+    gh.versionPr = versionPr()
+    gh.published = [published('@theokit/ui@1.13.0')]
+    const failing = {
+      ...api,
+      closeIssue: async (_repo: string, _token: string, issue: number) => {
+        if (issue === refusedIssue) throw new Error(`GitHub answered 403 closing #${issue}`)
+        gh.closed.push(issue)
+      },
+    } as unknown as GithubApi
+
+    const result = await pollPublications({ ...deps(), api: failing })
+
+    expect(result.published).toHaveLength(1)
+    expect(result.errors).toEqual([])
+    expect(await row()).toMatchObject({ status: 'published' })
+    expect((await row()).detail).toContain(`#${refusedIssue}: GitHub answered 403`)
+    const stageOf = async (id: number) =>
+      (await getDb().select().from(task).where(eq(task.id, id)))[0].stage
+    expect(await stageOf(released)).toBe('released')
+    expect(await stageOf(refusing)).toBe('released')
+    const events = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, refusing))
+    expect(events.at(-1)?.detail).toMatchObject({
+      issueError: expect.stringContaining('403'),
+    })
+  })
+
   it('records why a publication cannot go on, and keeps looking at the others', async () => {
     await waitingPublication()
     const broken = {
