@@ -1,7 +1,12 @@
-import { getDb } from '../db'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import type { QueueClient } from 'theokit/server/jobs'
+
+import { getDb, getPool } from '../db'
+import * as schema from '../db/schema'
 import { jobBackend } from '../factory/job-backend'
 import { githubAppFromEnv } from '../factory/deps'
 import { harnessRegistry } from '../factory/harness-registry'
+import { readRecipe } from '../factory/recipe'
 import { inTransactionForPlan, inTransactionForRun } from '../factory/resume-queue'
 import { sandboxProviderFromEnv } from '../factory/sandbox-provider'
 import { createGithubApp } from '../github/app'
@@ -10,6 +15,7 @@ import { createGithubApi } from '../github/pulls'
 
 import { ActionRefused, type ActionDeps } from './actions'
 import { repositoryDoctor, type DoctorDeps } from './doctor'
+import type { RunProofDeps, StartProofDeps } from './prove'
 import type { WorkDeps } from './work'
 import { readFileSync } from 'node:fs'
 
@@ -59,6 +65,39 @@ export function workDeps(env: NodeJS.ProcessEnv = process.env): WorkDeps {
     installUrl: slug ? `https://github.com/apps/${slug}/installations/new` : undefined,
     agents: Object.keys(harnessRegistry(env)),
     inTransaction: inTransactionForPlan,
+  }
+}
+
+/** What asking for a proof of checks needs: the row and its `prove-checks` job commit together. */
+export function proofStartDeps(queue: QueueClient): StartProofDeps {
+  return {
+    db: getDb(),
+    inTransaction: async (work) => {
+      const client = await getPool().connect()
+      try {
+        return await drizzle(client, { schema }).transaction((tx) =>
+          work(tx as never, async (job) => {
+            await queue.enqueueInTransaction(client, 'prove-checks', job, {
+              idempotencyKey: `prove-checks-${job.repository.toLowerCase()}-${job.at}`,
+            })
+          }),
+        )
+      } finally {
+        client.release()
+      }
+    },
+  }
+}
+
+/** What the `prove-checks` job runs with: the sandbox a run would get, and the doctor for afterwards. */
+export function proofDeps(env: NodeJS.ProcessEnv = process.env): RunProofDeps {
+  return {
+    db: getDb(),
+    github: githubAppFromEnv(env),
+    api: createGithubApi(),
+    sandbox: sandboxProviderFromEnv(env),
+    fetchRecipe: (repo, token) => readRecipe(repo, token),
+    diagnose: (fullName) => repositoryDoctor(doctorDeps(env), fullName),
   }
 }
 

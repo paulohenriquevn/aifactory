@@ -197,6 +197,13 @@
       "when": 1794590749968,
       "tag": "0030_repository_doctor",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794592462430,
+      "tag": "0031_checks_proof",
+      "breakpoints": true
     }
   ]
 }

@@ -1063,6 +1063,35 @@ ele abre. Nenhum comando.
    também em `repository.publish_mode`. O painel ainda não mostra o relatório: por enquanto são as duas
    rotas e a resposta do Enable.
 
+   **Checks provados.** `POST /api/panel/repositories/<dono>/<nome>/checks/prove` com
+   `{ "checks": [{ "name": "test", "command": "npm test" }] }` prova os checks propostos antes de salvar
+   qualquer um. A rota grava a proposta em `repository.checks_proof` com o estado `proving`, enfileira o
+   job `prove-checks` na mesma transação e responde na hora. O job sobe um sandbox isolado com o egress de
+   uma execução, menos os agentes (GitHub com o token no firewall, o registro do npm, os domínios do
+   repositório e os da receita que o dono aprovou), clona a ponta da branch de integração e roda os checks
+   em ordem, todos no mesmo sandbox, que é parado no fim mesmo quando um check estoura. Cada check termina
+   em um de três estados, com a duração e o fim da saída:
+
+   | Estado     | O que significa                                                    | É salvo? |
+   | ---------- | ------------------------------------------------------------------ | -------- |
+   | `passed`   | saiu com 0 dentro do limite                                        | sim      |
+   | `failed`   | saiu com erro na base; a saída volta para a proposta ser corrigida | não      |
+   | `too_slow` | ainda rodava no limite de um check (15 minutos por padrão)         | não      |
+
+   Os que passaram viram os checks do repositório, com o commit em que passaram em
+   `repository.checks_proven_sha` e o resultado de cada um em `repository.checks_proven`. Quando nenhum
+   passa, os checks salvos ficam como estavam. Depois de salvar, o doctor examina o repositório de novo,
+   para o `checks_parity` do relatório guardado falar dos checks novos. `GET` na mesma rota devolve a
+   última prova (`proving`, `done` ou `failed` com o motivo, quando o sandbox ou o clone falhou); uma prova
+   que continua `proving` depois de 100 minutos aparece como `failed`, porque o job que a rodava morreu.
+   Uma prova pedida enquanto outra roda a substitui, e o resultado da antiga é descartado.
+
+   O formulário de ajustes continua salvando o que o dono digita, sem provar nada. A resposta do
+   `PUT /api/panel/repositories/<dono>/<nome>` traz `unprovenChecks`, com os nomes dos checks salvos que
+   nenhuma prova rodou, e a listagem traz o mesmo campo, `checksProvenSha` e `checksProof` por repositório.
+   Um check deixado como estava mantém a prova; um digitado ou alterado (nome ou comando) a perde. O painel
+   ainda não mostra nada disso: por enquanto são as rotas, que a tela de onboarding vai chamar.
+
 5. **Planejar.** Em Plans, o dono escolhe o repositório e escreve o objetivo. Um agente lê o repositório
    num sandbox (sem escrever nada) e devolve até dez issues independentes, cada uma com critérios de
    aceite. O dono edita os títulos e as descrições, tira ou reordena itens e decide: "Create issues"

@@ -201,9 +201,11 @@ describe('the repositories page', () => {
 
     expect(await saveRepository(deps(), 'paulo/app', { harness: 'codex' })).toEqual({
       fullName: 'Paulo/App',
+      unprovenChecks: [],
     })
     expect(await saveRepository(deps(), 'paulo/app', { enabled: false })).toEqual({
       fullName: 'Paulo/App',
+      unprovenChecks: [],
     })
     expect(before).toBe(1)
     expect(examined()).toBe(1)
@@ -304,6 +306,107 @@ describe('the repositories page', () => {
     repo().prepare()
     await saveRepository(deps(), 'paulo/app', { harness: 'codex' })
     expect(created()).toEqual([])
+  })
+
+  describe('checks the owner types', () => {
+    const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
+    const LINT = { name: 'lint', command: 'npm run lint' }
+    const UNIT = { name: 'unit', command: 'pnpm test' }
+    const passed = (check: typeof LINT) => ({
+      ...check,
+      status: 'passed' as const,
+      exitCode: 0,
+      durationMs: 5,
+      output: '',
+    })
+    /** A repository whose two checks a proof ran and saved. */
+    const proven = async () => {
+      await saveRepository(deps(), 'paulo/app', { checks: [LINT, UNIT] })
+      await getDb()
+        .update(repository)
+        .set({ checksProvenSha: SHA, checksProven: [passed(LINT), passed(UNIT)] })
+    }
+    const listed = async () => (await listRepositories(deps())).repositories[0]
+
+    it('are saved as typed, and the answer names each as not proven', async () => {
+      const answer = await saveRepository(deps(), 'paulo/app', {
+        checks: [LINT, { name: 'unit', command: ' pnpm test ' }],
+      })
+
+      expect(answer).toEqual({ fullName: 'Paulo/App', unprovenChecks: ['lint', 'unit'] })
+      const [row] = await getDb().select().from(repository)
+      expect(row).toMatchObject({ checks: [LINT, UNIT], checksProvenSha: null, checksProven: [] })
+      expect(await listed()).toMatchObject({
+        checks: [LINT, UNIT],
+        checksProvenSha: null,
+        unprovenChecks: ['lint', 'unit'],
+        checksProof: null,
+      })
+    })
+
+    it('stay proven when the form sends them back as they were', async () => {
+      await proven()
+
+      const answer = await saveRepository(deps(), 'paulo/app', {
+        checks: [LINT, UNIT],
+        harness: 'codex',
+      })
+
+      expect(answer.unprovenChecks).toEqual([])
+      expect(await listed()).toMatchObject({ checksProvenSha: SHA, unprovenChecks: [] })
+    })
+
+    it('lose the proof of the one the owner changed, and keep the others', async () => {
+      await proven()
+
+      const answer = await saveRepository(deps(), 'paulo/app', {
+        checks: [LINT, { name: 'unit', command: 'pnpm test --all' }],
+      })
+
+      expect(answer.unprovenChecks).toEqual(['unit'])
+      const [row] = await getDb().select().from(repository)
+      expect(row.checksProvenSha).toBe(SHA)
+      expect(row.checksProven.map((c) => c.name)).toEqual(['lint'])
+    })
+
+    it('keep their proof through a save that says nothing about checks', async () => {
+      await proven()
+
+      const answer = await saveRepository(deps(), 'paulo/app', { askQuestions: false })
+
+      expect(answer.unprovenChecks).toEqual([])
+      const [row] = await getDb().select().from(repository)
+      expect(row).toMatchObject({ checksProvenSha: SHA, checks: [LINT, UNIT] })
+      expect(row.checksProven).toHaveLength(2)
+    })
+
+    it('forget the proof when the owner clears them', async () => {
+      await proven()
+
+      const answer = await saveRepository(deps(), 'paulo/app', { checks: null })
+
+      expect(answer.unprovenChecks).toEqual([])
+      const [row] = await getDb().select().from(repository)
+      expect(row).toMatchObject({ checks: null, checksProvenSha: null, checksProven: [] })
+    })
+
+    it('are listed with the last proof, and one whose job died is shown as failed', async () => {
+      await proven()
+      const proof = {
+        fullName: 'Paulo/App',
+        status: 'proving' as const,
+        at: '2026-11-01T00:00:00.000Z',
+        checks: [LINT],
+        sha: null,
+        limitMs: 900_000,
+        results: [],
+        saved: [],
+        error: null,
+      }
+      await getDb().update(repository).set({ checksProof: proof })
+
+      expect((await listed()).checksProof).toMatchObject({ status: 'failed', checks: [LINT] })
+    })
   })
 
   it('does not prepare a repository that stays disabled', async () => {

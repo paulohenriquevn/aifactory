@@ -384,6 +384,56 @@ export type RepositoryView = {
   harness: string | null
   reviewer: string | null
   releaseMode: 'manual' | 'trial' | 'auto' | null
+  /** The commit of the integration branch the proven checks passed on; null when none was proven. */
+  checksProvenSha: string | null
+  /** The names of the saved checks that no proof ran: the owner typed them, and the first task tries them. */
+  unprovenChecks: string[]
+  /** The last proof of proposed checks, running or finished; null when none was asked for. */
+  checksProof: ChecksProof | null
+}
+
+/**
+ * How one proposed check did on the head of the integration branch. `too_slow` is a check that was still
+ * running at its time limit: it did not fail, and no run could wait for it either.
+ */
+export type ProvenCheck = {
+  name: string
+  command: string
+  status: 'passed' | 'failed' | 'too_slow'
+  exitCode: number
+  durationMs: number
+  /** The tail of what the command printed. */
+  output: string
+}
+
+/**
+ * One proof of proposed checks, from the request to its end. `proving` has no results yet; `done` has one
+ * for each check, and `saved` names the ones that passed and were stored; `failed` is a proof that could
+ * not run (no sandbox, no clone), with the reason.
+ */
+export type ChecksProof = {
+  fullName: string
+  status: 'proving' | 'done' | 'failed'
+  /** When it was asked for. */
+  at: string
+  /** What was proposed. */
+  checks: { name: string; command: string }[]
+  /** The commit the checks ran on; null until the sandbox has the repository. */
+  sha: string | null
+  /** How long one check may take in a run, which is what `too_slow` was measured against. */
+  limitMs: number
+  results: ProvenCheck[]
+  saved: string[]
+  error: string | null
+}
+
+/** What saving a repository answers with. */
+export type RepositorySaved = {
+  fullName: string
+  /** The doctor's report, when the save enabled the repository. */
+  doctor?: DoctorReport
+  /** The names of the saved checks that no proof ran. */
+  unprovenChecks: string[]
 }
 
 /** A project's `.factory/setup.json` on its default branch, and which of its domains wait for the owner. */

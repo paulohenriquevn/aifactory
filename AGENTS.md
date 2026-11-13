@@ -48,7 +48,7 @@ src/server/         backend — never leaves the machine
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
   factory/          one task end to end: sandbox, agent, push, stage history; the repository doctor
   github/           GitHub App auth (repository-scoped tokens) and issue reads
-  jobs/             defineJob files; `run-task` runs a task
+  jobs/             defineJob files; `run-task` runs a task, `prove-checks` proves proposed checks
   routes/           file-based HTTP
 src/shared/         contracts both sides import (`panel.ts` is what the panel API returns)
 .theokit/           agent context read at runtime (no rebuild)
@@ -109,6 +109,12 @@ reads that file, not a convention.
   read, and its item is `unknown` with what was tried. A new diagnosis is a new item function and a new
   fact, listed in `DOCTOR_ITEMS`. The doctor asks GitHub only for what the App's permissions allow, and
   `repairRepository` does only what the App can do (create a branch, create the label).
+- **Only a proof stores a check as proven.** `proveChecks` in `factory/prove-checks.ts` runs proposed checks
+  on the head of the integration branch, all in one sandbox that it always stops, and the `prove-checks` job
+  saves only the ones that passed, with the commit (`repository.checks_proven_sha`, `checks_proven`). A check
+  cut at its limit is `too_slow`, never `failed`. The settings form saves what the owner types and answers
+  with `unprovenChecks`. No agent runs in that sandbox, which is why it opens no knowledge feed
+  (`NO_AGENT` in `every-agent.test.ts`): a file listed there may not mention a harness.
 - **Every text box in the panel has an `<Assist>`.** `src/app/every-box.test.ts` fails when a file with a
   textarea has none. The premise is that the owner never has to be a programmer.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;

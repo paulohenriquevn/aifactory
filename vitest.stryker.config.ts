@@ -41,6 +41,7 @@ export default defineConfig({
       'src/server/factory/plan.test.ts',
       'src/server/factory/branches.test.ts',
       'src/server/factory/doctor.test.ts',
+      'src/server/factory/prove-checks.test.ts',
       'src/server/factory/docker-sandbox.test.ts',
       'src/server/factory/e2b-reattach.test.ts',
       'src/server/factory/e2b-sandbox.test.ts',
