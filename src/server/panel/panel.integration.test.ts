@@ -19,6 +19,7 @@ import {
   task,
   watch,
   releaseWait,
+  TASK_STAGES,
 } from '../db/schema'
 import { COLUMNS } from '../../shared/panel'
 import { FakeGithub } from '../../test/fake-github'
@@ -33,6 +34,7 @@ import {
   requestChanges,
   resolveElsewhere,
   retry,
+  retryAutomatically,
   sendBackAutomatically,
   type ActionDeps,
 } from './actions'
@@ -412,6 +414,127 @@ describe('actions', () => {
     await expect(approve(deps(), running)).rejects.toThrow(ActionRefused)
     await expect(approve(deps(), 999)).rejects.toThrow(/does not exist/)
   })
+
+  // Each case seeds a task in every stage, several times over: more than the default five seconds on a busy machine.
+  describe(
+    'what each action answers for a task it does not take, word for word',
+    { timeout: 60_000 },
+    () => {
+      /** Runs `action` on a task in every stage and gives the refusal of each one that was refused. */
+      async function refusals(
+        fields: Partial<typeof task.$inferInsert>,
+        action: (id: number) => Promise<unknown>,
+      ) {
+        const said: Record<string, string> = {}
+        for (const stage of TASK_STAGES) {
+          const id = await seed(stage, fields)
+          const refusal = await action(id).then(
+            () => undefined,
+            (error: unknown) => error,
+          )
+          if (refusal === undefined) continue
+          expect(refusal, stage).toBeInstanceOf(ActionRefused)
+          said[stage] = (refusal as Error).message
+        }
+        return said
+      }
+      const inEvery = (stages: readonly string[], message: string) =>
+        Object.fromEntries(stages.map((stage) => [stage, message]))
+      const except = (...taken: string[]) => TASK_STAGES.filter((stage) => !taken.includes(stage))
+
+      it('approve', async () => {
+        const no = 'only a task with a pull request can be approved'
+        expect(await refusals({ headSha: 'abc' }, (id) => approve(deps(), id))).toEqual(
+          inEvery(except('done', 'handoff'), no),
+        )
+        expect(await refusals({}, (id) => approve(deps(), id))).toEqual(inEvery(TASK_STAGES, no))
+      })
+
+      it('request changes', async () => {
+        const no = 'only a task with a pull request can be sent back'
+        const integrated =
+          'this work is already integrated, so there is no pull request to send back: open a new job for what should change'
+        expect(await refusals({}, (id) => requestChanges(deps(), id, 'Rename it.'))).toEqual(
+          inEvery(except('done', 'handoff'), no),
+        )
+        expect(
+          await refusals({ mergedSha: 'm' }, (id) => requestChanges(deps(), id, 'Rename it.')),
+        ).toEqual({ ...inEvery(TASK_STAGES, no), done: integrated, handoff: integrated })
+      })
+
+      it('retry, and retry from a finding', async () => {
+        const no =
+          'only a failed or handed-over task, or one whose pull request was never merged, can be retried'
+        const settled = inEvery(except('failed', 'handoff'), no)
+        expect(await refusals({}, (id) => retry(deps(), id))).toEqual(
+          inEvery(except('failed', 'handoff', 'done'), no),
+        )
+        expect(await refusals({ mergedSha: 'm' }, (id) => retry(deps(), id))).toEqual(settled)
+        expect(await refusals({ resolvedSha: 'r' }, (id) => retry(deps(), id))).toEqual(settled)
+        expect(
+          await refusals({ mergedSha: 'm' }, (id) => retry(deps(), id, { fromFinding: true })),
+        ).toEqual(inEvery(['plan', 'waiting', 'done', 'released', 'cancelled'], no))
+      })
+
+      it('resolve another way', async () => {
+        expect(
+          await refusals({}, (id) =>
+            resolveElsewhere(
+              { ...deps(), api: { branchHead: async () => 'head1' } as never },
+              id,
+              'Fixed by hand.',
+            ),
+          ),
+        ).toEqual(
+          inEvery(
+            except('failed', 'handoff'),
+            'only a failed or handed-over task can be resolved another way',
+          ),
+        )
+      })
+
+      it('run again on its own', async () => {
+        const no =
+          'only a failed task, or one whose pull request was never merged, runs again on its own'
+        expect(await refusals({}, (id) => retryAutomatically(deps(), id))).toEqual(
+          inEvery(except('failed', 'done'), no),
+        )
+        for (const fields of [{ mergedSha: 'm' }, { resolvedSha: 'r' }]) {
+          expect(await refusals(fields, (id) => retryAutomatically(deps(), id))).toEqual(
+            inEvery(except('failed'), no),
+          )
+        }
+      })
+
+      it('send back on its own', async () => {
+        const no = 'only work that waits for the repository checks is sent back on its own'
+        expect(
+          await refusals({ awaitingCiSha: 'abc' }, (id) => sendBackAutomatically(deps(), id, 'n')),
+        ).toEqual(inEvery(except('done'), no))
+        expect(await refusals({}, (id) => sendBackAutomatically(deps(), id, 'n'))).toEqual(
+          inEvery(TASK_STAGES, no),
+        )
+      })
+
+      it('release', async () => {
+        const unfinished = 'only a finished task with a pull request can be released'
+        const released = 'this task was already released'
+        const all = { ...inEvery(TASK_STAGES, unfinished), released }
+        const release = (id: number) => releaseTask(deps(), id, 'patch')
+        expect(await refusals({}, release)).toEqual(all)
+        expect(await refusals({ mergedSha: 'm' }, release)).toEqual(all)
+        expect(await refusals({ headSha: 'abc' }, release)).toEqual({
+          ...all,
+          done: 'this work was not integrated: its pull request is still waiting to be merged into the integration branch, so it is not on the pre-release branch',
+        })
+        // Integrated work passes what the stage decides; the next refusal is about what was delivered.
+        expect(await refusals({ headSha: 'abc', mergedSha: 'm' }, release)).toEqual({
+          ...all,
+          done: 'there is no pre-release for this work',
+        })
+      })
+    },
+  )
 
   it("sends work whose required checks failed back to its agent, on its branch, in nobody's name", async () => {
     const id = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' })

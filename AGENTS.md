@@ -161,6 +161,11 @@ reads that file, not a convention.
   points. A new step is a new method, not a branch inside another. The same step goes into
   `src/server/evals/run-case.ts`, which runs evaluation cases along the factory's path without pushing:
   without it, the suite measures a factory that no longer exists.
+- **Whether a stage allows an event is asked of `factory/transitions.ts`.** The table there declares the
+  outcome of every pair of stage and event: the action, `ignored` or `refused`, with the reason a person
+  reads. A panel action or a cron that checks a stage calls `outcome()` instead of comparing stages itself,
+  and a new stage or event gets a row for every pair, which the types and a test require. Events nothing
+  acts on yet are listed in `NOT_WIRED`.
 - **Commits carry no co-author trailer.**
 - **Validate at the boundary.** A route validates input with Zod once, then trusts it.
 - **Side effects get a human.** A tool that touches the real world is gated with `.approval(...)`

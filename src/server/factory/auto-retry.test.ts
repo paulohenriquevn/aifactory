@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { AUTOMATIC_RETRIES, rerunsAfterConflict, retryAt } from './auto-retry'
+import { rerunsAfterConflict, retryAt } from './auto-retry'
+import { AUTOMATIC_RETRIES } from './transitions'
 
 const failedAt = new Date('2026-11-06T00:13:00Z')
 const iso = (d: Date | null) => d?.toISOString() ?? null

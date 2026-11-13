@@ -106,6 +106,14 @@ describe('a failure that passes by itself', () => {
     expect(retryableFailure({ error: 'x', blockedBy: 'o/a#1' })).toBeNull()
   })
 
+  it('reads a sandbox provider that refuses for billing as the environment, not as the work', () => {
+    expect(
+      retryableFailure({ error: 'the sandbox did not start: 403: team is blocked: spend_limit' }),
+    ).toBe('environment')
+    expect(retryableFailure({ error: '403: team is blocked: spend_limit' })).toBe('environment')
+    expect(retryableFailure({ error: 'GitHub answered 403 reading the issue' })).toBeNull()
+  })
+
   it('leaves with a person an agent that used all its time, and still retries a command of the environment that timed out', () => {
     expect(
       retryableFailure({

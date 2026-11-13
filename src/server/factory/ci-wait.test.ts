@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { CheckReport, PullRequestDetail } from '../github/pulls'
 
-import { AUTOMATIC_RETRIES } from './auto-retry'
+import { AUTOMATIC_RETRIES } from './transitions'
 import { CI_SILENCE_MS, checksFeedback, decideWaitingIntegration, readRequired } from './ci-wait'
 
 const VERIFIED = 'abc1234def'

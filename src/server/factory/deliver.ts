@@ -21,6 +21,7 @@ import { addedChangesets, usesChangesets } from './changesets'
 import { highestVersion, nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
 import { shipContained } from './ship'
 import { enterStage } from './stages'
+import { outcome } from './transitions'
 
 /** How the factory treats a release (the promotion), as opposed to the pre-release it always makes. */
 export type ReleaseMode =
@@ -178,18 +179,13 @@ export async function release(
 ): Promise<ReleaseResult> {
   const [row] = await deps.db.select().from(task).where(eq(task.id, taskId))
   if (!row) throw new ReleaseRefused(`task ${taskId} does not exist`)
-  if (row.stage === 'released') throw new ReleaseRefused('this task was already released')
-  if (row.stage !== 'done' || !row.headSha) {
-    throw new ReleaseRefused('only a finished task with a pull request can be released')
-  }
-  if (!row.mergedSha) {
-    throw new ReleaseRefused(
-      'this work was not integrated: its pull request is still waiting to be merged into the integration branch, so it is not on the pre-release branch',
-    )
-  }
+  const allowed = outcome(row, 'release')
+  if (allowed.kind !== 'action') throw new ReleaseRefused(allowed.reason)
+  // Only integrated work with a commit is released.
+  const headSha = row.headSha!
   const pre = await latestPreRelease(deps.db, taskId)
   if (!pre) throw new ReleaseRefused('there is no pre-release for this work')
-  const checks = await latestChecks(deps.db, taskId, row.headSha)
+  const checks = await latestChecks(deps.db, taskId, headSha)
   if (checks.length === 0 || checks.some((c) => !c.passed)) {
     throw new ReleaseRefused('the checks are not green on this commit')
   }
