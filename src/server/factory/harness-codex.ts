@@ -175,7 +175,8 @@ export function codexHarness(
 
     ...(credential.kind === 'subscription' && {
       async reauthorize(backend: SandboxBackend): Promise<EgressRule[]> {
-        const refusedToken = login?.accessToken ?? ''
+        // Another instance may have prepared the sandbox (same name), so this one reads the token in use.
+        const refusedToken = (login ?? (await subscriptionLogin())!).accessToken
         login = await renewCodexLogin(refusedToken, {
           env: { FACTORY_CODEX_HOME: credential.home },
           ...(io.fetch ? { fetch: io.fetch as typeof fetch } : {}),

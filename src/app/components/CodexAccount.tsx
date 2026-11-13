@@ -61,13 +61,15 @@ export function CodexAccount({ onChanged }: { onChanged: () => void }) {
 
   if (!conn) return null
   const { account, login } = conn
+  // A sign-in that worked earlier says nothing once the provider refuses the login: the card shows why.
+  const refused = login.status === 'done' && !account.connected
 
   return (
     <section
       aria-label="Trocar a conta do Codex"
       className="rounded-lg border border-border bg-card p-3 text-sm"
     >
-      {login.status === 'idle' ? (
+      {login.status === 'idle' || refused ? (
         <div className="flex flex-wrap items-center gap-3">
           <p className="min-w-0 flex-1 text-muted-foreground">
             {account.connected
@@ -106,7 +108,7 @@ export function CodexAccount({ onChanged }: { onChanged: () => void }) {
         </p>
       ) : null}
 
-      {login.status === 'done' ? (
+      {login.status === 'done' && !refused ? (
         <div className="space-y-2">
           <p role="status" className="text-foreground">
             Pronto: a fábrica já usa a conta nova

@@ -113,4 +113,14 @@ describe('changing the Codex account from the panel', () => {
     mount()
     expect((await screen.findByRole('alert')).textContent).toBe('HTTP 502')
   })
+
+  it('says the login was refused after a sign-in that had worked', async () => {
+    api.get.mockResolvedValue({
+      account: { connected: false, problem: 'Codex refused the login: connect Codex again' },
+      login: { status: 'done' },
+    })
+    mount()
+    expect(await screen.findByText(/não pode ser usado: Codex refused the login/)).toBeTruthy()
+    expect(screen.queryByText(/Pronto: a fábrica já usa a conta nova/)).toBeNull()
+  })
 })

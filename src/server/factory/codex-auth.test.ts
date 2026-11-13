@@ -261,6 +261,25 @@ describe('a login the provider refused', () => {
     expect(login.accessToken).toBe(replacement)
   })
 
+  it('is connected again when the next ordinary refresh succeeds after a failed forced one', async () => {
+    const env = newHome()
+    writeCliLogin(env, refusedAccess)
+    markCodexRefused('HTTP 401', env)
+    await expect(
+      renewCodexLogin(refusedAccess, { env, fetch: refusing, now: () => NOW }),
+    ).rejects.toThrow(CodexLoginError)
+    expect(codexAccount(env)).toMatchObject({ connected: false })
+
+    const fetch = answering({
+      access_token: accessExpiring(10 * 86_400_000),
+      refresh_token: 'rotated',
+      expires_in: 864_000,
+    })
+    await freshCodexLogin({ env, fetch, now: () => NOW })
+
+    expect(codexAccount(env)).toMatchObject({ connected: true })
+  })
+
   it('is not shown as connected until it is renewed or signed in again', async () => {
     const env = newHome()
     writeCliLogin(env, refusedAccess)

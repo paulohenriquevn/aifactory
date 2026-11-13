@@ -242,6 +242,29 @@ describe('codexHarness', () => {
     expect(sandbox.backend.commands.some((c) => c.includes('chmod 600'))).toBe(true)
   })
 
+  it('renews the token a separate reviewer instance never read itself, not an empty one', async () => {
+    // Builder and reviewer share a name, so only the builder is prepared and asked for its egress.
+    const home = loginDir(5 * 24 * 3600)
+    const old = JSON.parse(readFileSync(join(home, 'auth.json'), 'utf8')).tokens.access_token
+    const answer = { access_token: 'renewed-access', refresh_token: 'r2', expires_in: 864_000 }
+    const fetch = (async () =>
+      new Response(JSON.stringify(answer))) as unknown as typeof globalThis.fetch
+    const io = { now: () => NOW, fetch: fetch as never }
+    const builder = codexHarness({ kind: 'subscription', home }, io)
+    const reviewer = codexHarness({ kind: 'subscription', home }, io)
+    const sandbox = new FakeSandbox(() => ({ stdout: done }))
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+    expect(await builder.egress()).toEqual([
+      { domain: 'chatgpt.com', headers: { authorization: `Bearer ${old}` } },
+    ])
+
+    const rules = await reviewer.reauthorize!(backend)
+
+    expect(rules).toEqual([
+      { domain: 'chatgpt.com', headers: { authorization: 'Bearer renewed-access' } },
+    ])
+  })
+
   it('stops when codex does not install', async () => {
     const harness = codexHarness({ kind: 'api-key', secret: 'k' })
     const sandbox = new FakeSandbox((c) =>

@@ -179,7 +179,8 @@ export async function freshCodexLogin(
   // The ID token and the account are in the file, not in what the refresh returns.
   const current = readStoredOAuth(CODEX_STORE, env)
   if (!current) throw new CodexLoginError('the renewed Codex login was not found in its store')
-  if (deps.refused !== undefined) clearCodexRefusal(env)
+  // A renewal that replaced the token the file held ends a refusal, whoever started it.
+  if (deps.refused !== undefined || current.access !== stored.access) clearCodexRefusal(env)
   return loginOf(current, env)
 }
 
