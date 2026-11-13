@@ -18,6 +18,7 @@ import type { ComponentType } from 'react'
 import { Link, useNavigate } from 'react-router'
 
 import type { GuideId } from '../../../shared/guides'
+import { useCopy } from '../../lib/copy'
 
 import { ACTIVE, useOnNewChat, usePlace } from './active'
 
@@ -76,17 +77,18 @@ export function Rail({
   name: string
   onSignOut: () => void
 }) {
+  const { t } = useCopy()
   const navigate = useNavigate()
   const onNewChat = useOnNewChat()
   return (
     <aside
-      aria-label="Menu recolhido"
+      aria-label={t.menu.folded}
       className="flex h-full w-[52px] shrink-0 flex-col items-center border-r border-border bg-card py-2.5"
     >
       <button
         type="button"
-        aria-label="Mostrar o menu"
-        title="Mostrar o menu"
+        aria-label={t.menu.show}
+        title={t.menu.show}
         onClick={() => onExpand()}
         className={`group ${button} mb-1`}
       >
@@ -97,8 +99,8 @@ export function Rail({
       <div className="flex flex-col items-center gap-1">
         <button
           type="button"
-          aria-label="Novo chat"
-          title="Novo chat"
+          aria-label={t.menu.newChat}
+          title={t.menu.newChat}
           onClick={() => void navigate('/', { state: { fresh: Date.now() } })}
           aria-current={onNewChat ? 'page' : undefined}
           className={`${button} ${onNewChat ? ACTIVE : ''}`}
@@ -107,8 +109,8 @@ export function Rail({
         </button>
         <button
           type="button"
-          aria-label="Buscar conversas"
-          title="Buscar conversas"
+          aria-label={t.menu.searchChats}
+          title={t.menu.searchChats}
           onClick={() => onExpand(true)}
           className={button}
         >
@@ -116,8 +118,8 @@ export function Rail({
         </button>
         <button
           type="button"
-          aria-label="Fixados"
-          title="Fixados"
+          aria-label={t.menu.pinned}
+          title={t.menu.pinned}
           onClick={() => onExpand()}
           className={button}
         >
@@ -125,8 +127,8 @@ export function Rail({
         </button>
         <button
           type="button"
-          aria-label="Conversas"
-          title="Conversas"
+          aria-label={t.menu.chats}
+          title={t.menu.chats}
           onClick={() => onExpand()}
           className={button}
         >
@@ -135,16 +137,21 @@ export function Rail({
       </div>
 
       <nav
-        aria-label="Principal"
+        aria-label={t.menu.main}
         className="mt-3 flex flex-col items-center gap-1 border-t border-border pt-3"
       >
-        <Place id="board" to="/work" icon={LayoutDashboard} label="Quadro" />
-        <Place id="plans" to="/plans" icon={ListChecks} label="Planos" />
-        <Place id="repositories" to="/repositories" icon={FolderGit2} label="Repositórios" />
-        <Place id="inbox" to="/inbox" icon={Inbox} label="Caixa de entrada" dot={waiting > 0} />
-        <Place id="health" to="/health" icon={HeartPulse} label="Saúde" dot={wrong > 0} />
-        <Place id="agents" to="/agents" icon={Bot} label="Agentes" />
-        <Place id="setup" to="/setup" icon={Settings2} label="Configuração" />
+        <Place id="board" to="/work" icon={LayoutDashboard} label={t.places.board} />
+        <Place id="plans" to="/plans" icon={ListChecks} label={t.places.plans} />
+        <Place
+          id="repositories"
+          to="/repositories"
+          icon={FolderGit2}
+          label={t.places.repositories}
+        />
+        <Place id="inbox" to="/inbox" icon={Inbox} label={t.places.inbox} dot={waiting > 0} />
+        <Place id="health" to="/health" icon={HeartPulse} label={t.places.health} dot={wrong > 0} />
+        <Place id="agents" to="/agents" icon={Bot} label={t.places.agents} />
+        <Place id="setup" to="/setup" icon={Settings2} label={t.places.setup} />
       </nav>
 
       <div className="mt-auto">
@@ -152,7 +159,7 @@ export function Rail({
           <DropdownMenu.Trigger asChild>
             <button
               type="button"
-              aria-label="Conta"
+              aria-label={t.menu.account}
               title={name}
               className="grid size-9 place-items-center rounded-full hover:bg-muted/60"
             >
@@ -162,7 +169,7 @@ export function Rail({
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="start" side="right" className="min-w-40">
-            <DropdownMenu.Item onSelect={onSignOut}>Sair</DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={onSignOut}>{t.menu.signOut}</DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu>
       </div>

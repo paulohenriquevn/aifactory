@@ -12,6 +12,7 @@ import { Sidebar } from './components/shell/Sidebar'
 import { inWork, TopBar } from './components/shell/TopBar'
 import { post } from './lib/api'
 import { ChatsProvider } from './lib/chats'
+import { CopyProvider, useCopy } from './lib/copy'
 import { GuideProvider } from './lib/guide-state'
 import { useResource } from './lib/live'
 
@@ -41,6 +42,15 @@ function useMenuHidden(): [boolean, (hidden: boolean) => void] {
 
 /** The frame of every page: the menu on the left, the bar on top, and the way to the login. */
 export default function RootLayout() {
+  return (
+    <CopyProvider>
+      <Shell />
+    </CopyProvider>
+  )
+}
+
+function Shell() {
+  const { t } = useCopy()
   const location = useLocation()
   const navigate = useNavigate()
   const onLogin = location.pathname === '/login'
@@ -75,7 +85,7 @@ export default function RootLayout() {
                   }}
                   waiting={inbox.data?.items.length ?? 0}
                   wrong={health.data?.findings.length ?? 0}
-                  name={me.data?.name ?? 'dono'}
+                  name={me.data?.name ?? t.layout.ownerName}
                   onSignOut={signOut}
                 />
               ) : (
@@ -87,8 +97,8 @@ export default function RootLayout() {
                   startSearching={searchOnOpen}
                   waiting={inbox.data?.items.length ?? 0}
                   wrong={health.data?.findings.length ?? 0}
-                  name={me.data?.name ?? 'dono'}
-                  plan="dono da fábrica"
+                  name={me.data?.name ?? t.layout.ownerName}
+                  plan={t.layout.ownerRole}
                   onSignOut={signOut}
                 />
               )
@@ -103,7 +113,7 @@ export default function RootLayout() {
                 ) : signedIn || onLogin ? (
                   <Outlet />
                 ) : (
-                  <p className="p-6 text-sm text-muted-foreground">Carregando…</p>
+                  <p className="p-6 text-sm text-muted-foreground">{t.layout.loading}</p>
                 )}
               </main>
             </div>

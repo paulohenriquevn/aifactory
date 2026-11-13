@@ -1,0 +1,58 @@
+import type { Copy } from './en'
+
+/** The panel's text in Brazilian Portuguese. Typed against English: a missing or extra key does not compile. */
+export const ptBR: Copy = {
+  layout: {
+    loading: 'Carregando…',
+    ownerName: 'dono',
+    ownerRole: 'dono da fábrica',
+  },
+  places: {
+    board: 'Quadro',
+    plans: 'Planos',
+    repositories: 'Repositórios',
+    inbox: 'Caixa de entrada',
+    health: 'Saúde',
+    agents: 'Agentes',
+    setup: 'Configuração',
+  },
+  menu: {
+    label: 'Menu',
+    folded: 'Menu recolhido',
+    main: 'Principal',
+    show: 'Mostrar o menu',
+    hide: 'Recolher o menu',
+    newChat: 'Novo chat',
+    searchChats: 'Buscar conversas',
+    searchInChats: 'Buscar nas conversas',
+    pinned: 'Fixados',
+    recent: 'Recentes',
+    chats: 'Conversas',
+    noneFound: 'Nenhuma conversa encontrada',
+    noneYet: 'Nenhuma conversa ainda',
+    account: 'Conta',
+    signOut: 'Sair',
+  },
+  chatRow: {
+    name: 'Nome da conversa',
+    options: (title) => `Opções de ${title}`,
+    pin: 'Fixar',
+    unpin: 'Desafixar',
+    rename: 'Renomear',
+    remove: 'Apagar',
+    confirmRemove: (title) => `Apagar "${title}"?`,
+  },
+  topBar: {
+    part: 'Parte do app',
+    chat: 'Chat',
+    work: 'Work',
+    guide: 'Guia',
+    openGuide: (name) => `Abrir o ${name}`,
+    closeGuide: (name) => `Fechar o ${name}`,
+    lightTheme: 'Tema claro',
+    darkTheme: 'Tema escuro',
+    language: 'Idioma',
+    switchLanguage: 'Switch to English',
+    languageName: 'Português',
+  },
+}

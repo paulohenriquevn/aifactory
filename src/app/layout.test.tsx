@@ -4,6 +4,11 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import RootLayout from './layout'
+import { en } from './lib/copy/en'
+import { ptBR } from './lib/copy/pt-BR'
+
+// The expected text comes from the dictionary of the language the test runs in.
+let t = ptBR
 
 type Calls = { url: string; method: string; csrf?: string }[]
 
@@ -61,7 +66,11 @@ function renderAt(path: string) {
   )
 }
 
-beforeEach(() => window.localStorage.clear())
+beforeEach(() => {
+  window.localStorage.clear()
+  window.localStorage.setItem('aifactory.language', 'pt-BR')
+  t = ptBR
+})
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
@@ -72,20 +81,20 @@ describe('the layout', () => {
     serve(signedIn)
     renderAt('/')
     await waitFor(() => expect(screen.getByText('the chat')).toBeDefined())
-    expect(screen.getByRole('link', { name: 'Novo chat' })).toBeDefined()
-    expect(screen.getByRole('link', { name: 'Quadro' }).getAttribute('href')).toBe('/work')
+    expect(screen.getByRole('link', { name: t.menu.newChat })).toBeDefined()
+    expect(screen.getByRole('link', { name: t.places.board }).getAttribute('href')).toBe('/work')
     for (const [name, href] of [
-      ['Planos', '/plans'],
-      ['Repositórios', '/repositories'],
-      ['Agentes', '/agents'],
-      ['Configuração', '/setup'],
+      [t.places.plans, '/plans'],
+      [t.places.repositories, '/repositories'],
+      [t.places.agents, '/agents'],
+      [t.places.setup, '/setup'],
     ]) {
       expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(href)
     }
     await waitFor(() =>
-      expect(screen.getByRole('link', { name: 'Caixa de entrada 2' })).toBeDefined(),
+      expect(screen.getByRole('link', { name: `${t.places.inbox} 2` })).toBeDefined(),
     )
-    expect(screen.getByRole('link', { name: 'Saúde 3' })).toBeDefined()
+    expect(screen.getByRole('link', { name: `${t.places.health} 3` })).toBeDefined()
   })
 
   it('marks the item of the menu the owner is in, and "Novo chat" only on the empty conversation', async () => {
@@ -97,26 +106,34 @@ describe('the layout', () => {
         .getAllByRole('link')
         .filter((l) => l.getAttribute('aria-current') === 'page')
         .map((l) => l.textContent?.replace(/\d+$/, '').trim())
-    expect(current()).toEqual(['Novo chat'])
-    fireEvent.click(screen.getByRole('link', { name: 'Quadro' }))
+    expect(current()).toEqual([t.menu.newChat])
+    fireEvent.click(screen.getByRole('link', { name: t.places.board }))
     await waitFor(() => expect(screen.getByText('the board')).toBeDefined())
-    expect(current()).toEqual(['Quadro'])
-    fireEvent.click(screen.getByRole('link', { name: /Caixa de entrada/ }))
+    expect(current()).toEqual([t.places.board])
+    fireEvent.click(screen.getByRole('link', { name: new RegExp(t.places.inbox) }))
     await waitFor(() => expect(screen.getByText('the inbox')).toBeDefined())
-    expect(current()).toEqual(['Caixa de entrada'])
+    expect(current()).toEqual([t.places.inbox])
   })
 
   it('keeps a page inside a place under it: a task is still on the board, a conversation is no place', async () => {
     serve(signedIn)
     renderAt('/tasks/7')
     await waitFor(() => expect(screen.getByText('a task')).toBeDefined())
-    expect(screen.getByRole('link', { name: 'Quadro' }).getAttribute('aria-current')).toBe('page')
-    expect(screen.getByRole('link', { name: 'Novo chat' }).getAttribute('aria-current')).toBeNull()
+    expect(screen.getByRole('link', { name: t.places.board }).getAttribute('aria-current')).toBe(
+      'page',
+    )
+    expect(
+      screen.getByRole('link', { name: t.menu.newChat }).getAttribute('aria-current'),
+    ).toBeNull()
     cleanup()
     renderAt('/chat/b')
     await waitFor(() => expect(screen.getByText('a chat')).toBeDefined())
-    expect(screen.getByRole('link', { name: 'Quadro' }).getAttribute('aria-current')).toBeNull()
-    expect(screen.getByRole('link', { name: 'Novo chat' }).getAttribute('aria-current')).toBeNull()
+    expect(
+      screen.getByRole('link', { name: t.places.board }).getAttribute('aria-current'),
+    ).toBeNull()
+    expect(
+      screen.getByRole('link', { name: t.menu.newChat }).getAttribute('aria-current'),
+    ).toBeNull()
     const row = await screen.findByRole('link', { name: 'Outra' })
     expect(row.getAttribute('aria-current')).toBe('page')
     expect(row.parentElement?.className).toContain('font-medium')
@@ -126,8 +143,8 @@ describe('the layout', () => {
     serve(signedIn)
     renderAt('/')
     await waitFor(() => expect(screen.getByRole('link', { name: 'Fixa' })).toBeDefined())
-    expect(screen.getByText('Fixados')).toBeDefined()
-    expect(screen.getByText('Recentes')).toBeDefined()
+    expect(screen.getByText(t.menu.pinned)).toBeDefined()
+    expect(screen.getByText(t.menu.recent)).toBeDefined()
     expect(screen.getByRole('link', { name: 'Outra' }).getAttribute('href')).toBe('/chat/b')
   })
 
@@ -135,26 +152,26 @@ describe('the layout', () => {
     serve(signedIn)
     renderAt('/')
     await waitFor(() => expect(screen.getByRole('link', { name: 'Outra' })).toBeDefined())
-    fireEvent.click(screen.getByRole('button', { name: 'Buscar conversas' }))
-    fireEvent.change(screen.getByLabelText('Buscar nas conversas'), { target: { value: 'out' } })
+    fireEvent.click(screen.getByRole('button', { name: t.menu.searchChats }))
+    fireEvent.change(screen.getByLabelText(t.menu.searchInChats), { target: { value: 'out' } })
     expect(screen.queryByRole('link', { name: 'Fixa' })).toBeNull()
     expect(screen.getByRole('link', { name: 'Outra' })).toBeDefined()
-    fireEvent.change(screen.getByLabelText('Buscar nas conversas'), { target: { value: 'zzz' } })
-    expect(screen.getByText('Nenhuma conversa encontrada')).toBeDefined()
+    fireEvent.change(screen.getByLabelText(t.menu.searchInChats), { target: { value: 'zzz' } })
+    expect(screen.getByText(t.menu.noneFound)).toBeDefined()
   })
 
   it('folds the menu into a strip of icons, remembers it, and brings the menu back', async () => {
     serve(signedIn)
     renderAt('/')
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Quadro' })).toBeDefined())
-    fireEvent.click(screen.getByRole('button', { name: 'Recolher o menu' }))
-    expect(screen.queryByRole('complementary', { name: 'Menu' })).toBeNull()
-    expect(screen.getByRole('complementary', { name: 'Menu recolhido' })).toBeDefined()
-    expect(screen.queryByText('Recentes')).toBeNull()
+    await waitFor(() => expect(screen.getByRole('link', { name: t.places.board })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: t.menu.hide }))
+    expect(screen.queryByRole('complementary', { name: t.menu.label })).toBeNull()
+    expect(screen.getByRole('complementary', { name: t.menu.folded })).toBeDefined()
+    expect(screen.queryByText(t.menu.recent)).toBeNull()
     expect(window.localStorage.getItem('aifactory.menu.hidden')).toBe('1')
-    fireEvent.click(screen.getByRole('button', { name: 'Mostrar o menu' }))
-    expect(screen.getByRole('complementary', { name: 'Menu' })).toBeDefined()
-    expect(screen.getByText('Recentes')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: t.menu.show }))
+    expect(screen.getByRole('complementary', { name: t.menu.label })).toBeDefined()
+    expect(screen.getByText(t.menu.recent)).toBeDefined()
     expect(window.localStorage.getItem('aifactory.menu.hidden')).toBe('0')
   })
 
@@ -163,10 +180,10 @@ describe('the layout', () => {
     serve(signedIn)
     renderAt('/')
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Buscar conversas' })).toBeDefined(),
+      expect(screen.getByRole('button', { name: t.menu.searchChats })).toBeDefined(),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Buscar conversas' }))
-    expect(screen.getByLabelText('Buscar nas conversas')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: t.menu.searchChats }))
+    expect(screen.getByLabelText(t.menu.searchInChats)).toBeDefined()
   })
 
   it('starts as a strip when the owner left the menu folded, and a plain return of the menu has no search box', async () => {
@@ -174,17 +191,21 @@ describe('the layout', () => {
     serve(signedIn)
     renderAt('/')
     await waitFor(() => expect(screen.getByText('the chat')).toBeDefined())
-    expect(screen.getByRole('complementary', { name: 'Menu recolhido' })).toBeDefined()
-    fireEvent.click(screen.getByRole('button', { name: 'Mostrar o menu' }))
-    expect(screen.queryByLabelText('Buscar nas conversas')).toBeNull()
+    expect(screen.getByRole('complementary', { name: t.menu.folded })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: t.menu.show }))
+    expect(screen.queryByLabelText(t.menu.searchInChats)).toBeNull()
   })
 
   it('has two tabs, and the second one is selected on the pages of the factory', async () => {
     serve(signedIn)
     renderAt('/inbox')
     await waitFor(() => expect(screen.getByText('the inbox')).toBeDefined())
-    expect(screen.getByRole('tab', { name: 'Work' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('tab', { name: t.topBar.work }).getAttribute('aria-selected')).toBe(
+      'true',
+    )
+    expect(screen.getByRole('tab', { name: t.topBar.chat }).getAttribute('aria-selected')).toBe(
+      'false',
+    )
   })
 
   it('sends someone who is not signed in to the login, and shows no menu', async () => {
@@ -195,8 +216,8 @@ describe('the layout', () => {
     })
     renderAt('/')
     await waitFor(() => expect(screen.getByText('the login')).toBeDefined())
-    expect(screen.queryByRole('link', { name: 'Quadro' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Conta' })).toBeNull()
+    expect(screen.queryByRole('link', { name: t.places.board })).toBeNull()
+    expect(screen.queryByRole('button', { name: t.menu.account })).toBeNull()
   })
 
   it('shows the login itself without bouncing, and shows loading until it knows who is there', async () => {
@@ -210,16 +231,16 @@ describe('the layout', () => {
       vi.fn(() => new Promise(() => {})),
     )
     renderAt('/')
-    expect(screen.getByText('Carregando…')).toBeDefined()
+    expect(screen.getByText(t.layout.loading)).toBeDefined()
   })
 
   it('signs out through the server, with the header it asks for, and goes to the login', async () => {
     const calls = serve(signedIn)
     renderAt('/inbox')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Conta' })).toBeDefined())
+    await waitFor(() => expect(screen.getByRole('button', { name: t.menu.account })).toBeDefined())
 
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Conta' }), { key: 'Enter' })
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Sair' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: t.menu.account }), { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: t.menu.signOut }))
 
     await waitFor(() => expect(calls.some((c) => c.url === '/api/panel/logout')).toBe(true))
     expect(calls.find((c) => c.url === '/api/panel/logout')).toMatchObject({
@@ -227,5 +248,31 @@ describe('the layout', () => {
       csrf: '1',
     })
     await waitFor(() => expect(screen.getByText('the login')).toBeDefined())
+  })
+
+  it('shows the menu in English and in pt-BR, with the items of each', async () => {
+    for (const [language, copy] of [
+      ['en', en],
+      ['pt-BR', ptBR],
+    ] as const) {
+      window.localStorage.setItem('aifactory.language', language)
+      serve(signedIn)
+      renderAt('/')
+      await waitFor(() => expect(screen.getByText('the chat')).toBeDefined())
+      for (const name of Object.values(copy.places))
+        expect(screen.getByRole('link', { name: new RegExp(name) })).toBeDefined()
+      expect(screen.getByRole('link', { name: copy.menu.newChat })).toBeDefined()
+      cleanup()
+    }
+  })
+
+  it('switches the language from the top bar, and the menu changes with it', async () => {
+    serve(signedIn)
+    renderAt('/')
+    await waitFor(() => expect(screen.getByRole('link', { name: ptBR.places.board })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: ptBR.topBar.switchLanguage }))
+    expect(screen.getByRole('link', { name: en.places.board })).toBeDefined()
+    expect(screen.queryByRole('link', { name: ptBR.places.board })).toBeNull()
+    expect(window.localStorage.getItem('aifactory.language')).toBe('en')
   })
 })
