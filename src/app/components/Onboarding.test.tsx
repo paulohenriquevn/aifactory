@@ -179,6 +179,21 @@ describe('the onboarding', () => {
   it.each([
     ['en', en],
     ['pt-BR', ptBR],
+  ] as const)('says the state of each step to a screen reader in %s', async (language, copy) => {
+    window.localStorage.setItem(LANGUAGE_KEY, language)
+    serve({ setup: setupReady, repos: view(repo('me/app')) })
+    mount()
+    await screen.findByRole('textbox', { name: copy.onboarding.choose.search })
+    const steps = [...document.querySelectorAll('[data-slot="stepper-label"]')].map(
+      (el) => el.textContent,
+    )
+    expect(steps[0]).toContain(copy.onboarding.stepState.done)
+    expect(steps[2]).toContain(copy.onboarding.stepState.pending)
+  })
+
+  it.each([
+    ['en', en],
+    ['pt-BR', ptBR],
   ] as const)('writes the step titles in %s', async (language, copy) => {
     window.localStorage.setItem(LANGUAGE_KEY, language)
     serve({ setup: setupNot, repos: view() })

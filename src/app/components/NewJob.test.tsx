@@ -3,7 +3,9 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RepositoriesView } from '../../shared/panel'
+import { CopyProvider, LANGUAGE_KEY } from '../lib/copy'
 import { en } from '../lib/copy/en'
+import { ptBR } from '../lib/copy/pt-BR'
 
 import { NewJob } from './NewJob'
 
@@ -52,5 +54,24 @@ describe('the new job dialog while it reads the repositories', () => {
     open()
     expect(await screen.findByText('GitHub is down')).toBeTruthy()
     expect(screen.queryByText(en.newJob.loading)).toBeNull()
+  })
+})
+
+describe('the close button of the new job dialog', () => {
+  afterEach(() => window.localStorage.clear())
+
+  it.each([
+    ['en', en],
+    ['pt-BR', ptBR],
+  ] as const)('is named in %s', (language, copy) => {
+    window.localStorage.setItem(LANGUAGE_KEY, language)
+    api.get.mockReturnValue(new Promise(() => {}))
+    render(
+      <CopyProvider>
+        <NewJob onCreated={vi.fn()} />
+      </CopyProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: copy.newJob.open }))
+    expect(screen.getByRole('button', { name: copy.newJob.close })).toBeTruthy()
   })
 })

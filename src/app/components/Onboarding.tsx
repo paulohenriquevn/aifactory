@@ -204,7 +204,12 @@ export function Onboarding() {
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
       <h1 className="text-xl font-semibold">{t.onboarding.title}</h1>
-      <Stepper label={t.onboarding.stepsLabel} steps={steps} orientation="horizontal" />
+      <Stepper
+        label={t.onboarding.stepsLabel}
+        steps={steps}
+        orientation="horizontal"
+        stateLabels={t.onboarding.stepState}
+      />
       <div className="flex gap-2">
         {STEP_IDS.map((id, i) =>
           complete[i] && i !== shown ? (

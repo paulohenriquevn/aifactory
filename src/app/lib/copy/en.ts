@@ -141,6 +141,7 @@ export const en = {
     bodyField: 'What should it do, and how will you know it works?',
     startNow: 'Start now',
     create: 'Create job',
+    close: 'Close',
   },
   task: {
     loading: 'Loading…',
@@ -276,6 +277,7 @@ export const en = {
     title: 'Get started',
     stepsLabel: 'Steps to turn a repository on',
     reopen: 'Review this step',
+    stepState: { done: 'completed', failed: 'failed', pending: 'not started' },
     steps: {
       connect: 'Connect GitHub',
       choose: 'Choose a repository',

@@ -141,6 +141,7 @@ export const ptBR: Copy = {
     bodyField: 'O que ele deve fazer, e como você vai saber que funcionou?',
     startNow: 'Começar agora',
     create: 'Criar trabalho',
+    close: 'Fechar',
   },
   task: {
     loading: 'Carregando…',
@@ -360,6 +361,7 @@ export const ptBR: Copy = {
     title: 'Primeiros passos',
     stepsLabel: 'Passos para ligar um repositório',
     reopen: 'Rever este passo',
+    stepState: { done: 'concluído', failed: 'falhou', pending: 'não iniciado' },
     steps: {
       connect: 'Conectar o GitHub',
       choose: 'Escolher um repositório',
