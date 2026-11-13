@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, promotionFinding, repository, task } from '../db/schema'
+import { FakeGithub } from '../../test/fake-github'
 import type { GithubApp } from '../github/app'
 import type { NewIssue } from '../github/issues-api'
 import type { FailedRun, PromotionApi } from '../github/promotion-api'
@@ -34,7 +35,9 @@ type World = {
 }
 let world: World
 let created: (NewIssue & { repo: string })[]
-let comments: { number: number; body: string }[]
+let github: FakeGithub
+/** The comments the factory made, each with the issue it went to. */
+const comments = () => github.answered('commentOnIssue').map(([number, body]) => ({ number, body }))
 let reruns: number[]
 
 const actionsRun = (id: number, name: string): FailedRun => ({
@@ -58,7 +61,7 @@ beforeEach(async () => {
     issueOpen: true,
   }
   created = []
-  comments = []
+  github = new FakeGithub()
   reruns = []
 })
 
@@ -87,13 +90,7 @@ function deps(overrides: Partial<PromotionWatchDeps> = {}): PromotionWatchDeps {
     db: getDb(),
     app,
     api,
-    github: {
-      defaultBranch: async () => 'main',
-      commentOnIssue: async (_repo, _token, number, body) => {
-        comments.push({ number, body })
-        return 'https://github.com/paulo/app/issues/50#c'
-      },
-    },
+    github,
     issues: {
       ensureLabel: async () => {},
       createIssue: async (repo, _token, issue) => {
@@ -197,7 +194,7 @@ describe('the promotion watch', () => {
     await pollPromotions(deps())
     const second = await pollPromotions(deps())
     expect(created).toHaveLength(1)
-    expect(comments).toEqual([])
+    expect(comments()).toEqual([])
     expect(second.opened).toEqual([])
   })
 
@@ -206,9 +203,9 @@ describe('the promotion watch', () => {
     world.head = 'sha0002bbbb'
     const result = await pollPromotions(deps())
     expect(created).toHaveLength(1)
-    expect(comments).toHaveLength(1)
-    expect(comments[0].number).toBe(51)
-    expect(comments[0].body).toContain('`sha0002`')
+    expect(comments()).toHaveLength(1)
+    expect(comments()[0].number).toBe(51)
+    expect(comments()[0].body).toContain('`sha0002`')
     expect(result.commented).toEqual(['paulo/app#51'])
   })
 
@@ -240,7 +237,7 @@ describe('the promotion watch', () => {
       await taskFor(51, 'merged0fix')
       world.head = 'sha0002bbbb'
       const result = await pollPromotions(deps())
-      expect(comments).toEqual([])
+      expect(comments()).toEqual([])
       expect(created).toHaveLength(2)
       expect(created[1].labels).toEqual(['factory'])
       expect(created[1].body).toContain('#51 (https://github.com/paulo/app/issues/51)')
@@ -274,7 +271,7 @@ describe('the promotion watch', () => {
       world.head = 'sha0002bbbb'
       const result = await pollPromotions(deps({ maxNewIssuesPerRepository: 0 }))
       expect(created).toHaveLength(1)
-      expect(comments).toEqual([])
+      expect(comments()).toEqual([])
       expect(result.capped).toBe(1)
       const [row] = await getDb().select().from(promotionFinding)
       expect(row).toMatchObject({ issueNumber: 51, lastSha: 'sha0001aaaa' })

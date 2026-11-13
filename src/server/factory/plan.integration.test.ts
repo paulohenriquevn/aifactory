@@ -7,7 +7,7 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { plan, planItem } from '../db/schema'
 
-import { FakeBranches } from '../../test/fake-branches'
+import { FakeGithub } from '../../test/fake-github'
 
 import { FakeSandbox } from './fake-sandbox'
 import type { CodingHarness, HarnessResult } from './harness'
@@ -53,14 +53,21 @@ function agent(result: HarnessResult | (() => never)) {
   return harness
 }
 
+/** A GitHub where the repository already has the integration and pre-release branches. */
+const prepared = () => {
+  const api = new FakeGithub()
+  api.repo('paulo/app').prepare()
+  return api
+}
+
 const deps = (
   harness: CodingHarness & { labels: string[][] },
   sandbox = new FakeSandbox(),
-  branches = FakeBranches.prepared(),
+  api = prepared(),
 ): PlanDeps => ({
   db: getDb(),
   github,
-  api: branches.api,
+  api,
   sandbox,
   harness: (labels) => {
     harness.labels.push(labels)
@@ -110,11 +117,11 @@ describe('runPlan', () => {
   it('reads the integration branch, creating it and the pre-release branch when the repository has none', async () => {
     const id = await newPlan()
     const sandbox = new FakeSandbox()
-    const branches = new FakeBranches()
+    const api = new FakeGithub()
 
-    await runPlan(deps(agent(answer(planned)), sandbox, branches), id)
+    await runPlan(deps(agent(answer(planned)), sandbox, api), id)
 
-    expect(branches.created).toEqual(['workspace', 'develop'])
+    expect(api.answered('createBranch').map(([branch]) => branch)).toEqual(['workspace', 'develop'])
     expect(sandbox.backend.commands.some((c) => /checkout .*workspace/.test(c))).toBe(true)
     const [row] = await getDb().select().from(plan).where(eq(plan.id, id))
     expect(row.status).toBe('ready')

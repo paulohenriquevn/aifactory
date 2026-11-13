@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, repository, stageEvent, task } from '../db/schema'
+import { FakeGithub } from '../../test/fake-github'
 
 import { catchUpResolved, resolvedCatchUp } from './resolved-release'
 
@@ -20,19 +21,22 @@ beforeEach(async () => {
 })
 afterAll(() => getStorageManager().dispose())
 
-/** GitHub as the catch-up sees it: which commits each release branch holds. */
+/** GitHub as the catch-up sees it: which commits each release branch holds, keyed `owner/name:branch`. */
 function fakeGithub(onBranch: Record<string, string[]>) {
-  const compared: string[] = []
+  const api = new FakeGithub()
+  for (const [key, shas] of Object.entries(onBranch)) {
+    const [repo, branch] = key.split(':')
+    api.repo(repo).holds(branch, shas)
+  }
   return {
-    compared,
-    app: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
-    api: {
-      defaultBranch: async () => 'main',
-      async contains(repo: string, _token: string, descendant: string, ancestor: string) {
-        compared.push(`${repo}:${ancestor}...${descendant}`)
-        return (onBranch[`${repo}:${descendant}`] ?? []).includes(ancestor)
-      },
+    /** The comparisons asked for, as `owner/name:ancestor...descendant`. */
+    get compared() {
+      return api
+        .recorded('contains')
+        .map(({ repo, args: [descendant, ancestor] }) => `${repo}:${ancestor}...${descendant}`)
     },
+    app: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
+    api,
   }
 }
 
@@ -196,15 +200,14 @@ describe('catchUpResolved', () => {
     const broken = await resolved('paulo/gone', 1, 'aaa111')
     const fine = await resolved('paulo/app', 2, 'aaa111')
     const gh = fakeGithub({ 'paulo/app:main': ['aaa111'] })
-    const api = {
-      ...gh.api,
-      async contains(repo: string, token: string, descendant: string, ancestor: string) {
-        if (repo === 'paulo/gone') throw new Error('404 comparing aaa111 with main on paulo/gone')
-        return gh.api.contains(repo, token, descendant, ancestor)
-      },
-    }
+    gh.api.before('contains', ({ repo }) => {
+      if (repo === 'paulo/gone') throw new Error('404 comparing aaa111 with main on paulo/gone')
+    })
 
-    const result = await catchUpResolved({ db: getDb(), app: gh.app, api }, { after: 0, limit: 10 })
+    const result = await catchUpResolved(
+      { db: getDb(), app: gh.app, api: gh.api },
+      { after: 0, limit: 10 },
+    )
 
     expect(result.released).toEqual([fine])
     expect(result.errors).toEqual([

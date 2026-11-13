@@ -7,16 +7,8 @@ import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { delivery, ingress, publication, repository, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
-import type {
-  ChangedFile,
-  CommitChecks,
-  ReleaseInput,
-  GithubApi,
-  OpenPullRequest,
-  PublishedRelease,
-  PullRequestMerge,
-  PullRequestState,
-} from '../github/pulls'
+import { FakeGithub, type FakePullRequest } from '../../test/fake-github'
+import type { ChangedFile, CommitChecks, OpenPullRequest, PublishedRelease } from '../github/pulls'
 
 import { pollPublications } from './publish'
 
@@ -32,152 +24,73 @@ const green: CommitChecks = {
   statuses: 'none',
 }
 
-/** GitHub as the publication step sees it, scripted per test. */
-const gh = {
-  versionPr: undefined as PullRequestState | undefined,
-  /** The open pull requests GitHub answers for a head and a base. */
-  open: [] as OpenPullRequest[],
-  checks: green,
-  published: [] as PublishedRelease[],
-  /** Commits that are not in the promoted history. */
-  outside: new Set<string>(),
-  merges: [] as { number: number; sha: string; merge: PullRequestMerge }[],
-  asked: [] as string[],
-  comments: [] as { issue: number; body: string }[],
-  closed: [] as number[],
-  /** What the promotion brought to the release branch, as the comparison with its first parent lists it. */
-  changed: [] as ChangedFile[],
-  /** The files on the promoted commit, with what each holds. */
-  tree: {} as Record<string, string>,
-  /** The `v` tags the repository has. */
-  versionTags: [] as string[],
-  /** The releases the factory created. */
-  created: [] as ReleaseInput[],
-  /** The comparisons asked for, as `base...head`. */
-  compared: [] as string[],
-  /** The commits whose checks were read. */
-  checksRead: [] as string[],
-  /** The version branch changesets pushes, as its comparison with the release branch reads. */
-  versionBranch: undefined as { sha: string; aheadBy: number; committedAt: Date } | undefined,
-  /** The branch comparisons asked for, as `base...head`. */
-  branchesRead: [] as string[],
-  /** The pull requests the factory opened. */
-  opened: [] as { head: string; base?: string; title: string; body: string }[],
-  /** When GitHub says the Version Packages pull request merged. */
-  versionMergedAt: STARTED,
-  /**
-   * What the Version Packages merge (`version-merge`) changed: each file as it was on its first parent and
-   * as the merge left it.
-   */
-  versionFiles: {} as Record<string, { before?: string; after: string }>,
-}
+const REPO = 'usetheokit/ui'
 const VERSION_MERGE = 'version-merge'
+/** The commits whose checks the publication step reads: the heads it may merge, and the promotion. */
+const CHECKED = ['version-head', 'promoted1', 'main-head']
+
+/** GitHub as the publication step sees it. */
+let api = new FakeGithub()
+const repo = () => api.repo(REPO)
+
+/** Sets what the checks say on every commit the step reads: these runs and nothing else. */
+const checks = (seen: CommitChecks) => {
+  for (const sha of CHECKED) {
+    repo().clearChecks(sha)
+    for (const run of seen.checkRuns) repo().checkRun(sha, run)
+  }
+}
+/** Sets the full releases the repository has published. */
+const releasesAre = (...list: PublishedRelease[]) => {
+  repo().releases.length = 0
+  for (const release of list) repo().release(release)
+}
+/** Sets the open pull requests GitHub holds besides the Version Packages one. */
+const open = (...list: OpenPullRequest[]) => {
+  for (const pull of list) repo().pullRequest(pull)
+}
+/**
+ * Sets what the Version Packages merge (`version-merge`) changed: each file as it was on its first parent
+ * and as the merge left it.
+ */
+const versionFiles = (files: Record<string, { before: string; after: string }>) => {
+  const side = (pick: 'before' | 'after') =>
+    Object.fromEntries(Object.entries(files).map(([path, f]) => [path, f[pick]]))
+  repo().files(`${VERSION_MERGE}^`, side('before')).files(VERSION_MERGE, side('after'))
+}
+const merges = () =>
+  api.callsTo('mergePullRequest').map(([number, sha, merge]) => ({ number, sha, merge }))
+/** The pull requests GitHub was asked for: by head, and as `head -> base` for the open ones. */
+const asked = () =>
+  api.calls.flatMap((call) => {
+    if (call.method === 'findPullRequest') return [call.args[0]]
+    if (call.method === 'openPullRequestsBetween') return [`${call.args[0]} -> ${call.args[1]}`]
+    return []
+  })
+const comments = () => api.answered('commentOnIssue').map(([issue, body]) => ({ issue, body }))
+const closed = () => api.answered('closeIssue').map(([issue]) => issue)
+/** The releases the factory created. */
+const created = () => api.callsTo('createRelease').map(([release]) => release)
+/** The comparisons asked for, as `base...head`. */
+const compared = () => api.callsTo('changedFiles').map(([base, head]) => `${base}...${head}`)
+/** The commits whose checks were read. */
+const checksRead = () => api.callsTo('commitChecks').map(([sha]) => sha)
+/** The branch comparisons asked for, as `base...head`. */
+const branchesRead = () => api.callsTo('branchAhead').map(([base, head]) => `${base}...${head}`)
+/** The pull requests the factory opened. */
+const opened = () => api.callsTo('openPullRequest').map(([pull]) => pull)
+
 beforeEach(async () => {
   await getPool().query(
     'truncate table repository, publication, watch, delivery, decision, question, review, evidence, stage_event, task, ingress restart identity cascade',
   )
-  Object.assign(gh, {
-    versionPr: undefined,
-    open: [],
-    checks: green,
-    published: [],
-    outside: new Set<string>(),
-    merges: [],
-    asked: [],
-    comments: [],
-    closed: [],
-    changed: [],
-    tree: {},
-    versionTags: [],
-    created: [],
-    compared: [],
-    checksRead: [],
-    versionBranch: undefined,
-    branchesRead: [],
-    opened: [],
-    versionMergedAt: STARTED,
-    versionFiles: {},
-  })
+  api = new FakeGithub()
+  // GitHub merges at the moment of the promotion, and the next pull request it opens is #1975.
+  api.now = () => STARTED
+  repo().prepare().nextNumber = 1975
+  checks(green)
 })
 
-const api = {
-  findPullRequest: async (_repo: string, _token: string, head: string) => {
-    gh.asked.push(head)
-    return gh.versionPr
-  },
-  openPullRequestsBetween: async (_repo: string, _token: string, head: string, base: string) => {
-    gh.asked.push(`${head} -> ${base}`)
-    return gh.open
-  },
-  commitChecks: async (_repo: string, _token: string, sha: string) => {
-    gh.checksRead.push(sha)
-    return gh.checks
-  },
-  changedFiles: async (_repo: string, _token: string, base: string, head: string) => {
-    gh.compared.push(`${base}...${head}`)
-    if (head !== VERSION_MERGE) return gh.changed
-    return Object.keys(gh.versionFiles).map((path) => ({ path, status: 'modified' }))
-  },
-  filePaths: async () => Object.keys(gh.tree),
-  readFile: async (_repo: string, _token: string, path: string, ref: string) => {
-    if (ref === VERSION_MERGE) return gh.versionFiles[path]?.after
-    if (ref === `${VERSION_MERGE}^`) return gh.versionFiles[path]?.before
-    return gh.tree[path]
-  },
-  readPullRequest: async (_repo: string, _token: string, number: number) => ({
-    number,
-    url: `https://github.com/usetheokit/ui/pull/${number}`,
-    state: 'closed',
-    merged: true,
-    mergeCommitSha: VERSION_MERGE,
-    mergedAt: gh.versionMergedAt,
-    headSha: 'version-head',
-    autoMerge: false,
-    mergeableState: 'unknown',
-  }),
-  versionTags: async () => gh.versionTags,
-  createRelease: async (_repo: string, _token: string, release: ReleaseInput) => {
-    gh.created.push(release)
-    return {
-      id: gh.created.length,
-      tag: release.tag,
-      url: `https://github.com/usetheokit/ui/releases/tag/${release.tag}`,
-    }
-  },
-  mergePullRequest: async (
-    _repo: string,
-    _token: string,
-    number: number,
-    sha: string,
-    merge: PullRequestMerge,
-  ) => {
-    gh.merges.push({ number, sha, merge })
-    return { sha: 'version-merge' }
-  },
-  releasesSince: async (_repo: string, _token: string, since: Date) =>
-    gh.published.filter((r) => r.publishedAt >= since),
-  contains: async (_repo: string, _token: string, _descendant: string, ancestor: string) =>
-    !gh.outside.has(ancestor),
-  commentOnIssue: async (_repo: string, _token: string, issue: number, body: string) => {
-    gh.comments.push({ issue, body })
-    return 'c'
-  },
-  closeIssue: async (_repo: string, _token: string, issue: number) => {
-    gh.closed.push(issue)
-  },
-  branchAhead: async (_repo: string, _token: string, base: string, head: string) => {
-    gh.branchesRead.push(`${base}...${head}`)
-    return gh.versionBranch
-  },
-  openPullRequest: async (
-    _repo: string,
-    _token: string,
-    pull: { head: string; base?: string; title: string; body: string },
-  ) => {
-    gh.opened.push(pull)
-    return { number: 1975, url: 'https://github.com/usetheokit/ui/pull/1975' }
-  },
-} as unknown as GithubApi
 const github: GithubApp = { installationToken: async () => ({ token: 't', expiresAt: new Date() }) }
 /** A minute after the promotion: the release workflow has had no time to run. */
 const SOON = new Date(STARTED.getTime() + 60_000)
@@ -232,15 +145,16 @@ async function waitingPublication() {
   return released
 }
 
-const versionPr = (fields: Partial<PullRequestState> = {}): PullRequestState => ({
-  number: 180,
-  url: 'https://github.com/usetheokit/ui/pull/180',
-  headSha: 'version-head',
-  draft: false,
-  state: 'open',
-  merged: false,
-  ...fields,
-})
+/** Sets how the Version Packages pull request stands on GitHub. A merged one has its merge commit. */
+const versionPr = (fields: Partial<FakePullRequest> = {}) =>
+  repo().pullRequest({
+    number: 180,
+    headRef: 'changeset-release/main',
+    baseRef: 'main',
+    headSha: 'version-head',
+    ...(fields.merged ? { mergeCommitSha: VERSION_MERGE } : {}),
+    ...fields,
+  })
 const published = (tag: string): PublishedRelease => ({
   tag,
   url: `https://github.com/usetheokit/ui/releases/tag/${encodeURIComponent(tag)}`,
@@ -255,19 +169,19 @@ describe('publishing a changesets release', () => {
     const result = await pollPublications(deps())
 
     expect(result).toMatchObject({ merged: [], published: [], waiting: 1 })
-    expect(gh.asked).toEqual(['changeset-release/main'])
+    expect(asked()).toEqual(['changeset-release/main'])
     expect(await row()).toMatchObject({ status: 'waiting', versionPullRequest: null })
     expect((await row()).detail).toMatch(/no Version Packages pull request yet/)
   })
 
   it('merges the Version Packages pull request once its checks are green, pinned to the head it saw', async () => {
     await waitingPublication()
-    gh.versionPr = versionPr()
+    versionPr()
 
     const result = await pollPublications(deps())
 
     expect(result.merged).toHaveLength(1)
-    expect(gh.merges).toEqual([{ number: 180, sha: 'version-head', merge: { method: 'merge' } }])
+    expect(merges()).toEqual([{ number: 180, sha: 'version-head', merge: { method: 'merge' } }])
     expect(await row()).toMatchObject({ status: 'waiting', versionPullRequest: 180 })
     expect((await row()).detail).toMatch(
       /merged .*#180 for human.*waiting for the release workflow/,
@@ -276,9 +190,9 @@ describe('publishing a changesets release', () => {
 
   it('does not merge while the checks are red, pending or missing, or the pull request is a draft', async () => {
     await waitingPublication()
-    const cases: [PullRequestState, CommitChecks, RegExp][] = [
+    const cases: [Partial<FakePullRequest>, CommitChecks, RegExp][] = [
       [
-        versionPr(),
+        {},
         {
           checkRuns: [{ name: 'CI', status: 'completed', conclusion: 'failure' }],
           statuses: 'none',
@@ -286,26 +200,26 @@ describe('publishing a changesets release', () => {
         /checks failed on .*#180: CI/,
       ],
       [
-        versionPr(),
+        {},
         { checkRuns: [{ name: 'CI', status: 'in_progress', conclusion: null }], statuses: 'none' },
         /not green yet/,
       ],
-      [versionPr(), { checkRuns: [], statuses: 'none' }, /not green yet/],
-      [versionPr({ draft: true }), green, /draft/],
-      [versionPr({ state: 'closed' }), green, /closed without being merged/],
+      [{}, { checkRuns: [], statuses: 'none' }, /not green yet/],
+      [{ draft: true }, green, /draft/],
+      [{ state: 'closed' }, green, /closed without being merged/],
     ]
-    for (const [pr, checks, why] of cases) {
-      gh.versionPr = pr
-      gh.checks = checks
+    for (const [fields, seen, why] of cases) {
+      versionPr(fields)
+      checks(seen)
       expect((await pollPublications(deps())).waiting).toBe(1)
       expect((await row()).detail).toMatch(why)
     }
-    expect(gh.merges).toEqual([])
+    expect(merges()).toEqual([])
   })
 
   it('takes a Version Packages pull request a person merged after the promotion, and ignores an older one', async () => {
     await waitingPublication()
-    gh.versionPr = versionPr({
+    versionPr({
       state: 'closed',
       merged: true,
       mergedAt: new Date('2026-09-25T21:12:10Z'),
@@ -313,14 +227,14 @@ describe('publishing a changesets release', () => {
     await pollPublications(deps())
     expect((await row()).versionPullRequest).toBeNull()
 
-    gh.versionPr = versionPr({
+    versionPr({
       state: 'closed',
       merged: true,
       mergedAt: new Date('2026-11-11T12:10:00Z'),
     })
     await pollPublications(deps())
     expect((await row()).versionPullRequest).toBe(180)
-    expect(gh.merges).toEqual([])
+    expect(merges()).toEqual([])
   })
 
   it('names the published versions, releases every task whose work was promoted, and closes their issues', async () => {
@@ -328,9 +242,9 @@ describe('publishing a changesets release', () => {
     const alsoShipped = await seedTask('done', 'shipped1')
     const notYet = await seedTask('done', 'later1')
     const notIntegrated = await seedTask('done', null)
-    gh.outside.add('later1')
-    gh.versionPr = versionPr()
-    gh.published = [published('@theokit/ui@1.13.0'), published('pre/7-abc'), published('v9.9.9')]
+    repo().unreachable.add('later1')
+    versionPr()
+    releasesAre(published('@theokit/ui@1.13.0'), published('pre/7-abc'), published('v9.9.9'))
 
     const result = await pollPublications(deps())
 
@@ -352,9 +266,13 @@ describe('publishing a changesets release', () => {
     const issueOf = async (id: number) =>
       (await getDb().select().from(task).where(eq(task.id, id)))[0].issueNumber
     const shippedIssues = [await issueOf(released), await issueOf(alsoShipped)].sort()
-    expect(gh.closed.sort()).toEqual(shippedIssues)
-    expect(gh.comments.map((c) => c.issue).sort()).toEqual(shippedIssues)
-    expect(gh.comments[0].body).toContain('Available in `@theokit/ui@1.13.0`')
+    expect(closed().sort()).toEqual(shippedIssues)
+    expect(
+      comments()
+        .map((c) => c.issue)
+        .sort(),
+    ).toEqual(shippedIssues)
+    expect(comments()[0].body).toContain('Available in `@theokit/ui@1.13.0`')
     const events = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, alsoShipped))
     expect(events.at(-1)?.detail).toMatchObject({ tag: '@theokit/ui@1.13.0', actor: 'human' })
   })
@@ -365,9 +283,9 @@ describe('publishing a changesets release', () => {
     const notYet = await seedTask('done', null)
     await getDb().update(task).set({ resolvedSha: 'resolved1' }).where(eq(task.id, carried))
     await getDb().update(task).set({ resolvedSha: 'later2' }).where(eq(task.id, notYet))
-    gh.outside.add('later2')
-    gh.versionPr = versionPr()
-    gh.published = [published('@theokit/ui@1.13.0')]
+    repo().unreachable.add('later2')
+    versionPr()
+    releasesAre(published('@theokit/ui@1.13.0'))
 
     await pollPublications(deps())
 
@@ -388,13 +306,13 @@ describe('publishing a changesets release', () => {
   it('waits for the release workflow after the merge, and does not release anything before it publishes', async () => {
     await waitingPublication()
     const other = await seedTask('done', 'shipped1')
-    gh.versionPr = versionPr()
-    gh.published = [{ ...published('@theokit/ui@1.12.2'), publishedAt: new Date('2026-09-25') }]
+    versionPr()
+    releasesAre({ ...published('@theokit/ui@1.12.2'), publishedAt: new Date('2026-09-25') })
 
     expect((await pollPublications(deps())).waiting).toBe(1)
     expect((await row()).status).toBe('waiting')
     expect((await getDb().select().from(task).where(eq(task.id, other)))[0].stage).toBe('done')
-    expect(gh.closed).toEqual([])
+    expect(closed()).toEqual([])
   })
 
   describe('when the Version Packages merge versioned several packages', () => {
@@ -408,13 +326,12 @@ describe('publishing a changesets release', () => {
       '@theokit/gateway@0.16.1',
     ]
     beforeEach(() => {
-      gh.versionPr = versionPr({
+      versionPr({
         state: 'closed',
         merged: true,
         mergedAt: new Date('2026-11-11T12:10:00Z'),
       })
-      gh.versionMergedAt = new Date('2026-11-11T12:10:00Z')
-      gh.versionFiles = {
+      versionFiles({
         'packages/gateway/package.json': bump('@theokit/gateway', '0.16.0', '0.16.1'),
         'packages/gateway/CHANGELOG.md': { before: '', after: '## 0.16.1' },
         'packages/slack/package.json': bump('@theokit/gateway-slack', '0.5.0', '0.5.1'),
@@ -423,7 +340,7 @@ describe('publishing a changesets release', () => {
           before: '{"name":"demo","version":"0.1.0","private":true}',
           after: '{"name":"demo","version":"0.1.1","private":true}',
         },
-      }
+      })
     })
     /** Twenty minutes after the Version Packages merge: the release workflow may still be publishing. */
     const STILL_RUNNING = new Date('2026-11-11T12:30:00Z')
@@ -433,7 +350,7 @@ describe('publishing a changesets release', () => {
     it('keeps waiting while one of the versioned packages has no release yet', async () => {
       await waitingPublication()
       const other = await seedTask('done', 'shipped1')
-      gh.published = ALL.slice(0, 2).map(published)
+      releasesAre(...ALL.slice(0, 2).map(published))
 
       const result = await pollPublications(deps(STILL_RUNNING))
 
@@ -443,13 +360,13 @@ describe('publishing a changesets release', () => {
         /waiting for the release workflow to publish @theokit\/gateway@0\.16\.1$/,
       )
       expect((await getDb().select().from(task).where(eq(task.id, other)))[0].stage).toBe('done')
-      expect(gh.closed).toEqual([])
-      expect(gh.comments).toEqual([])
+      expect(closed()).toEqual([])
+      expect(comments()).toEqual([])
     })
 
     it('publishes with every tag once each versioned package has its release', async () => {
       await waitingPublication()
-      gh.published = ALL.map(published)
+      releasesAre(...ALL.map(published))
 
       const result = await pollPublications(deps(STILL_RUNNING))
 
@@ -457,12 +374,12 @@ describe('publishing a changesets release', () => {
       expect((await row()).status).toBe('published')
       expect([...((await row()).tags ?? [])].sort()).toEqual([...ALL].sort())
       expect((await row()).detail).not.toMatch(/no release for/)
-      for (const tag of ALL) expect(gh.comments[0].body).toContain(`\`${tag}\``)
+      for (const tag of ALL) expect(comments()[0].body).toContain(`\`${tag}\``)
     })
 
     it('publishes with what exists after the bounded wait, naming the package with no release', async () => {
       await waitingPublication()
-      gh.published = ALL.slice(0, 2).map(published)
+      releasesAre(...ALL.slice(0, 2).map(published))
 
       const result = await pollPublications(deps(PAST_THE_WAIT))
 
@@ -471,21 +388,20 @@ describe('publishing a changesets release', () => {
       expect((await row()).detail).toMatch(
         /no release for @theokit\/gateway@0\.16\.1 30 minutes after the Version Packages merge/,
       )
-      expect(gh.closed).toHaveLength(1)
+      expect(closed()).toHaveLength(1)
     })
 
     it('records why it cannot tell the releases apart when GitHub names no merge commit for the merged pull request', async () => {
       await waitingPublication()
-      gh.published = ALL.map(published)
-      const noMerge = {
-        ...api,
-        readPullRequest: async (...args: [string, string, number]) => ({
-          ...(await api.readPullRequest(...args)),
-          mergeCommitSha: undefined,
-        }),
-      } as unknown as GithubApi
+      releasesAre(...ALL.map(published))
+      versionPr({
+        state: 'closed',
+        merged: true,
+        mergedAt: new Date('2026-11-11T12:10:00Z'),
+        mergeCommitSha: undefined,
+      })
 
-      const result = await pollPublications({ ...deps(STILL_RUNNING), api: noMerge })
+      const result = await pollPublications(deps(STILL_RUNNING))
 
       expect(result.errors).toEqual([expect.stringMatching(/#180 .*no merge commit/)])
       expect(await row()).toMatchObject({ status: 'waiting' })
@@ -495,8 +411,8 @@ describe('publishing a changesets release', () => {
   it('releases each task once, when a pass that already published runs again', async () => {
     await waitingPublication()
     await seedTask('done', 'shipped1')
-    gh.versionPr = versionPr()
-    gh.published = [published('@theokit/ui@1.13.0')]
+    versionPr()
+    releasesAre(published('@theokit/ui@1.13.0'))
     await pollPublications(deps())
     await getDb().update(publication).set({ status: 'waiting' })
 
@@ -505,7 +421,7 @@ describe('publishing a changesets release', () => {
     expect(await getDb().select().from(delivery).where(eq(delivery.kind, 'release'))).toHaveLength(
       2,
     )
-    expect(gh.closed).toHaveLength(2)
+    expect(closed()).toHaveLength(2)
   })
 
   it('publishes and releases every task when one issue cannot be closed, and records why on that task', async () => {
@@ -513,17 +429,13 @@ describe('publishing a changesets release', () => {
     const refusing = await seedTask('done', 'shipped1')
     const refusedIssue = (await getDb().select().from(task).where(eq(task.id, refusing)))[0]
       .issueNumber
-    gh.versionPr = versionPr()
-    gh.published = [published('@theokit/ui@1.13.0')]
-    const failing = {
-      ...api,
-      closeIssue: async (_repo: string, _token: string, issue: number) => {
-        if (issue === refusedIssue) throw new Error(`GitHub answered 403 closing #${issue}`)
-        gh.closed.push(issue)
-      },
-    } as unknown as GithubApi
+    versionPr()
+    releasesAre(published('@theokit/ui@1.13.0'))
+    api.fail('closeIssue', new Error(`GitHub answered 403 closing #${refusedIssue}`), {
+      when: (issue) => issue === refusedIssue,
+    })
 
-    const result = await pollPublications({ ...deps(), api: failing })
+    const result = await pollPublications(deps())
 
     expect(result.published).toHaveLength(1)
     expect(result.errors).toEqual([])
@@ -541,14 +453,12 @@ describe('publishing a changesets release', () => {
 
   it('records why a publication cannot go on, and keeps looking at the others', async () => {
     await waitingPublication()
-    const broken = {
-      ...api,
-      findPullRequest: async () => {
-        throw new Error('GitHub answered 502 listing pull requests of usetheokit/ui')
-      },
-    } as unknown as GithubApi
+    api.fail(
+      'findPullRequest',
+      new Error('GitHub answered 502 listing pull requests of usetheokit/ui'),
+    )
 
-    const result = await pollPublications({ ...deps(), api: broken })
+    const result = await pollPublications(deps())
 
     expect(result.errors).toEqual([expect.stringMatching(/502/)])
     expect((await row()).detail).toMatch(/502/)
@@ -562,13 +472,16 @@ describe('a publication whose release run finished without a Version Packages pu
   const modified = (path: string): ChangedFile => ({ path, status: 'modified' })
   /** theokit-plugins after #269: the promotion changed CI and the changelog, no package. */
   function promotionOutsidePackages() {
-    gh.changed = [modified('.github/workflows/ci.yml'), modified('CHANGELOG.md')]
-    gh.tree = {
+    repo().compare('promoted1^', 'promoted1', [
+      modified('.github/workflows/ci.yml'),
+      modified('CHANGELOG.md'),
+    ])
+    repo().files('promoted1', {
       'package.json': '{"name":"theokit-plugins","private":true}',
       '.changeset/config.json': '{"ignore":[]}',
       'packages/voice/package.json': '{"name":"@theokit/plugin-voice"}',
-    }
-    gh.versionTags = ['v0.2.0', 'v0.3.0']
+    })
+    for (const tag of ['v0.2.0', 'v0.3.0']) repo().tags.add(tag)
   }
   const stageOf = async (id: number) =>
     (await getDb().select().from(task).where(eq(task.id, id)))[0].stage
@@ -576,11 +489,11 @@ describe('a publication whose release run finished without a Version Packages pu
     (await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, id))).at(-1)
 
   it('ends as the factory release of the promoted commit when the promotion changes no package changesets publishes', async () => {
-    const asked = await waitingPublication()
+    const askedFor = await waitingPublication()
     const contained = await seedTask('done', 'shipped1')
     promotionOutsidePackages()
     // Version Packages #250 merged before this promotion: it belongs to the earlier release.
-    gh.versionPr = versionPr({
+    versionPr({
       number: 250,
       state: 'closed',
       merged: true,
@@ -590,21 +503,21 @@ describe('a publication whose release run finished without a Version Packages pu
     const result = await pollPublications(deps(LATER))
 
     expect(result).toMatchObject({ published: [expect.any(Number)], waiting: 0, errors: [] })
-    expect(gh.checksRead).toEqual(['promoted1'])
-    expect(gh.compared).toEqual(['promoted1^...promoted1'])
-    expect(gh.created).toEqual([
+    expect(checksRead()).toEqual(['promoted1'])
+    expect(compared()).toEqual(['promoted1^...promoted1'])
+    expect(created()).toEqual([
       expect.objectContaining({ tag: 'v0.3.1', sha: 'promoted1', prerelease: false }),
     ])
     expect(await row()).toMatchObject({ status: 'published', tags: ['v0.3.1'] })
     expect((await row()).detail).toMatch(
       /release workflow finished on promote without a Version Packages pull request.*v0\.3\.1/,
     )
-    expect(await stageOf(asked)).toBe('released')
+    expect(await stageOf(askedFor)).toBe('released')
     expect(await stageOf(contained)).toBe('released')
-    expect((await lastEvent(asked))?.detail).toMatchObject({ tag: 'v0.3.1', actor: 'human' })
-    expect(gh.closed).toHaveLength(2)
-    expect(gh.comments[0].body).toContain('Available in `v0.3.1`')
-    expect(gh.merges).toEqual([])
+    expect((await lastEvent(askedFor))?.detail).toMatchObject({ tag: 'v0.3.1', actor: 'human' })
+    expect(closed()).toHaveLength(2)
+    expect(comments()[0].body).toContain('Available in `v0.3.1`')
+    expect(merges()).toEqual([])
   })
 
   it('makes one tag: a pass that runs again after the tag was made takes the same version', async () => {
@@ -613,11 +526,11 @@ describe('a publication whose release run finished without a Version Packages pu
     await getDb()
       .update(publication)
       .set({ tags: ['v0.3.1'] })
-    gh.versionTags = ['v0.3.0', 'v0.3.1']
+    repo().tags.add('v0.3.1')
 
     await pollPublications(deps(LATER))
 
-    expect(gh.created.map((r) => r.tag)).toEqual(['v0.3.1'])
+    expect(created().map((r) => r.tag)).toEqual(['v0.3.1'])
     expect(await row()).toMatchObject({ status: 'published', tags: ['v0.3.1'] })
   })
 
@@ -626,44 +539,44 @@ describe('a publication whose release run finished without a Version Packages pu
     promotionOutsidePackages()
 
     expect((await pollPublications(deps())).waiting).toBe(1)
-    expect(gh.checksRead).toEqual([])
+    expect(checksRead()).toEqual([])
     expect((await row()).detail).toMatch(/no Version Packages pull request yet/)
 
-    gh.checks = {
+    checks({
       checkRuns: [{ name: 'Release via Changesets', status: 'in_progress', conclusion: null }],
       statuses: 'none',
-    }
+    })
     expect((await pollPublications(deps(LATER))).waiting).toBe(1)
     expect((await row()).detail).toMatch(/the checks on promote still run/)
 
-    gh.checks = { checkRuns: [], statuses: 'none' }
+    checks({ checkRuns: [], statuses: 'none' })
     expect((await pollPublications(deps(LATER))).waiting).toBe(1)
     expect((await row()).detail).toMatch(/no check has reported on promote\b/)
 
     expect(await row()).toMatchObject({ status: 'waiting', tags: null })
-    expect(gh.created).toEqual([])
+    expect(created()).toEqual([])
   })
 
   it('fails, visibly on its task, when the run on the promoted commit failed', async () => {
-    const asked = await waitingPublication()
+    const askedFor = await waitingPublication()
     promotionOutsidePackages()
-    gh.checks = {
+    checks({
       checkRuns: [
         { name: 'Release via Changesets', status: 'completed', conclusion: 'failure' },
         { name: 'CI', status: 'completed', conclusion: 'success' },
       ],
       statuses: 'none',
-    }
+    })
 
     const result = await pollPublications(deps(LATER))
 
     expect(result).toMatchObject({ failed: [expect.any(Number)], published: [], waiting: 0 })
     expect(await row()).toMatchObject({ status: 'failed' })
     expect((await row()).detail).toMatch(/Release via Changesets failed on promote\b/)
-    expect(gh.created).toEqual([])
-    expect(gh.closed).toEqual([])
-    expect(await stageOf(asked)).toBe('released')
-    expect((await lastEvent(asked))?.detail).toMatchObject({
+    expect(created()).toEqual([])
+    expect(closed()).toEqual([])
+    expect(await stageOf(askedFor)).toBe('released')
+    expect((await lastEvent(askedFor))?.detail).toMatchObject({
       actor: 'human',
       mergeSha: 'promoted1',
       releaseError: expect.stringMatching(/Release via Changesets failed/),
@@ -671,17 +584,17 @@ describe('a publication whose release run finished without a Version Packages pu
   })
 
   it('fails, naming the package, when the promotion changed a package changesets publishes and nothing was published', async () => {
-    const asked = await waitingPublication()
+    const askedFor = await waitingPublication()
     promotionOutsidePackages()
-    gh.changed.push(modified('packages/voice/src/index.ts'))
+    repo().changes('promoted1^', 'promoted1').push(modified('packages/voice/src/index.ts'))
 
     const result = await pollPublications(deps(LATER))
 
     expect(result.failed).toHaveLength(1)
     expect(await row()).toMatchObject({ status: 'failed' })
     expect((await row()).detail).toMatch(/changes @theokit\/plugin-voice/)
-    expect(gh.created).toEqual([])
-    expect((await lastEvent(asked))?.detail).toMatchObject({
+    expect(created()).toEqual([])
+    expect((await lastEvent(askedFor))?.detail).toMatchObject({
       releaseError: expect.stringMatching(/@theokit\/plugin-voice/),
     })
     expect((await pollPublications(deps(LATER))).failed).toEqual([])
@@ -692,15 +605,18 @@ describe('a version branch the release workflow pushed without a pull request', 
   const LATER = new Date(STARTED.getTime() + 60 * 60_000)
   /** A promotion whose package changed: with nothing published, the publication would fail. */
   function promotionOfAPackage() {
-    gh.changed = [{ path: 'packages/ui/src/index.ts', status: 'modified' }]
-    gh.tree = {
+    repo().compare('promoted1^', 'promoted1', [
+      { path: 'packages/ui/src/index.ts', status: 'modified' },
+    ])
+    repo().files('promoted1', {
       'package.json': '{"name":"ui-repo","private":true}',
       '.changeset/config.json': '{"ignore":[]}',
       'packages/ui/package.json': '{"name":"@theokit/ui"}',
-    }
+    })
   }
   const pushed = (committedAt: Date, aheadBy = 1) => {
-    gh.versionBranch = { sha: 'version1', aheadBy, committedAt }
+    repo().heads.set('changeset-release/main', 'version1')
+    repo().ahead('main', 'changeset-release/main', aheadBy, committedAt)
   }
   const afterPromotion = new Date(STARTED.getTime() + 4 * 60_000)
 
@@ -709,7 +625,7 @@ describe('a version branch the release workflow pushed without a pull request', 
     promotionOfAPackage()
     pushed(afterPromotion)
     // Version Packages #250 merged before this promotion: it belongs to the earlier release.
-    gh.versionPr = versionPr({
+    versionPr({
       number: 250,
       state: 'closed',
       merged: true,
@@ -719,8 +635,8 @@ describe('a version branch the release workflow pushed without a pull request', 
     const result = await pollPublications(deps(LATER))
 
     expect(result).toMatchObject({ failed: [], published: [], waiting: 1, errors: [] })
-    expect(gh.branchesRead).toEqual(['main...changeset-release/main'])
-    expect(gh.opened).toEqual([
+    expect(branchesRead()).toEqual(['main...changeset-release/main'])
+    expect(opened()).toEqual([
       expect.objectContaining({
         head: 'changeset-release/main',
         base: 'main',
@@ -732,8 +648,8 @@ describe('a version branch the release workflow pushed without a pull request', 
     expect((await row()).detail).toMatch(
       /opened Version Packages #1975 from changeset-release\/main/,
     )
-    expect(gh.created).toEqual([])
-    expect(gh.merges).toEqual([])
+    expect(created()).toEqual([])
+    expect(merges()).toEqual([])
   })
 
   it('opens it as soon as the branch is there, before the grace window ends', async () => {
@@ -743,7 +659,7 @@ describe('a version branch the release workflow pushed without a pull request', 
     const result = await pollPublications(deps())
 
     expect(result.waiting).toBe(1)
-    expect(gh.opened).toHaveLength(1)
+    expect(opened()).toHaveLength(1)
   })
 
   it('ends the publication as before when there is no version branch and no pull request', async () => {
@@ -753,7 +669,7 @@ describe('a version branch the release workflow pushed without a pull request', 
     const result = await pollPublications(deps(LATER))
 
     expect(result.failed).toHaveLength(1)
-    expect(gh.opened).toEqual([])
+    expect(opened()).toEqual([])
     expect(await row()).toMatchObject({ status: 'failed' })
     expect((await row()).detail).toMatch(/changes @theokit\/ui/)
   })
@@ -766,8 +682,8 @@ describe('a version branch the release workflow pushed without a pull request', 
     const result = await pollPublications(deps(LATER))
 
     expect(result.failed).toHaveLength(1)
-    expect(gh.branchesRead).toEqual(['main...changeset-release/main'])
-    expect(gh.opened).toEqual([])
+    expect(branchesRead()).toEqual(['main...changeset-release/main'])
+    expect(opened()).toEqual([])
     expect(await row()).toMatchObject({ status: 'failed' })
   })
 
@@ -779,8 +695,8 @@ describe('a version branch the release workflow pushed without a pull request', 
     const result = await pollPublications(deps(LATER))
 
     expect(result.failed).toHaveLength(1)
-    expect(gh.branchesRead).toEqual(['main...changeset-release/main'])
-    expect(gh.opened).toEqual([])
+    expect(branchesRead()).toEqual(['main...changeset-release/main'])
+    expect(opened()).toEqual([])
   })
 })
 
@@ -803,29 +719,29 @@ describe('merging the back-merge after a changesets release', () => {
 
   it('merges the open pull request from the release branch into the integration branch, with a merge commit pinned to its head', async () => {
     await publishedRelease()
-    gh.open = [backMerge()]
+    open(backMerge())
 
     const result = await pollPublications(deps())
 
-    expect(gh.asked).toContain('main -> workspace')
-    expect(gh.merges).toEqual([{ number: 1738, sha: 'main-head', merge: { method: 'merge' } }])
+    expect(asked()).toContain('main -> workspace')
+    expect(merges()).toEqual([{ number: 1738, sha: 'main-head', merge: { method: 'merge' } }])
     expect(result.backMerged).toEqual(['usetheokit/ui#1738'])
   })
 
   it('looks for it in the integration branch the owner chose', async () => {
     await publishedRelease()
     await getDb().update(repository).set({ baseBranch: 'next' })
-    gh.open = [backMerge({ baseRef: 'next' })]
+    open(backMerge({ baseRef: 'next' }))
 
     await pollPublications(deps())
 
-    expect(gh.asked).toContain('main -> next')
-    expect(gh.merges).toEqual([{ number: 1738, sha: 'main-head', merge: { method: 'merge' } }])
+    expect(asked()).toContain('main -> next')
+    expect(merges()).toEqual([{ number: 1738, sha: 'main-head', merge: { method: 'merge' } }])
   })
 
   it('leaves it open while its checks fail or run, and merges it on a later pass once they pass', async () => {
     await publishedRelease()
-    gh.open = [backMerge()]
+    open(backMerge())
     const failing: CommitChecks = {
       checkRuns: [{ name: 'CI', status: 'completed', conclusion: 'failure' }],
       statuses: 'none',
@@ -834,51 +750,49 @@ describe('merging the back-merge after a changesets release', () => {
       checkRuns: [{ name: 'CI', status: 'in_progress', conclusion: null }],
       statuses: 'none',
     }
-    for (const checks of [failing, running, { checkRuns: [], statuses: 'none' } as CommitChecks]) {
-      gh.checks = checks
+    for (const seen of [failing, running, { checkRuns: [], statuses: 'none' } as CommitChecks]) {
+      checks(seen)
       expect((await pollPublications(deps())).backMerged).toEqual([])
     }
-    expect(gh.merges).toEqual([])
+    expect(merges()).toEqual([])
 
-    gh.checks = green
+    checks(green)
     expect((await pollPublications(deps())).backMerged).toEqual(['usetheokit/ui#1738'])
   })
 
   it('never merges a draft, a pull request from another head, or one from a fork', async () => {
     await publishedRelease()
-    gh.open = [
+    open(
       backMerge({ draft: true }),
       backMerge({ number: 7, headRef: 'factory/7' }),
       backMerge({ number: 8, headRepo: 'someone/ui' }),
-    ]
+    )
 
     const result = await pollPublications(deps())
 
-    expect(gh.merges).toEqual([])
+    expect(merges()).toEqual([])
     expect(result.backMerged).toEqual([])
   })
 
   it('does not look in a repository that was disabled after its release', async () => {
     await publishedRelease()
     await getDb().update(repository).set({ enabled: false })
-    gh.open = [backMerge()]
+    open(backMerge())
 
     await pollPublications(deps())
 
-    expect(gh.asked).not.toContain('main -> workspace')
-    expect(gh.merges).toEqual([])
+    expect(asked()).not.toContain('main -> workspace')
+    expect(merges()).toEqual([])
   })
 
   it('records why the back-merge could not be looked at, and goes on', async () => {
     await publishedRelease()
-    const broken = {
-      ...api,
-      openPullRequestsBetween: async () => {
-        throw new Error('GitHub answered 502 listing pull requests of usetheokit/ui')
-      },
-    } as unknown as GithubApi
+    api.fail(
+      'openPullRequestsBetween',
+      new Error('GitHub answered 502 listing pull requests of usetheokit/ui'),
+    )
 
-    const result = await pollPublications({ ...deps(), api: broken })
+    const result = await pollPublications(deps())
 
     expect(result.errors).toEqual([expect.stringMatching(/usetheokit\/ui: .*502/)])
   })

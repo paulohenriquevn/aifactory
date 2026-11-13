@@ -1,20 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import type { GithubApi } from '../github/pulls'
+import { FakeGithub } from '../../test/fake-github'
 
 import { publishedPackagesChanged, versionedTags } from './changed-packages'
 
-/** A repository on GitHub: what each file on `head` holds. */
+/** What a fake GitHub was asked to read, as `ref:path`. */
+const readsOf = (api: FakeGithub) => api.callsTo('readFile').map(([path, ref]) => `${ref}:${path}`)
+
+/** A repository on GitHub: what each file on `develop` holds. */
 function repository(files: Record<string, string>) {
-  const reads: string[] = []
-  const api = {
-    filePaths: async () => Object.keys(files),
-    readFile: async (_repo: string, _token: string, path: string, ref: string) => {
-      reads.push(`${ref}:${path}`)
-      return files[path]
-    },
-  } as unknown as GithubApi
-  return { api, reads }
+  const api = new FakeGithub()
+  api.repo('o/r').files('develop', files)
+  return { api, reads: () => readsOf(api) }
 }
 
 /** What a comparison lists for files `head` changed. */
@@ -42,7 +39,7 @@ describe('publishedPackagesChanged', () => {
     expect(await publishedPackagesChanged(api, 'o/r', 't', { head: 'develop', files })).toEqual([
       '@theokit/ui',
     ])
-    expect(reads.sort()).toEqual([
+    expect(reads().sort()).toEqual([
       'develop:.changeset/config.json',
       'develop:package.json',
       'develop:packages/ui/package.json',
@@ -59,16 +56,16 @@ describe('publishedPackagesChanged', () => {
   })
 
   it('fails, naming the file, when a manifest the listing named cannot be read', async () => {
-    const listed = repository(theokit)
+    const { api } = repository(theokit)
     const files = changed('packages/ui/a.ts')
-    const gone = {
-      ...listed.api,
-      readFile: async (_r: string, _t: string, path: string) =>
-        path === 'packages/ui/package.json' ? undefined : '{}',
-    } as unknown as GithubApi
+    // The manifest is deleted between the listing that named it and the read.
+    api.before(
+      'readFile',
+      (_call, repo) => void repo.tree('develop')?.delete('packages/ui/package.json'),
+    )
 
     await expect(
-      publishedPackagesChanged(gone, 'o/r', 't', { head: 'develop', files }),
+      publishedPackagesChanged(api, 'o/r', 't', { head: 'develop', files }),
     ).rejects.toThrow('packages/ui/package.json is not on develop of o/r')
   })
 })
@@ -76,23 +73,29 @@ describe('publishedPackagesChanged', () => {
 describe('versionedTags', () => {
   /** The Version Packages merge `vm`: each file as it is on its first parent and on the merge. */
   function merge(files: Record<string, { before?: string; after?: string }>) {
-    const reads: string[] = []
-    const compared: string[] = []
-    const status = (f: { before?: string; after?: string }) => {
-      if (f.after === undefined) return 'removed'
-      return f.before === undefined ? 'added' : 'modified'
+    const api = new FakeGithub()
+    const side = (pick: (f: { before?: string; after?: string }) => string | undefined) =>
+      Object.fromEntries(
+        Object.entries(files).flatMap(([path, f]) => {
+          const content = pick(f)
+          return content === undefined ? [] : [[path, content]]
+        }),
+      )
+    api
+      .repo('o/r')
+      .files(
+        'vm^',
+        side((f) => f.before),
+      )
+      .files(
+        'vm',
+        side((f) => f.after),
+      )
+    return {
+      api,
+      reads: () => readsOf(api),
+      compared: () => api.callsTo('changedFiles').map(([base, head]) => `${base}...${head}`),
     }
-    const api = {
-      changedFiles: async (_repo: string, _token: string, base: string, head: string) => {
-        compared.push(`${base}...${head}`)
-        return Object.entries(files).map(([path, f]) => ({ path, status: status(f) }))
-      },
-      readFile: async (_repo: string, _token: string, path: string, ref: string) => {
-        reads.push(`${ref}:${path}`)
-        return ref === 'vm' ? files[path]?.after : files[path]?.before
-      },
-    } as unknown as GithubApi
-    return { api, reads, compared }
   }
 
   it('is the release of every published package whose version the merge moved', async () => {
@@ -121,7 +124,7 @@ describe('versionedTags', () => {
       '@theokit/gateway@0.16.1',
       '@theokit/gateway-slack@0.5.1',
     ])
-    expect(compared).toEqual(['vm^...vm'])
+    expect(compared()).toEqual(['vm^...vm'])
   })
 
   it('reads each manifest on the merge and on its first parent', async () => {
@@ -133,7 +136,7 @@ describe('versionedTags', () => {
     })
 
     expect(await versionedTags(api, 'o/r', 't', 'vm')).toEqual(['one@1.1.0'])
-    expect(reads.sort()).toEqual(['vm:package.json', 'vm^:package.json'])
+    expect(reads().sort()).toEqual(['vm:package.json', 'vm^:package.json'])
   })
 
   it('skips a manifest the merge removed', async () => {
@@ -142,6 +145,6 @@ describe('versionedTags', () => {
     })
 
     expect(await versionedTags(api, 'o/r', 't', 'vm')).toEqual([])
-    expect(reads).toEqual([])
+    expect(reads()).toEqual([])
   })
 })
