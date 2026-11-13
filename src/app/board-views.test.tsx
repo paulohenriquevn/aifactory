@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { TaskCard, TaskDetail } from '../shared/panel'
 
+import { en } from './lib/copy/en'
 import Page from './work/page'
 
 const card = (id: number, over: Partial<TaskCard> = {}): TaskCard => ({
@@ -99,33 +100,35 @@ describe('board and list', () => {
     await waitFor(() => expect(screen.getByText('Finished work')).toBeDefined())
     expect(screen.getAllByRole('region').length).toBeGreaterThan(0)
 
-    fireEvent.click(screen.getByRole('button', { name: 'List' }))
+    fireEvent.click(screen.getByRole('button', { name: en.work.list }))
 
-    const table = screen.getByRole('table', { name: 'Tasks' })
+    const table = screen.getByRole('table', { name: en.board.tasks })
     expect(within(table).getByText('Task 1')).toBeDefined()
     expect(within(table).getByText('Finished work')).toBeDefined()
     expect(within(table).getByText('$0.31')).toBeDefined()
     expect(screen.queryAllByRole('region')).toEqual([])
-    expect(screen.getByRole('button', { name: 'List' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: en.work.list }).getAttribute('aria-pressed')).toBe(
+      'true',
+    )
   })
 
   it('remembers the choice after the page is loaded again', async () => {
     const first = at('/work')
     await waitFor(() => expect(screen.getByText('Task 1')).toBeDefined())
-    fireEvent.click(screen.getByRole('button', { name: 'List' }))
+    fireEvent.click(screen.getByRole('button', { name: en.work.list }))
     first.unmount()
 
     at('/work')
-    await waitFor(() => expect(screen.getByRole('table', { name: 'Tasks' })).toBeDefined())
+    await waitFor(() => expect(screen.getByRole('table', { name: en.board.tasks })).toBeDefined())
   })
 
   it('goes back to the board when that is chosen again', async () => {
     localStorage.setItem('aifactory.view', 'list')
     at('/work')
-    await waitFor(() => expect(screen.getByRole('table', { name: 'Tasks' })).toBeDefined())
-    fireEvent.click(screen.getByRole('button', { name: 'Board' }))
+    await waitFor(() => expect(screen.getByRole('table', { name: en.board.tasks })).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: en.work.board }))
     expect(screen.queryByRole('table')).toBeNull()
-    expect(screen.getByRole('region', { name: 'Delivered' })).toBeDefined()
+    expect(screen.getByRole('region', { name: en.columns.review })).toBeDefined()
   })
 
   it('still switches when the browser refuses to store the choice', async () => {
@@ -134,8 +137,8 @@ describe('board and list', () => {
     })
     at('/work')
     await waitFor(() => expect(screen.getByText('Task 1')).toBeDefined())
-    fireEvent.click(screen.getByRole('button', { name: 'List' }))
-    expect(screen.getByRole('table', { name: 'Tasks' })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: en.work.list }))
+    expect(screen.getByRole('table', { name: en.board.tasks })).toBeDefined()
     vi.restoreAllMocks()
   })
 })
@@ -169,13 +172,15 @@ describe('a task beside the board', () => {
 
   it('offers the whole page for the task, and has no side panel there', async () => {
     at('/work?task=2')
-    await waitFor(() => expect(screen.getByRole('link', { name: 'Open in full' })).toBeDefined())
-    fireEvent.click(screen.getByRole('link', { name: 'Open in full' }))
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: en.work.openInFull })).toBeDefined(),
+    )
+    fireEvent.click(screen.getByRole('link', { name: en.work.openInFull }))
 
     await waitFor(() => expect(screen.getByText('Detail of 2')).toBeDefined())
     expect(where()).toBe('/work?task=2&full=1')
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(screen.queryByRole('region', { name: 'Working' })).toBeNull()
+    expect(screen.queryByRole('region', { name: en.columns.working })).toBeNull()
   })
 })
 
@@ -205,8 +210,10 @@ describe('a task in full', () => {
 
   it('has a link back to the board', async () => {
     at('/work?task=1&full=1')
-    await waitFor(() => expect(screen.getByRole('link', { name: '← Board' })).toBeDefined())
-    fireEvent.click(screen.getByRole('link', { name: '← Board' }))
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: en.work.backToBoard })).toBeDefined(),
+    )
+    fireEvent.click(screen.getByRole('link', { name: en.work.backToBoard }))
     await waitFor(() => expect(where()).toBe('/work'))
   })
 

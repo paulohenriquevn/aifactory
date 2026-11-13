@@ -1,5 +1,7 @@
 import type { MetricRow, Retryable, Stage, TimelineEvent } from '../../shared/panel'
 
+import { en, type Copy } from './copy/en'
+
 export const money = (usd: number) => (usd < 0.005 ? '$0.00' : `$${usd.toFixed(2)}`)
 
 /** An indicator's value in its unit: a share as a percentage, a cost in dollars, a duration in its unit. */
@@ -12,39 +14,22 @@ export function metricValue(value: number, unit: MetricRow['unit']): string {
 
 export const shortSha = (sha: string | null | undefined) => (sha ? sha.slice(0, 7) : '')
 
-export function ago(iso: string, now = Date.now()): string {
+export function ago(iso: string, now = Date.now(), t: Copy['time'] = en.time): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
-  if (seconds < 60) return `${seconds}s ago`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`
-  return `${Math.floor(seconds / 86_400)}d ago`
+  if (seconds < 60) return t.secondsAgo(seconds)
+  if (seconds < 3600) return t.minutesAgo(Math.floor(seconds / 60))
+  if (seconds < 86_400) return t.hoursAgo(Math.floor(seconds / 3600))
+  return t.daysAgo(Math.floor(seconds / 86_400))
 }
 
 /** How long until the factory runs a failed task again on its own. */
-export function runsAgain(iso: string, now = Date.now()): string {
+export function runsAgain(iso: string, now = Date.now(), t: Copy['time'] = en.time): string {
   const seconds = Math.round((Date.parse(iso) - now) / 1000)
-  if (seconds <= 0) return 'runs again on the next pass'
-  if (seconds < 60) return 'runs again in under a minute'
-  if (seconds < 3600) return `runs again in ${Math.floor(seconds / 60)}m`
-  if (seconds < 86_400) return `runs again in ${Math.floor(seconds / 3600)}h`
-  return `runs again in ${Math.floor(seconds / 86_400)}d`
-}
-
-const LABELS: Record<Stage, string> = {
-  intake: 'queued',
-  sandbox: 'starting sandbox',
-  plan: 'planning',
-  build: 'building',
-  push: 'pushing',
-  verify: 'running checks',
-  review: 'in review',
-  waiting: 'waiting for you',
-  pr: 'opening pull request',
-  done: 'pull request open',
-  released: 'released',
-  handoff: 'handed to a person',
-  failed: 'failed',
-  cancelled: 'cancelled',
+  if (seconds <= 0) return t.runsNextPass
+  if (seconds < 60) return t.runsUnderMinute
+  if (seconds < 3600) return t.runsInMinutes(Math.floor(seconds / 60))
+  if (seconds < 86_400) return t.runsInHours(Math.floor(seconds / 3600))
+  return t.runsInDays(Math.floor(seconds / 86_400))
 }
 
 /**
@@ -61,14 +46,15 @@ export function stageLabel(
     waitingForChecks?: boolean
     retryable?: Retryable
   } = {},
+  t: Copy['stages'] = en.stages,
 ): string {
-  if (stage === 'done' && extra.resolved) return 'already resolved'
-  if (stage === 'done' && extra.integrated) return 'integrated'
-  if (stage === 'done' && extra.waitingForChecks) return 'waiting for CI'
-  if (stage === 'failed' && extra.retryable === 'quota') return 'waiting for the limit'
-  if (stage === 'failed' && extra.retryable === 'environment') return 'will retry'
-  if (stage === 'failed' && extra.retryable === 'blocked') return 'waiting for another issue'
-  return LABELS[stage]
+  if (stage === 'done' && extra.resolved) return t.alreadyResolved
+  if (stage === 'done' && extra.integrated) return t.integrated
+  if (stage === 'done' && extra.waitingForChecks) return t.waitingForChecks
+  if (stage === 'failed' && extra.retryable === 'quota') return t.waitingForLimit
+  if (stage === 'failed' && extra.retryable === 'environment') return t.willRetry
+  if (stage === 'failed' && extra.retryable === 'blocked') return t.waitingForIssue
+  return t[stage]
 }
 
 const text = (value: unknown) => (value === undefined || value === null ? '' : String(value))
