@@ -8,7 +8,8 @@ import { storageFromUrl } from '../db/config'
 import { decision, delivery, ingress, review, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { FailedRun } from '../github/promotion-api'
-import type { CheckReport, GithubApi, PullRequestDetail, ReleaseInput } from '../github/pulls'
+import { FakeGithub, githubAnswered, type FakePullRequest } from '../../test/fake-github'
+import type { CheckReport } from '../github/pulls'
 
 import { pollAwaitingIntegrations, type AwaitCiDeps } from './await-ci'
 import type { EvidenceApi } from './check-evidence'
@@ -24,18 +25,12 @@ const VERIFIED = 'abc1234def'
 const PR_URL = 'https://github.com/paulo/app/pull/12'
 const NOW = new Date('2026-11-11T12:00:00Z')
 
-/** GitHub as the wait for the repository's checks sees it, scripted per test. */
+/** GitHub as the wait for the repository's checks sees it: one pull request, waiting for `CI`. */
+let api = new FakeGithub()
+const repo = () => api.repo('paulo/app')
+
+/** The failed check runs of the verified commit, with their logs and annotations, scripted per test. */
 const gh = {
-  pull: undefined as PullRequestDetail | undefined,
-  required: ['CI'] as string[],
-  reports: [] as CheckReport[],
-  readFails: false,
-  autoMergeOff: [] as number[],
-  deleted: [] as string[],
-  branchMerges: [] as { base: string; head: string }[],
-  releases: [] as ReleaseInput[],
-  comments: [] as { issue: number; body: string }[],
-  /** The failed check runs of the verified commit, with their logs and annotations. */
   failedRuns: [] as FailedRun[],
   logs: {} as Record<number, string>,
   annotations: {} as Record<number, string[]>,
@@ -44,64 +39,40 @@ const gh = {
 const sentBack: { taskId: number; note: string }[] = []
 const startedOver: number[] = []
 
-const openPull = (over: Partial<PullRequestDetail> = {}): PullRequestDetail => ({
-  number: 12,
-  url: PR_URL,
-  state: 'open',
-  merged: false,
-  headSha: VERIFIED,
-  autoMerge: true,
-  mergeableState: 'blocked',
-  ...over,
-})
+/** Sets how the task's pull request stands on GitHub. */
+const pull = (over: Partial<FakePullRequest> = {}) =>
+  repo().pullRequest({
+    number: 12,
+    url: PR_URL,
+    headRef: 'factory/7',
+    baseRef: 'workspace',
+    headSha: VERIFIED,
+    autoMerge: true,
+    mergeableState: 'blocked',
+    ...over,
+  })
+/** Sets what the checks on the verified commit report: these and nothing else. */
+const reports = (...list: CheckReport[]) => {
+  repo().clearChecks(VERIFIED)
+  for (const report of list) repo().report(VERIFIED, report)
+}
+const autoMergeOff = () => api.answered('disableAutoMerge').map(([number]) => number)
+const branchMerges = () => api.callsTo('mergeBranch').map(([base, head]) => ({ base, head }))
+const releases = () => api.callsTo('createRelease').map(([release]) => release)
+const comments = () => api.answered('commentOnIssue').map(([issue, body]) => ({ issue, body }))
 
 beforeEach(async () => {
   await getPool().query(
     'truncate table publication, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
   )
-  Object.assign(gh, {
-    pull: openPull(),
-    required: ['CI'],
-    reports: [{ name: 'CI', state: 'pending', detail: '', url: 'u' }],
-    readFails: false,
-    autoMergeOff: [],
-    deleted: [],
-    branchMerges: [],
-    releases: [],
-    comments: [],
-    failedRuns: [],
-    logs: {},
-    annotations: {},
-    logFails: false,
-  })
+  api = new FakeGithub()
+  repo().prepare().required.set('workspace', ['CI'])
+  pull()
+  reports({ name: 'CI', state: 'pending', detail: '', url: 'u' })
+  Object.assign(gh, { failedRuns: [], logs: {}, annotations: {}, logFails: false })
   sentBack.length = 0
   startedOver.length = 0
 })
-
-const api = {
-  readPullRequest: async () => {
-    if (gh.readFails) throw new Error('GitHub answered 502 reading paulo/app#12')
-    return gh.pull
-  },
-  requiredChecks: async () => gh.required,
-  checkReports: async () => gh.reports,
-  disableAutoMerge: async (_repo: string, _token: string, number: number) =>
-    void gh.autoMergeOff.push(number),
-  deleteBranch: async (_repo: string, _token: string, branch: string) =>
-    void gh.deleted.push(branch),
-  mergeBranch: async (_repo: string, _token: string, base: string, head: string) => {
-    gh.branchMerges.push({ base, head })
-    return { sha: 'develop0001', changed: true }
-  },
-  createRelease: async (_repo: string, _token: string, release: ReleaseInput) => {
-    gh.releases.push(release)
-    return { id: 1, tag: release.tag, url: `https://github.com/paulo/app/releases/${release.tag}` }
-  },
-  commentOnIssue: async (_repo: string, _token: string, issue: number, body: string) => {
-    gh.comments.push({ issue, body })
-    return 'c1'
-  },
-} as unknown as GithubApi
 
 const checks: EvidenceApi = {
   failedChecks: async (_repo, _token, sha) => (sha === VERIFIED ? gh.failedRuns : []),
@@ -117,7 +88,9 @@ const deps = (over: Partial<AwaitCiDeps> = {}): AwaitCiDeps => ({
   github: {
     installationToken: async () => ({ token: 't', expiresAt: new Date() }),
   } as unknown as GithubApp,
-  api,
+  get api() {
+    return api
+  },
   checks,
   releaseMode: undefined,
   now: () => NOW,
@@ -213,11 +186,11 @@ describe('pollAwaitingIntegrations', () => {
     expect(await pollAwaitingIntegrations(deps())).toMatchObject({ waiting: 1, errors: [] })
 
     expect(await row(id)).toMatchObject({ stage: 'done', awaitingCiSha: VERIFIED, mergedSha: null })
-    expect(gh.autoMergeOff).toEqual([])
+    expect(autoMergeOff()).toEqual([])
   })
 
   it('finishes the integration GitHub merged: develop advances and the pre-release is made there', async () => {
-    gh.pull = openPull({ state: 'closed', merged: true, mergeCommitSha: 'merge0001' })
+    pull({ state: 'closed', merged: true, mergeCommitSha: 'merge0001' })
     const id = await waitingTask()
 
     expect(await pollAwaitingIntegrations(deps())).toMatchObject({ merged: [id] })
@@ -227,10 +200,10 @@ describe('pollAwaitingIntegrations', () => {
       mergedSha: 'merge0001',
       awaitingCiSha: null,
     })
-    expect(gh.deleted).toEqual(['factory/7'])
-    expect(gh.branchMerges).toEqual([{ base: 'develop', head: 'merge0001' }])
-    expect(gh.releases).toMatchObject([{ sha: 'develop0001', prerelease: true }])
-    expect(gh.releases[0].body).toContain('added truncate')
+    expect(api.callsTo('deleteBranch').map(([branch]) => branch)).toEqual(['factory/7'])
+    expect(branchMerges()).toEqual([{ base: 'develop', head: 'merge0001' }])
+    expect(releases()).toMatchObject([{ sha: 'develop0001', prerelease: true }])
+    expect(releases()[0].body).toContain('added truncate')
     expect(await getDb().select().from(delivery)).toMatchObject([
       { taskId: id, kind: 'prerelease', sha: 'develop0001' },
     ])
@@ -247,7 +220,7 @@ describe('pollAwaitingIntegrations', () => {
   })
 
   it('records what an agent would release, in trial mode, once the merge is integrated', async () => {
-    gh.pull = openPull({ state: 'closed', merged: true, mergeCommitSha: 'merge0001' })
+    pull({ state: 'closed', merged: true, mergeCommitSha: 'merge0001' })
     const id = await waitingTask()
 
     await pollAwaitingIntegrations(deps({ releaseMode: 'trial' }))
@@ -263,32 +236,30 @@ describe('pollAwaitingIntegrations', () => {
   })
 
   it('finishes a merge once, when a second pass sees it again', async () => {
-    gh.pull = openPull({ state: 'closed', merged: true, mergeCommitSha: 'merge0001' })
+    pull({ state: 'closed', merged: true, mergeCommitSha: 'merge0001' })
     const id = await waitingTask()
 
     await pollAwaitingIntegrations(deps())
     expect(await pollAwaitingIntegrations(deps())).toMatchObject({ merged: [], waiting: 0 })
 
-    expect(gh.branchMerges).toHaveLength(1)
+    expect(branchMerges()).toHaveLength(1)
     expect((await events(id)).filter((e) => e.stage === 'done')).toHaveLength(2)
   })
 
   it('turns auto-merge off and sends the work back with each failed check', async () => {
-    gh.reports = [
-      { name: 'CI', state: 'failure', detail: 'foo.test.ts failed', url: 'https://ci/1' },
-    ]
+    reports({ name: 'CI', state: 'failure', detail: 'foo.test.ts failed', url: 'https://ci/1' })
     const id = await waitingTask()
 
     expect(await pollAwaitingIntegrations(deps())).toMatchObject({ sentBack: [id] })
 
-    expect(gh.autoMergeOff).toEqual([12])
+    expect(autoMergeOff()).toEqual([12])
     expect(sentBack).toEqual([{ taskId: id, note: expect.stringContaining('- CI: https://ci/1') }])
     expect(sentBack[0].note).toContain('foo.test.ts failed')
   })
 
   it('puts the error lines of a failed Actions job in the note, read with the repository token', async () => {
     const link = 'https://github.com/paulo/app/actions/runs/431/job/1308'
-    gh.reports = [{ name: 'CI', state: 'failure', detail: '', url: link }]
+    reports({ name: 'CI', state: 'failure', detail: '', url: link })
     gh.failedRuns = [{ id: 1308, name: 'CI', url: link, summary: '', actions: true }]
     gh.logs = {
       1308: [
@@ -310,11 +281,11 @@ describe('pollAwaitingIntegrations', () => {
   it('puts the error of the job a required aggregate check depends on in the note', async () => {
     const ci = 'https://github.com/usetheokit/theokit/actions/runs/500/job/1'
     const types = 'https://github.com/usetheokit/theokit/actions/runs/500/job/2'
-    gh.required = ['CI']
-    gh.reports = [
+    repo().required.set('workspace', ['CI'])
+    reports(
       { name: 'CI', state: 'failure', detail: '', url: ci },
       { name: 'Type tests', state: 'failure', detail: '', url: types },
-    ]
+    )
     gh.failedRuns = [
       { id: 1, name: 'CI', url: ci, summary: '', actions: true },
       { id: 2, name: 'Type tests', url: types, summary: '', actions: true },
@@ -339,8 +310,8 @@ describe('pollAwaitingIntegrations', () => {
   })
 
   it('puts the annotations and summary of a failed check that is not an Actions job in the note', async () => {
-    gh.required = ['CodeQL']
-    gh.reports = [{ name: 'CodeQL', state: 'failure', detail: '', url: 'https://cq/1' }]
+    repo().required.set('workspace', ['CodeQL'])
+    reports({ name: 'CodeQL', state: 'failure', detail: '', url: 'https://cq/1' })
     gh.failedRuns = [
       { id: 77, name: 'CodeQL', url: 'https://cq/1', summary: '1 new alert', actions: false },
     ]
@@ -356,7 +327,7 @@ describe('pollAwaitingIntegrations', () => {
   })
 
   it('sends the work back with the link when the evidence cannot be read, and logs why', async () => {
-    gh.reports = [{ name: 'CI', state: 'failure', detail: '', url: 'https://ci/1' }]
+    reports({ name: 'CI', state: 'failure', detail: '', url: 'https://ci/1' })
     gh.failedRuns = [{ id: 5, name: 'CI', url: 'https://ci/1', summary: '', actions: true }]
     gh.logFails = true
     const id = await waitingTask()
@@ -374,13 +345,13 @@ describe('pollAwaitingIntegrations', () => {
   })
 
   it('hands to a person the checks that still fail after the automatic runs, and says so on the issue', async () => {
-    gh.reports = [{ name: 'CI', state: 'failure', detail: '', url: 'https://ci/1' }]
+    reports({ name: 'CI', state: 'failure', detail: '', url: 'https://ci/1' })
     const id = await waitingTask({ automaticRuns: 3 })
 
     expect(await pollAwaitingIntegrations(deps())).toMatchObject({ toPerson: [id] })
 
     expect(sentBack).toEqual([])
-    expect(gh.autoMergeOff).toEqual([12])
+    expect(autoMergeOff()).toEqual([12])
     expect(await row(id)).toMatchObject({ stage: 'handoff', awaitingCiSha: null })
     const handoff = (await events(id)).at(-1)!
     expect(handoff).toMatchObject({ stage: 'handoff' })
@@ -389,7 +360,7 @@ describe('pollAwaitingIntegrations', () => {
       pullRequestUrl: PR_URL,
       sha: VERIFIED,
     })
-    expect(gh.comments).toEqual([
+    expect(comments()).toEqual([
       {
         issue: 7,
         body: expect.stringMatching(/still fail after 3 automatic runs: CI[\s\S]*pull\/12/),
@@ -398,27 +369,27 @@ describe('pollAwaitingIntegrations', () => {
   })
 
   it('stops auto-merge and hands to a person a pull request someone pushed to', async () => {
-    gh.pull = openPull({ headSha: 'pushed1234' })
+    pull({ headSha: 'pushed1234' })
     const id = await waitingTask()
 
     await pollAwaitingIntegrations(deps())
 
-    expect(gh.autoMergeOff).toEqual([12])
+    expect(autoMergeOff()).toEqual([12])
     expect(await row(id)).toMatchObject({ stage: 'handoff', awaitingCiSha: null, mergedSha: null })
   })
 
   it('leaves auto-merge alone on a pull request a person closed', async () => {
-    gh.pull = openPull({ state: 'closed' })
+    pull({ state: 'closed' })
     const id = await waitingTask()
 
     await pollAwaitingIntegrations(deps())
 
-    expect(gh.autoMergeOff).toEqual([])
+    expect(autoMergeOff()).toEqual([])
     expect(await row(id)).toMatchObject({ stage: 'handoff' })
   })
 
   it('starts over a pull request that conflicts with its base', async () => {
-    gh.pull = openPull({ mergeableState: 'dirty' })
+    pull({ mergeableState: 'dirty' })
     const id = await waitingTask()
 
     expect(await pollAwaitingIntegrations(deps())).toMatchObject({ startedOver: [id] })
@@ -427,13 +398,13 @@ describe('pollAwaitingIntegrations', () => {
   })
 
   it('tells a person about a required check that never reports', async () => {
-    gh.reports = []
+    reports()
     const id = await waitingTask({ at: new Date(NOW.getTime() - CI_SILENCE_MS - 60_000) })
 
     await pollAwaitingIntegrations(deps())
 
     expect(await row(id)).toMatchObject({ stage: 'handoff' })
-    expect(gh.comments[0].body).toMatch(/CI never reported/)
+    expect(comments()[0].body).toMatch(/CI never reported/)
   })
 
   it('looks only at tasks that wait for the repository checks', async () => {
@@ -452,7 +423,7 @@ describe('pollAwaitingIntegrations', () => {
   })
 
   it('records what stopped one task and goes on with the others', async () => {
-    gh.readFails = true
+    api.fail('readPullRequest', githubAnswered(502, 'reading paulo/app#12'))
     const id = await waitingTask()
 
     const result = await pollAwaitingIntegrations(deps())

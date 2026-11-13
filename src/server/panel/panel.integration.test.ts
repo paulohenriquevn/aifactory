@@ -20,8 +20,8 @@ import {
   watch,
   releaseWait,
 } from '../db/schema'
-import type { GithubApi } from '../github/pulls'
 import { COLUMNS } from '../../shared/panel'
+import { FakeGithub } from '../../test/fake-github'
 
 import {
   ActionRefused,
@@ -382,11 +382,9 @@ describe('actions', () => {
   const queued: { input: object; key: string }[] = []
   const resumed: { input: object; key: string }[] = []
   const snapshotsDeleted: string[] = []
-  const deleted: string[] = []
-  const api = {
-    deleteBranch: async (_repo: string, _token: string, branch: string) =>
-      void deleted.push(branch),
-  } as unknown as GithubApi
+  let api = new FakeGithub()
+  /** The branches the factory deleted on GitHub. */
+  const deleted = () => api.answered('deleteBranch').map(([branch]) => branch)
   const deps = (): ActionDeps => ({
     db: getDb(),
     github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
@@ -400,7 +398,7 @@ describe('actions', () => {
   })
   beforeEach(() => {
     queued.length = 0
-    deleted.length = 0
+    api = new FakeGithub()
     resumed.length = 0
     snapshotsDeleted.length = 0
   })
@@ -424,7 +422,7 @@ describe('actions', () => {
     expect(row).toMatchObject({ stage: 'intake', awaitingCiSha: null })
     expect(await getDb().select().from(decision)).toEqual([])
     // The branch stays: the agent works on what it pushed.
-    expect(deleted).toEqual([])
+    expect(deleted()).toEqual([])
     const [intake] = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, id))
     expect(intake.detail).toEqual({
       decision: 'request_changes',
@@ -507,7 +505,7 @@ describe('actions', () => {
     await retry(deps(), failed)
     await retry(deps(), handed)
 
-    expect(deleted).toEqual(['factory/41', 'factory/42'])
+    expect(deleted()).toEqual(['factory/41', 'factory/42'])
     expect(queued).toHaveLength(2)
     expect((await getDb().select().from(task).where(eq(task.id, failed)))[0].stage).toBe('intake')
     const decisions = await getDb().select().from(decision)
@@ -515,23 +513,15 @@ describe('actions', () => {
   })
 
   it('delivers a failed or handed-over task a person resolved another way, at the integration head', async () => {
-    const heads: string[] = []
-    const withHead = (): ActionDeps => ({
-      ...deps(),
-      api: {
-        branchHead: async (_repo: string, _token: string, branch: string) => {
-          heads.push(branch)
-          return 'head1'
-        },
-      } as unknown as GithubApi,
-    })
+    api.repo('paulo/app').heads.set('workspace', 'head1')
+    const heads = () => api.callsTo('branchHead').map(([branch]) => branch)
     const failed = await seed('failed')
     const handed = await seed('handoff')
 
-    await resolveElsewhere(withHead(), failed, '  Fixed by hand in #1389.  ')
-    await resolveElsewhere(withHead(), handed, 'Split into #12 and #13, both delivered.')
+    await resolveElsewhere(deps(), failed, '  Fixed by hand in #1389.  ')
+    await resolveElsewhere(deps(), handed, 'Split into #12 and #13, both delivered.')
 
-    expect(heads).toEqual(['workspace', 'workspace'])
+    expect(heads()).toEqual(['workspace', 'workspace'])
     const [row] = await getDb().select().from(task).where(eq(task.id, failed))
     expect(row).toMatchObject({ stage: 'done', resolvedSha: 'head1' })
     expect(await getDb().select().from(decision)).toMatchObject([
@@ -563,7 +553,7 @@ describe('actions', () => {
     for (const id of tasks) {
       await expect(retry(deps(), id)).rejects.toThrow(ActionRefused)
     }
-    expect(deleted).toEqual([])
+    expect(deleted()).toEqual([])
     expect(queued).toEqual([])
   })
 
@@ -572,7 +562,7 @@ describe('actions', () => {
 
     await retry(deps(), id)
 
-    expect(deleted).toEqual(['factory/61'])
+    expect(deleted()).toEqual(['factory/61'])
     expect(queued).toHaveLength(1)
     expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('intake')
     expect((await getDb().select().from(decision)).map((d) => d.kind)).toEqual(['retry'])
@@ -597,7 +587,7 @@ describe('actions', () => {
       'intake',
       'failed',
     ])
-    expect(deleted.sort()).toEqual(['factory/51', 'factory/52'])
+    expect(deleted().sort()).toEqual(['factory/51', 'factory/52'])
   })
 
   it('runs again on its own each task whose time came, oldest first and a few at a time', async () => {
@@ -629,7 +619,7 @@ describe('actions', () => {
       'failed',
       'failed',
     ])
-    expect(deleted.sort()).toEqual(['factory/72', 'factory/73'])
+    expect(deleted().sort()).toEqual(['factory/72', 'factory/73'])
     // Nobody decided it: the run is marked as the factory's own, and no decision is made up for it.
     expect(await getDb().select().from(decision)).toEqual([])
     const intake = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, oldest))
@@ -684,7 +674,7 @@ describe('actions', () => {
       [conflicted, integrated, refusedOtherwise, exhausted].map((id) => stages.get(id)),
     ).toEqual(['intake', 'done', 'done', 'done'])
     // The old branch goes first, which closes the refused pull request, so the new run does not collide with it.
-    expect(deleted).toEqual(['factory/81'])
+    expect(deleted()).toEqual(['factory/81'])
     expect(await getDb().select().from(decision)).toEqual([])
     const intake = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, conflicted))
     expect(intake.at(-1)?.detail).toMatchObject({ decision: 'retry', automatic: true })
@@ -732,16 +722,9 @@ describe('actions', () => {
 
   it('fails loudly when GitHub refuses, instead of counting the task as skipped', async () => {
     await seed('failed', { issueNumber: 71 }, [{ stage: 'failed', detail: { quota: true } }])
-    const broken: ActionDeps = {
-      ...deps(),
-      api: {
-        deleteBranch: async () => {
-          throw new Error('GitHub answered 401')
-        },
-      } as unknown as GithubApi,
-    }
+    api.fail('deleteBranch', new Error('GitHub answered 401'))
 
-    await expect(retryWaiting(broken)).rejects.toThrow(/GitHub answered 401/)
+    await expect(retryWaiting(deps())).rejects.toThrow(/GitHub answered 401/)
     expect(queued).toEqual([])
   })
 })
@@ -905,7 +888,7 @@ describe('deliveries on the panel', () => {
     const deps = {
       db: getDb(),
       github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
-      api: {} as never,
+      api: new FakeGithub(),
       inTransaction: async () => undefined as never,
       enqueueResume: async () => {},
       deleteSnapshot: async () => {},
@@ -921,7 +904,7 @@ describe('a red default branch on the panel', () => {
     ({
       db: getDb(),
       github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
-      api: {} as never,
+      api: new FakeGithub(),
       inTransaction: async () => undefined as never,
       enqueueResume: async () => {},
       deleteSnapshot: async () => {},
@@ -1122,13 +1105,12 @@ describe('resolving a finding', () => {
   const resumed: { input: object; key: string }[] = []
   const snapshotsDeleted: string[] = []
   const queued: object[] = []
-  const deleted: string[] = []
+  let api = new FakeGithub()
+  const deleted = () => api.answered('deleteBranch').map(([branch]) => branch)
   const deps = (): ActionDeps => ({
     db: getDb(),
     github: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
-    api: {
-      deleteBranch: async (_r: string, _t: string, b: string) => void deleted.push(b),
-    } as never,
+    api,
     enqueueResume: async (input, key) => void resumed.push({ input, key }),
     deleteSnapshot: async (id) => void snapshotsDeleted.push(id),
     inTransaction: (work) =>
@@ -1138,7 +1120,7 @@ describe('resolving a finding', () => {
     resumed.length = 0
     snapshotsDeleted.length = 0
     queued.length = 0
-    deleted.length = 0
+    api = new FakeGithub()
   })
 
   const open = async (over: Partial<typeof finding.$inferInsert>) => {
@@ -1158,7 +1140,7 @@ describe('resolving a finding', () => {
     await resolveFinding(deps(), id, 'retry')
 
     expect((await getDb().select().from(task).where(eq(task.id, taskId)))[0].stage).toBe('intake')
-    expect(deleted).toEqual(['factory/31'])
+    expect(deleted()).toEqual(['factory/31'])
     expect(queued).toHaveLength(1)
     expect(await isOpen(id)).toBe(false)
   })

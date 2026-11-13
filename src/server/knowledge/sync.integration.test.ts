@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, knowledgeNote, repository, task } from '../db/schema'
+import { FakeGithub } from '../../test/fake-github'
 
 import { MEMORY_BRANCH } from './format'
 import { runGit } from './git'
@@ -74,7 +75,24 @@ async function keep(notes: Parameters<typeof recordNotes>[1]) {
 }
 
 function deps(remote: string, over: Partial<KnowledgeDeps> = {}) {
-  const pulls: { head: string; base?: string; title: string; body: string }[] = []
+  const api = new FakeGithub()
+  // The branches are the ones of the real git remote: each look at one reads it there first.
+  api.before('branchHead', async ({ args: [branch] }, repo) => {
+    const sha = (
+      await runGit([
+        '-C',
+        remote,
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        `refs/heads/${branch}`,
+      ]).catch(() => Buffer.from(''))
+    )
+      .toString()
+      .trim()
+    if (sha) repo.heads.set(branch, sha)
+    else repo.heads.delete(branch)
+  })
   const d: KnowledgeDeps = {
     db: getDb(),
     github: {
@@ -83,26 +101,7 @@ function deps(remote: string, over: Partial<KnowledgeDeps> = {}) {
         return { token: 'ghs_test', expiresAt: new Date(Date.now() + 3_600_000) }
       },
     },
-    api: {
-      defaultBranch: async () => 'main',
-      branchHead: async (_repo, _token, branch) =>
-        (
-          await runGit([
-            '-C',
-            remote,
-            'rev-parse',
-            '--verify',
-            '--quiet',
-            `refs/heads/${branch}`,
-          ]).catch(() => Buffer.from(''))
-        )
-          .toString()
-          .trim() || undefined,
-      openPullRequest: async (_repo, _token, pull) => {
-        pulls.push(pull)
-        return { number: 1, url: 'https://github.com/me/kb/pull/1' }
-      },
-    },
+    api,
     root: scratch(),
     remote: () => remote,
     author,
@@ -110,7 +109,11 @@ function deps(remote: string, over: Partial<KnowledgeDeps> = {}) {
     now: () => new Date(CLOCK),
     ...over,
   }
-  return { d, pulls }
+  return {
+    d,
+    /** The pull requests the factory opened. */
+    pulls: () => api.answered('openPullRequest').map(([pull]) => pull),
+  }
 }
 
 let issue = 0
@@ -476,7 +479,7 @@ describe('proposing the OKF structure', () => {
       'README.md',
       'knowledge/global/tests.md',
     ])
-    expect(pulls[0]).toMatchObject({ head: TEMPLATE_BRANCH, base: 'main' })
+    expect(pulls()[0]).toMatchObject({ head: TEMPLATE_BRANCH, base: 'main' })
     expect(await remoteFile(remote, TEMPLATE_BRANCH, 'README.md')).toBe(
       '---\ntype: Reference\n---\n\n# My notes\n',
     )
@@ -507,7 +510,7 @@ describe('proposing the OKF structure', () => {
     await saveKnowledge(d, { repository: 'me/kb' })
     await proposeTemplate(d)
 
-    expect(pulls[0].body).toMatch(
+    expect(pulls()[0].body).toMatch(
       /`knowledge\/global\/broken\.md` has front matter that is not YAML/,
     )
   })

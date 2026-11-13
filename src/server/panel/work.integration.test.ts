@@ -11,7 +11,7 @@ import type { IssuesApi, NewIssue } from '../github/issues-api'
 
 import { writeKnowledgeConfig } from '../knowledge/store'
 
-import { FakeBranches } from '../../test/fake-branches'
+import { FakeGithub } from '../../test/fake-github'
 
 import { ActionRefused } from './actions'
 import {
@@ -32,7 +32,7 @@ beforeAll(async () => {
   await migrate(getDb(), { migrationsFolder: 'drizzle' })
 })
 beforeEach(async () => {
-  branches = new FakeBranches()
+  api = new FakeGithub()
   await getPool().query('truncate table plan_item, plan, repository restart identity cascade')
   world.reachable = [
     { fullName: 'Paulo/App', private: true, defaultBranch: 'main' },
@@ -93,11 +93,14 @@ const issues: IssuesApi = {
   },
 }
 
-let branches = new FakeBranches()
+let api = new FakeGithub()
+const repo = () => api.repo('paulo/app')
+/** The branches `createBranch` made, in order. */
+const created = () => api.answered('createBranch').map(([branch]) => branch)
 
 const deps = (): WorkDeps => ({
   db: getDb(),
-  api: branches.api,
+  api,
   github: {
     async installationToken(repo) {
       world.tokens.push(repo)
@@ -180,7 +183,7 @@ describe('the repositories page', () => {
         /Paulo\/App is the knowledge base of the factory; its rules change only through a pull request the owner merges/,
       )
       expect(await getDb().select().from(repository)).toEqual([])
-      expect(branches.created).toEqual([])
+      expect(created()).toEqual([])
     } finally {
       await writeKnowledgeConfig(getDb(), null)
     }
@@ -255,16 +258,17 @@ describe('the repositories page', () => {
 
   it('creates the integration and pre-release branches when a repository is enabled, and touches none that exist', async () => {
     await enable()
-    expect(branches.created).toEqual(['workspace', 'develop'])
+    expect(created()).toEqual(['workspace', 'develop'])
 
-    branches = FakeBranches.prepared()
+    api = new FakeGithub()
+    repo().prepare()
     await saveRepository(deps(), 'paulo/app', { harness: 'codex' })
-    expect(branches.created).toEqual([])
+    expect(created()).toEqual([])
   })
 
   it('does not prepare a repository that stays disabled', async () => {
     await saveRepository(deps(), 'paulo/app', { checks: [{ name: 'unit', command: 'pnpm test' }] })
-    expect(branches.created).toEqual([])
+    expect(created()).toEqual([])
   })
 
   it('refuses to enable a repository whose branches cannot be prepared, and saves nothing', async () => {
@@ -272,7 +276,7 @@ describe('the repositories page', () => {
       saveRepository(deps(), 'paulo/app', { enabled: true, baseBranch: 'main' }),
     ).rejects.toThrow(/could not be prepared.*only a release reaches/)
     expect(await getDb().select().from(repository)).toEqual([])
-    expect(branches.created).toEqual([])
+    expect(created()).toEqual([])
   })
 
   it('saves the branch the work starts from, shows it, and goes back to the default with null', async () => {
@@ -297,9 +301,9 @@ describe('the repositories page', () => {
   })
 
   it('saves the release branch, prepares the repository from it, and clears it with null', async () => {
-    branches.defaultName = 'develop'
-    branches.heads.set('develop', 'd'.repeat(40))
-    branches.heads.set('main', 'e'.repeat(40))
+    repo().defaultBranch = 'develop'
+    repo().heads.set('develop', 'd'.repeat(40))
+    repo().heads.set('main', 'e'.repeat(40))
     await expect(saveRepository(deps(), 'paulo/app', { enabled: true })).rejects.toThrow(
       /default branch is develop.*name another release branch/,
     )
@@ -307,7 +311,7 @@ describe('the repositories page', () => {
     await saveRepository(deps(), 'paulo/app', { enabled: true, releaseBranch: 'main' })
     const [row] = await getDb().select().from(repository)
     expect(row.releaseBranch).toBe('main')
-    expect(branches.heads.get('workspace')).toBe('e'.repeat(40))
+    expect(repo().heads.get('workspace')).toBe('e'.repeat(40))
     const view = await listRepositories(deps())
     expect(view.repositories.find((r) => r.fullName === 'Paulo/App')?.releaseBranch).toBe('main')
 
