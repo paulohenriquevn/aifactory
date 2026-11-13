@@ -22,6 +22,7 @@ import { parseLearned, withoutLearned } from '../knowledge/format'
 
 import { cloneRepository } from './clone'
 import { ensureBranches, integrationBranch } from './branches'
+import { uploadChangesetCheck } from './changeset-check'
 import { withChangesetCheck } from './changesets'
 import { githubEgress, renewGithubCredential } from './credential-renewal'
 import { createPreRelease } from './deliver'
@@ -1051,6 +1052,7 @@ export class Run {
     // The checks judge the commit, not what the agent left in ignored files: a builder that installed with
     // --ignore-scripts left a node_modules without its native binaries, and the install check took it as done.
     await must(this.backend, `git -C ${this.repoDir} clean -fdxq`)
+    await uploadChangesetCheck(this.backend, this.checks)
     const results = await runChecks(
       this.backend,
       this.repoDir,

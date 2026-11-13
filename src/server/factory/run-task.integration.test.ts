@@ -37,6 +37,8 @@ import type { KnowledgeSource } from '../knowledge/source'
 import type { NewNote } from '../knowledge/store'
 
 import { githubEgress } from './credential-renewal'
+import { CHANGESET_CHECK_SCRIPT } from './changeset-check'
+import { CHANGESET_CHECK_PATH } from './changesets'
 import { FakeSandbox, type Reply } from './fake-sandbox'
 import { eventsOf } from './transcript-store'
 import { parseRecipe } from './recipe'
@@ -178,6 +180,9 @@ const seen = {
   },
 }
 
+/** A changeset that releases something: its front matter names a package. */
+const NAMED_CHANGESET = '---\n"@theokit/ui": patch\n---\n\nFixes the button.\n'
+
 /** What `develop` holds on GitHub: the names in `.changeset`, and the other files with what each holds. */
 const develop = {
   changesets: undefined as string[] | undefined,
@@ -187,7 +192,7 @@ function onDevelop(over: Partial<typeof develop>) {
   Object.assign(develop, over)
   const changesets = (develop.changesets ?? []).map((name) => [
     `.changeset/${name}`,
-    name.endsWith('.json') ? '{}' : '',
+    name.endsWith('.json') ? '{}' : NAMED_CHANGESET,
   ])
   repo().files('develop', { ...Object.fromEntries(changesets), ...develop.tree })
 }
@@ -1407,6 +1412,8 @@ describe('runTask planning before it builds', () => {
           return { stdout: 'M\tsrc/truncate.js\nA\t.changeset/calm-owls.md\nM\tsrc/other.js\n' }
         if (c.includes('diff --name-only --diff-filter=A'))
           return { stdout: '.changeset/calm-owls.md\n' }
+        if (c.includes('show abc123def2:.changeset/calm-owls.md'))
+          return { stdout: '---\n"app": patch\n---\n' }
         return undefined
       }),
     )
@@ -2763,6 +2770,42 @@ describe('release', () => {
     expect(await getDb().select().from(publication)).toHaveLength(1)
   })
 
+  it('releases as its own when the only changesets added name no package, and records no publication', async () => {
+    const id = await delivered()
+    // usetheokit/theokit on 2026-11-13: twelve empty changesets for a private app reached the release branch.
+    const empty = ['.changeset/theocode-a.md', '.changeset/theocode-b.md']
+    changesetsMonorepo(['apps/theoclaw/src/a.ts'])
+    onDevelop({
+      tree: {
+        ...develop.tree,
+        ...Object.fromEntries(empty.map((path) => [path, '---\n---\n\nA private app changed.\n'])),
+      },
+    })
+    repo()
+      .changes('main', 'develop')
+      .push(...empty.map(added))
+    repo().tags.add('v1.2.0')
+
+    const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: 'v1.2.1', mergeSha: 'merge0002' })
+    expect(result.publishing).toBeUndefined()
+    expect(seen.releases.at(-1)).toMatchObject({ tag: 'v1.2.1', prerelease: false })
+    expect(await getDb().select().from(publication)).toEqual([])
+  })
+
+  it('still refuses, with only empty changesets added, when a package changesets publishes changed', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['packages/ui/src/index.ts'])
+    onDevelop({ tree: { ...develop.tree, '.changeset/theocode-a.md': '---\n---\n' } })
+    repo().changes('main', 'develop').push(added('.changeset/theocode-a.md'))
+
+    await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+      /develop has no changeset, and it changes @theokit\/ui since main/,
+    )
+    expect(await getDb().select().from(publication)).toEqual([])
+  })
+
   it('does not count changesets the release branch already consumed: develop still holds them, none was added since the merge base', async () => {
     const id = await delivered()
     // theokit-plugins after Version Packages #250: main deleted the changesets, develop kept them.
@@ -3201,9 +3244,10 @@ describe('what the owner set for the repository', () => {
     expect(result).toMatchObject({ status: 'done' })
     const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
     expect(stored.map((e) => e.name).sort()).toEqual(['changeset', 'test'])
-    expect(sandbox.backend.commands.join('\n')).toContain(
-      'pnpm exec changeset status --since=origin/workspace',
-    )
+    const check = `node ${CHANGESET_CHECK_PATH} origin/workspace`
+    expect(sandbox.backend.commands.filter((c) => c.endsWith(`&& ${check}`))).toHaveLength(1)
+    // The script is written again before each round of checks, after the tree was cleaned.
+    expect(sandbox.backend.files.get(CHANGESET_CHECK_PATH)).toBe(CHANGESET_CHECK_SCRIPT)
   })
 
   it('runs no changeset check when the clone has no changesets config', async () => {
@@ -3218,7 +3262,8 @@ describe('what the owner set for the repository', () => {
 
     const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
     expect(stored.map((e) => e.name)).toEqual(['test'])
-    expect(sandbox.backend.commands.join('\n')).not.toContain('changeset status')
+    expect(sandbox.backend.commands.join('\n')).not.toContain(CHANGESET_CHECK_PATH)
+    expect(sandbox.backend.files.has(CHANGESET_CHECK_PATH)).toBe(false)
   })
 
   it('opens the sandbox to the extra domains the owner listed, with no credential on them', async () => {

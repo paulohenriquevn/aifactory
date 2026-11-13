@@ -309,7 +309,9 @@ não cita (calculada sem modelo; lockfiles ficam de fora). O revisor trata cada 
 motivo que a issue sustente, e a fábrica registra cada um como achado `minor`. Quando uma checagem da
 fábrica falhou num commit anterior da task e passa no commit em revisão, o prompt do revisor diz qual
 checagem, a linha do erro e os arquivos adicionados entre os dois commits: arquivo que a checagem exigiu
-(um changeset vazio, por exemplo) é legítimo, e esses arquivos não entram na lista de fora do plano. Uma task retomada
+(um changeset para um pacote publicado, por exemplo) é legítimo, e esses arquivos não entram na lista de fora do
+plano. A exceção é o changeset vazio, que não nomeia pacote nenhum: nenhuma checagem pede um, então ele continua
+na lista de fora do plano. Uma task retomada
 (resposta a uma pergunta, mudanças pedidas, checks obrigatórios que devolveram o trabalho) usa o último
 plano gravado. Não há aprovação humana do plano: quem confere é o revisor, contra o diff
 ([ADR 0009](adr/0009-plano-antes-do-codigo-e-testes-que-nao-enfraquecem.md)).
@@ -537,10 +539,12 @@ npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio r
 "Version Packages" que ele abre a partir de `changeset-release/main`. Nesse caso o `release()`:
 
 - um changeset só conta como esperando quando a API de comparação entre a branch de release e `develop` o
-  lista como adicionado desde a base comum das duas (`.changeset/*.md`, menos o README). Um changeset que um
-  release anterior consumiu na branch de release, e que `develop` ainda guarda porque ninguém fez o
-  back-merge, não conta (o theokit-plugins depois do Version Packages #250);
-- quando nenhum changeset foi adicionado, lê na mesma comparação os arquivos que
+  lista como adicionado desde a base comum das duas (`.changeset/*.md`, menos o README) e ele nomeia pelo
+  menos um pacote no front matter. Um changeset que um release anterior consumiu na branch de release, e que
+  `develop` ainda guarda porque ninguém fez o back-merge, não conta (o theokit-plugins depois do Version
+  Packages #250). Um changeset vazio também não conta: ele não versiona nada, e o workflow de release falha
+  com "this release would publish nothing" (o theokit em 2026-11-13, com doze deles);
+- quando nenhum changeset está esperando, lê na mesma comparação os arquivos que
   `develop` muda desde a branch de release e liga cada um aos pacotes em que está (todo `package.json` de
   `develop` acima dele, a raiz incluída). Se algum desses pacotes é publicado pelo changesets (tem nome, não
   é `private` e não está no `ignore` do `.changeset/config.json`), recusa e diz o nome do pacote, porque ele
@@ -601,8 +605,21 @@ fica aberto e a próxima passada tenta de novo. Esses são os dois únicos PRs q
 "Version Packages" e o back-merge.
 
 Nesses repositórios a verificação ganha um check a mais, `changeset`
-(`pnpm exec changeset status --since=origin/<branch de integração>`): mudar um pacote sem changeset reprova
-o trabalho, e o agente volta para escrever um.
+(`node /tmp/factory-changeset-check.mjs origin/<branch de integração>`). É um script que a fábrica grava no
+sandbox antes de cada rodada de checks (`factory/changeset-check.ts`) e que só precisa de node e git. Ele
+compara o commit com a base comum da branch de integração e usa a mesma regra do release para dizer o que é
+pacote publicado (tem nome, não é `"private": true` e não está no `ignore` do `.changeset/config.json`):
+
+- mudar um pacote publicado sem que um changeset adicionado no trabalho o nomeie reprova, e a mensagem diz
+  o pacote e os arquivos; o agente volta para escrever o changeset;
+- mudar só pacotes privados, ignorados ou arquivos fora de pacote passa sem changeset. A mudança num app
+  privado fica registrada no CHANGELOG do próprio app;
+- adicionar um changeset vazio reprova, e a mensagem diz o arquivo e manda apagá-lo;
+- se o script não consegue ler o intervalo ou o `.changeset/config.json`, sai com 2: não verificou nada, e
+  isso não é aprovação.
+
+O `changeset status` não servia para isso: ele conta pacote privado como mudança que pede changeset e aceita
+um changeset vazio como resposta.
 
 **A fábrica nunca mergeia em `main` por conta própria.** A branch de integração não pode ser a branch
 padrão: a fábrica se recusa (ao habilitar o repositório e ao começar uma execução), porque integrar ali é

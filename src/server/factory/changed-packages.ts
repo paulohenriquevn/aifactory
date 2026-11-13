@@ -1,7 +1,9 @@
 import type { ChangedFile, GithubApi } from '../github/pulls'
 
 import {
+  addedChangesets,
   changesetIgnore,
+  changesetPackages,
   enclosingPackages,
   packageDirs,
   parseManifest,
@@ -25,6 +27,25 @@ async function mustRead(
   const text = await api.readFile(repo, token, path, ref)
   if (text === undefined) throw new Error(`${path} is not on ${ref} of ${repo}`)
   return text
+}
+
+/**
+ * The changesets that wait to ship: those a comparison lists as added (`addedChangesets`) that name a
+ * package, each read from GitHub on the comparison's `head`. An empty one releases nothing, so a promotion
+ * that carries only empty ones is not left to the repository's release workflow, which would fail on them.
+ */
+export async function changesetsWaiting(
+  api: GithubApi,
+  repo: string,
+  token: string,
+  compared: { head: string; files: ChangedFile[] },
+): Promise<string[]> {
+  const waiting: string[] = []
+  for (const path of addedChangesets(compared.files)) {
+    const text = await mustRead(api, repo, token, path, compared.head)
+    if (changesetPackages(text).length > 0) waiting.push(path)
+  }
+  return waiting
 }
 
 /**

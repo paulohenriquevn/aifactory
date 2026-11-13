@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import { CHANGESET_CHECK_SCRIPT } from '../factory/changeset-check'
+import { CHANGESET_CHECK_PATH, withChangesetCheck } from '../factory/changesets'
 import { FakeSandbox, type Reply } from '../factory/fake-sandbox'
 import type { CodingHarness, HarnessInput, HarnessResult } from '../factory/harness'
 
@@ -116,6 +118,18 @@ describe('runCase', () => {
     })
     expect(result.costUsd).toBeCloseTo(0.4)
     expect(provider.stopped).toBe(1)
+  })
+
+  it('writes the script of the changeset check into the sandbox for a case that runs it', async () => {
+    const provider = sandbox()
+    const builder = agent('builder', planned(built()))
+    const reviewer = agent('reviewer', [{ ok: true, summary: APPROVE }])
+    const checks = withChangesetCheck(evalCase.checks, true, 'workspace')
+
+    const result = await runCase(deps(provider, builder, reviewer), { ...evalCase, checks })
+
+    expect(result).toMatchObject({ passed: true })
+    expect(provider.backend.files.get(CHANGESET_CHECK_PATH)).toBe(CHANGESET_CHECK_SCRIPT)
   })
 
   it('starts from the base commit of the case, with the same prompt a task gets', async () => {
@@ -260,6 +274,8 @@ describe('runCase', () => {
         return { stdout: 'M\tsrc/cli.ts\nA\t.changeset/calm-owls.md\nM\tsrc/other.ts\n' }
       if (command.includes('diff --name-only --diff-filter=A'))
         return { stdout: '.changeset/calm-owls.md\n' }
+      if (command.includes(`show ${second}:.changeset/calm-owls.md`))
+        return { stdout: '---\n"app": patch\n---\n' }
       return undefined
     })
     const builder = agent('builder', planned(built(), built('added a changeset'), built('again')))
