@@ -186,7 +186,16 @@ describe('what a person asks for in the panel', () => {
   })
 
   it('also retries, from a supervisor finding, a run in a stage the supervisor watches', () => {
-    const watched = ['intake', 'sandbox', 'build', 'push', 'verify', 'review', 'pr'] as const
+    const watched = [
+      'intake',
+      'sandbox',
+      'plan',
+      'build',
+      'push',
+      'verify',
+      'review',
+      'pr',
+    ] as const
     expect(acting('retry_from_finding', { mergedSha: 'm' })).toEqual({
       ...each(watched, 'start_over'),
       failed: 'start_over',

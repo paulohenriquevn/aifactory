@@ -473,7 +473,7 @@ describe('actions', () => {
         expect(await refusals({ resolvedSha: 'r' }, (id) => retry(deps(), id))).toEqual(settled)
         expect(
           await refusals({ mergedSha: 'm' }, (id) => retry(deps(), id, { fromFinding: true })),
-        ).toEqual(inEvery(['plan', 'waiting', 'done', 'released', 'cancelled'], no))
+        ).toEqual(inEvery(['waiting', 'done', 'released', 'cancelled'], no))
       })
 
       it('resolve another way', async () => {
