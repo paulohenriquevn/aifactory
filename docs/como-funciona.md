@@ -75,6 +75,29 @@ Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `
 | `failed`    | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                       |
 | `cancelled` | Uma run interrompida porque a issue deixou de pedir o trabalho. Nenhum caminho entra nele ainda.                  |
 
+### O que cada evento faz em cada estágio
+
+`src/server/factory/transitions.ts` declara, para cada par de estágio e evento, o que acontece: a ação que
+vale, `ignored` com o motivo ou `refused` com o motivo. É uma função pura, sem banco e sem GitHub. Um teste
+percorre todos os estágios e todos os eventos e falha para um par sem resultado declarado.
+
+| Grupo de eventos | Eventos                                                                           | Quem lê a tabela                                         |
+| ---------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Painel           | `approve`, `request_changes`, `retry`, `retry_from_finding`, `resolve`, `release` | `panel/actions.ts` e `release()` em `factory/deliver.ts` |
+| Automáticos      | `retry_due`, `conflict_rerun`, `send_back_after_ci`                               | `retryAutomatically` e `sendBackAutomatically`           |
+| Automáticos      | `hand_over`, `integrate`                                                          | Ninguém ainda: a run decide onde está                    |
+| Webhook          | `issue_labeled` e um evento por código de intenção de `decideIngress`             | Ninguém ainda: a entrega só é gravada                    |
+
+Os eventos que ninguém lê estão em `NOT_WIRED`. A tabela diz o que eles devem fazer quando algo agir sobre
+eles: um comentário numa task em `waiting` responde à pergunta; um comentário ou review de alguém confiável
+no PR aberto da fábrica devolve o trabalho, e num trabalho já integrado abre uma issue de continuação; um
+check concluído numa task que espera o CI reavalia a integração; tirar a label ou fechar a issue cancela a
+task que está na fila, trabalhando, esperando resposta ou falhada; repor a label numa task `failed`,
+`handoff` ou `cancelled` começa de novo.
+
+O limite de execuções automáticas seguidas (`AUTOMATIC_RETRIES`, três) também mora nesse arquivo, e é o
+mesmo para falha de ambiente, conflito com a base e check exigido que falhou.
+
 ### O que cada entrega do webhook significa
 
 `decideIngress` (`src/server/ingest/decide.ts`) lê o evento e o payload, validado com Zod, e devolve uma
@@ -115,8 +138,9 @@ passada, a que espera há mais tempo primeiro:
   (`resumesAt`, em UTC) no momento da falha, a partir do horário que o agente escreveu e do fuso que ele
   usou; sem horário legível, espera 1 hora. Repete quantas vezes for preciso, porque esperar é o que
   resolve.
-- Falha de ambiente (rede, GitHub, sandbox, reinício): espera 5, 10 e 20 minutos, e para depois da
-  terceira vez. Aí vai para "Needs a person".
+- Falha de ambiente (rede, GitHub, sandbox, reinício, provedor de sandbox que recusa por cobrança, como
+  o `403: team is blocked: spend_limit` da E2B): espera 5, 10 e 20 minutos, e para depois da terceira vez.
+  Aí vai para "Needs a person".
 - Agente que usou todo o tempo da execução (25 minutos) não volta sozinho, mesmo que o texto diga "timed
   out": nada em volta falhou, e uma nova execução pararia no mesmo ponto gastando a mesma cota. Vai para
   "Needs a person", que divide a issue ou dá mais tempo. O timeout de um comando do ambiente (clone,

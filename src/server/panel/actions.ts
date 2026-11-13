@@ -7,6 +7,7 @@ import { integrationBranch } from '../factory/branches'
 import { release as promote, ReleaseRefused } from '../factory/deliver'
 import type { GithubApi } from '../github/pulls'
 import type { Bump } from '../factory/release'
+import { outcome, stagesWhere, type TransitionEvent } from '../factory/transitions'
 
 /** A person asked for something the task's state does not allow. The panel shows the message. */
 export class ActionRefused extends Error {
@@ -37,9 +38,6 @@ export type ActionDeps = {
 }
 
 const NOTE_MAX = 4_000
-
-/** The stages a run is in while it works, or waits to be picked up. */
-const STUCK_STAGES = ['intake', 'sandbox', 'build', 'push', 'verify', 'review', 'pr']
 
 /**
  * Moves a task from one of `from` to `intake` and records why, in one transaction with the decision
@@ -103,20 +101,26 @@ async function load(db: Database, taskId: number) {
   return row
 }
 
+/** Refuses, with the reason the transition table gives, an event the task's state does not allow. */
+function mustAllow(row: typeof task.$inferSelect, event: TransitionEvent) {
+  const decided = outcome(row, event)
+  if (decided.kind !== 'action') throw new ActionRefused(decided.reason)
+}
+
 /**
  * Approves the commit the pull request is at. The approval names that commit: if the branch moves
  * (a rework, a new push), it no longer covers it. Merging is a later step and reads this.
  */
 export async function approve(deps: ActionDeps, taskId: number) {
   const row = await load(deps.db, taskId)
-  if (!['done', 'handoff'].includes(row.stage) || !row.headSha) {
-    throw new ActionRefused('only a task with a pull request can be approved')
-  }
+  mustAllow(row, 'approve')
+  // Only a task with a commit is approved.
+  const sha = row.headSha!
   const [made] = await deps.db
     .insert(decision)
-    .values({ taskId, kind: 'approve', sha: row.headSha, note: '' })
+    .values({ taskId, kind: 'approve', sha, note: '' })
     .returning({ id: decision.id })
-  return { decisionId: made.id, sha: row.headSha }
+  return { decisionId: made.id, sha }
 }
 
 /**
@@ -129,18 +133,11 @@ export async function requestChanges(deps: ActionDeps, taskId: number, note: str
   const text = note.trim()
   if (text === '') throw new ActionRefused('say what should change')
   const row = await load(deps.db, taskId)
-  if (!['done', 'handoff'].includes(row.stage)) {
-    throw new ActionRefused('only a task with a pull request can be sent back')
-  }
-  if (row.mergedSha) {
-    throw new ActionRefused(
-      'this work is already integrated, so there is no pull request to send back: open a new job for what should change',
-    )
-  }
+  mustAllow(row, 'request_changes')
   const decisionId = await requeue(
     deps,
     taskId,
-    ['done', 'handoff'],
+    stagesWhere('request_changes', row),
     'request_changes',
     text.slice(0, NOTE_MAX),
     row.headSha,
@@ -161,18 +158,12 @@ export async function retry(
 ) {
   const row = await load(deps.db, taskId)
   // A run the supervisor found stalled or lost is in a working stage, which retry otherwise refuses.
-  const notIntegrated = row.stage === 'done' && !row.mergedSha && !row.resolvedSha
-  const allowed = [
-    ...(options.fromFinding ? STUCK_STAGES : []),
-    'failed',
-    'handoff',
-    ...(notIntegrated ? ['done'] : []),
-  ]
-  if (!allowed.includes(row.stage)) {
-    throw new ActionRefused(
-      'only a failed or handed-over task, or one whose pull request was never merged, can be retried',
-    )
-  }
+  const event = options.fromFinding ? 'retry_from_finding' : 'retry'
+  mustAllow(row, event)
+  // What makes a done task one to retry was read with its stage, so only a task read as done may be done.
+  const allowed = stagesWhere(event, row).filter(
+    (stage) => stage !== 'done' || row.stage === 'done',
+  )
   const { token } = await deps.github.installationToken(row.repository)
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
   const decisionId = await requeue(deps, taskId, allowed, 'retry', '', row.headSha)
@@ -188,9 +179,7 @@ export async function resolveElsewhere(deps: ActionDeps, taskId: number, note: s
   const text = note.trim()
   if (text === '') throw new ActionRefused('say where the issue was resolved')
   const row = await load(deps.db, taskId)
-  if (!['failed', 'handoff'].includes(row.stage)) {
-    throw new ActionRefused('only a failed or handed-over task can be resolved another way')
-  }
+  mustAllow(row, 'resolve')
   const [config] = await deps.db
     .select({ baseBranch: repository.baseBranch })
     .from(repository)
@@ -203,7 +192,7 @@ export async function resolveElsewhere(deps: ActionDeps, taskId: number, note: s
     const moved = await tx
       .update(task)
       .set({ stage: 'done', resolvedSha: sha })
-      .where(and(eq(task.id, taskId), inArray(task.stage, ['failed', 'handoff'])))
+      .where(and(eq(task.id, taskId), inArray(task.stage, stagesWhere('resolve', row))))
       .returning({ id: task.id })
     if (moved.length === 0)
       throw new ActionRefused('this task moved on before it could be resolved')
@@ -226,12 +215,7 @@ export async function resolveElsewhere(deps: ActionDeps, taskId: number, note: s
 export async function retryAutomatically(deps: ActionDeps, taskId: number) {
   const row = await load(deps.db, taskId)
   // A done task whose pull request GitHub refused to merge is not delivered, so it may run again too.
-  const notIntegrated = row.stage === 'done' && !row.mergedSha && !row.resolvedSha
-  if (row.stage !== 'failed' && !notIntegrated) {
-    throw new ActionRefused(
-      'only a failed task, or one whose pull request was never merged, runs again on its own',
-    )
-  }
+  mustAllow(row, row.stage === 'failed' ? 'retry_due' : 'conflict_rerun')
   const { token } = await deps.github.installationToken(row.repository)
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
   await requeue(deps, taskId, [row.stage], 'automatic_retry', '', row.headSha)
@@ -245,11 +229,7 @@ export async function retryAutomatically(deps: ActionDeps, taskId: number) {
  */
 export async function sendBackAutomatically(deps: ActionDeps, taskId: number, note: string) {
   const row = await load(deps.db, taskId)
-  if (row.stage !== 'done' || !row.awaitingCiSha) {
-    throw new ActionRefused(
-      'only work that waits for the repository checks is sent back on its own',
-    )
-  }
+  mustAllow(row, 'send_back_after_ci')
   await requeue(deps, taskId, ['done'], 'automatic_changes', note.slice(0, NOTE_MAX), row.headSha)
 }
 

@@ -1,6 +1,6 @@
 import type { CheckReport, PullRequestDetail } from '../github/pulls'
 
-import { AUTOMATIC_RETRIES } from './auto-retry'
+import { AUTOMATIC_RETRIES, automaticRunsLeft } from './transitions'
 
 /**
  * How long a required check may stay silent on the verified commit before a person is told. A check that
@@ -120,7 +120,7 @@ export function readRequired(input: Pick<WaitingIntegration, 'required' | 'repor
 export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep {
   const done = settled(input)
   if (done) return done
-  const runsLeft = input.automaticRuns < AUTOMATIC_RETRIES
+  const runsLeft = automaticRunsLeft(input.automaticRuns)
   const runs = `${AUTOMATIC_RETRIES} automatic runs`
   if (input.pull.mergeableState === 'dirty') {
     return runsLeft

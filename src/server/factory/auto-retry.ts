@@ -1,12 +1,7 @@
 import type { Retryable } from '../../shared/panel'
 
 import { quotaResumesAt } from './quota-reset'
-
-/**
- * How many times in a row the factory runs again, on its own, a task that failed on the environment. Past
- * that the failure is not passing by itself, and it goes to a person.
- */
-export const AUTOMATIC_RETRIES = 3
+import { automaticRunsLeft } from './transitions'
 
 const ENVIRONMENT_WAIT_MS = 5 * 60_000
 const QUOTA_UNKNOWN_WAIT_MS = 60 * 60_000
@@ -43,7 +38,7 @@ export function retryAt(failure: FailureToRetry): Date | null {
   }
   // Waiting is what unblocks it, so it is not limited like an environment failure.
   if (failure.retryable === 'blocked') return new Date(failed + BLOCKED_WAIT_MS)
-  if (failure.retryable === 'environment' && failure.automaticRetries < AUTOMATIC_RETRIES) {
+  if (failure.retryable === 'environment' && automaticRunsLeft(failure.automaticRetries)) {
     return new Date(failed + ENVIRONMENT_WAIT_MS * 2 ** failure.automaticRetries)
   }
   return null
@@ -62,6 +57,6 @@ export function rerunsAfterConflict(integrationError: unknown, automaticRetries:
   return (
     typeof integrationError === 'string' &&
     MERGE_CONFLICT.test(integrationError) &&
-    automaticRetries < AUTOMATIC_RETRIES
+    automaticRunsLeft(automaticRetries)
   )
 }

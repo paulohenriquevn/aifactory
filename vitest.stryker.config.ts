@@ -13,6 +13,7 @@ export default defineConfig({
       'src/server/evals/cases.test.ts',
       'src/server/evals/suite.test.ts',
       'src/server/factory/auto-retry.test.ts',
+      'src/server/factory/transitions.test.ts',
       'src/server/factory/changesets.test.ts',
       'src/server/factory/ci-wait.test.ts',
       'src/server/factory/check-evidence.test.ts',
