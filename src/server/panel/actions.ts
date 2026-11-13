@@ -44,7 +44,7 @@ const STUCK_STAGES = ['intake', 'sandbox', 'build', 'push', 'verify', 'review', 
 /**
  * Moves a task from one of `from` to `intake` and records why, in one transaction with the decision
  * and the queued run. The stage is checked and changed by the same statement, so a double click
- * cannot queue two runs.
+ * cannot queue two runs. A task that runs again is not resolved any more: what the new run finds decides.
  */
 async function requeue(
   deps: ActionDeps,
@@ -58,7 +58,7 @@ async function requeue(
     // A new run ends any wait for the repository's checks: its pull request is not the one that merges.
     const moved = await tx
       .update(task)
-      .set({ stage: 'intake', awaitingCiSha: null })
+      .set({ stage: 'intake', awaitingCiSha: null, resolvedSha: null })
       .where(and(eq(task.id, taskId), inArray(task.stage, from as never)))
       .returning({ id: task.id })
     if (moved.length === 0) {
@@ -121,7 +121,9 @@ export async function approve(deps: ActionDeps, taskId: number) {
 
 /**
  * Sends a pull request back with a note. A new run starts from the branch the agent already pushed,
- * with the note in its prompt, and goes through the checks and the review again.
+ * with the note in its prompt, and goes through the checks and the review again. A task with no branch
+ * on GitHub (resolved with no change, or its branch deleted by a retry) starts from the integration
+ * branch instead, as a first run does, with the same note.
  */
 export async function requestChanges(deps: ActionDeps, taskId: number, note: string) {
   const text = note.trim()

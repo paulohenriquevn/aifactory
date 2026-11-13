@@ -474,6 +474,15 @@ describe('actions', () => {
     expect(queued).toHaveLength(1)
   })
 
+  it('no longer counts a task as resolved once a person sends it back', async () => {
+    const id = await seed('done', { headSha: 'abc', resolvedSha: 'abc' })
+
+    await requestChanges(deps(), id, 'Cut at a word boundary.')
+
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'intake', resolvedSha: null })
+  })
+
   it('refuses to send back work that is already integrated, and says to open a new job', async () => {
     const id = await seed('done', { headSha: 'abc', mergedSha: 'merged1' })
     await expect(requestChanges(deps(), id, 'Rename it.')).rejects.toThrow(

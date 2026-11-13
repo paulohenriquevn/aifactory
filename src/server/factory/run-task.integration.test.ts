@@ -56,6 +56,8 @@ import { parseRecipe } from './recipe'
 import type { CodingHarness } from './harness'
 import type { Finding } from './review'
 import { mergeEgress, resumeTask, runTask, type RunTaskDeps } from './run-task'
+import { runContinuation } from './run-support'
+import { requestChanges } from '../panel/actions'
 import { release } from './deliver'
 import { pollAnswers } from './waiting'
 
@@ -445,6 +447,10 @@ const stagesOf = async (taskId: number) =>
       .where(eq(stageEvent.taskId, taskId))
       .orderBy(stageEvent.id)
   ).map((e) => e.stage)
+
+/** GitHub has the task's branch: an earlier run pushed it and nothing deleted it since. */
+const branchPushed = (issueNumber = 7) =>
+  githubApi.branches.heads.set(`factory/${issueNumber}`, 'f'.repeat(40))
 
 describe('runTask', () => {
   it('pushes factory/<issue> and records the stages in order', async () => {
@@ -1564,6 +1570,7 @@ describe('runTask planning before it builds', () => {
     /** The findings of the first review of a task sent back, whose branch `workspace` moved past. */
     async function sentBack() {
       const id = await seedTask()
+      branchPushed()
       await getDb()
         .insert(changePlan)
         .values({ taskId: id, baseSha: 'cut0001', harness: 'fake-agent', plan })
@@ -1676,6 +1683,7 @@ describe('runTask planning before it builds', () => {
 
   it('keeps the plan the task has when a person sends the work back', async () => {
     const id = await seedTask()
+    branchPushed()
     await getDb().insert(changePlan).values({ taskId: id, baseSha: 'old', harness: 'codex', plan })
     const builder = planningBuilder([])
     const reviewer = approving()
@@ -1692,11 +1700,29 @@ describe('runTask planning before it builds', () => {
     expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toHaveLength(1)
     expect(reviewer.prompts[0]).toContain('- `src/other.js`')
   })
+
+  it('writes a new plan, as a first run does, when the branch a person sent back no longer exists', async () => {
+    const id = await seedTask()
+    await getDb().insert(changePlan).values({ taskId: id, baseSha: 'old', harness: 'codex', plan })
+    const builder = planningBuilder([JSON.stringify(plan)])
+
+    const result = await runTask(
+      deps(twoFiles(), { harness: builder, reviewer: approving(), planFirst: true }),
+      id,
+      undefined,
+      { feedback: 'Rename the helper to cut.' },
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(await stagesOf(id)).toContain('plan')
+    expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toHaveLength(2)
+  })
 })
 
 describe('runTask continuing from a branch a person sent back', () => {
   it('starts from the branch the agent pushed and gives the agent the note', async () => {
     const id = await seedTask()
+    branchPushed()
     const sandbox = new FakeSandbox(changed())
     const prompts: string[] = []
     const builder: CodingHarness = {
@@ -1722,8 +1748,109 @@ describe('runTask continuing from a branch a person sent back', () => {
     expect(commands.some((c) => c.includes('checkout -b factory/7'))).toBe(false)
   })
 
+  /** A builder that changes a file and keeps the prompts it was given. */
+  function noting() {
+    const prompts: string[] = []
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async (_b, input) => {
+        prompts.push(input.prompt)
+        dirty = true
+        return { ok: true, summary: 'adjusted' }
+      },
+    }
+    return { builder, prompts }
+  }
+
+  /** Asks for changes as the panel does, and runs what that queued as the `run-task` job does. */
+  async function sendBackAndRun(id: number, note: string, overrides: Partial<RunTaskDeps>) {
+    const queued: { taskId: number; decisionId?: number; feedback?: string }[] = []
+    const sandbox = new FakeSandbox(changed())
+    await requestChanges(
+      {
+        db: getDb(),
+        github,
+        api: githubApi,
+        enqueueResume: async () => {},
+        deleteSnapshot: async () => {},
+        inTransaction: (work) =>
+          getDb().transaction((tx) => work(tx as never, async (input) => void queued.push(input))),
+      },
+      id,
+      note,
+    )
+    const [decided] = await getDb()
+      .select()
+      .from(decision)
+      .where(eq(decision.id, queued[0].decisionId!))
+    const result = await runTask(
+      deps(sandbox, overrides),
+      id,
+      undefined,
+      runContinuation(decided, queued[0].feedback),
+    )
+    return { result, commands: sandbox.backend.commands }
+  }
+
+  /** A task that ended resolved with no change: no pull request, and no branch on GitHub. */
+  async function resolvedWithNoBranch() {
+    const id = await seedTask()
+    await getDb()
+      .update(task)
+      .set({ stage: 'done', headSha: 'b'.repeat(40), resolvedSha: 'b'.repeat(40) })
+      .where(eq(task.id, id))
+    return id
+  }
+
+  it('starts from the integration branch with the note when a person sends back a resolved task that has no branch', async () => {
+    const id = await resolvedWithNoBranch()
+    const { builder, prompts } = noting()
+
+    const { result, commands } = await sendBackAndRun(id, 'Cut at a word boundary.', {
+      harness: builder,
+    })
+
+    expect(result).toMatchObject({ status: 'done', branch: 'factory/7' })
+    expect(prompts[0]).toContain('Cut at a word boundary.')
+    expect(commands.some((c) => c.includes('checkout -b factory/7'))).toBe(true)
+    expect(commands.some((c) => c.includes('fetch origin factory/7'))).toBe(false)
+    expect(await stagesOf(id)).not.toContain('failed')
+  })
+
+  it('does not tell the agent its earlier work is on a branch that no longer exists', async () => {
+    const id = await resolvedWithNoBranch()
+    const { builder, prompts } = noting()
+
+    await sendBackAndRun(id, 'Cut at a word boundary.', { harness: builder })
+
+    expect(prompts[0]).not.toContain('The branch already holds your earlier work')
+    expect(prompts[0]).toContain('The branch of that run no longer exists')
+  })
+
+  it('starts from the branch, as before, when a person sends back a task whose branch GitHub has', async () => {
+    const id = await seedTask()
+    branchPushed()
+    await getDb()
+      .update(task)
+      .set({ stage: 'done', headSha: 'oldsha1', pullRequestUrl: PR_URL })
+      .where(eq(task.id, id))
+    const { builder, prompts } = noting()
+
+    const { result, commands } = await sendBackAndRun(id, 'Rename the helper to cut.', {
+      harness: builder,
+    })
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(prompts[0]).toContain('Rename the helper to cut.')
+    expect(prompts[0]).toContain('The branch already holds your earlier work')
+    expect(commands.some((c) => c.includes('checkout -B factory/7 FETCH_HEAD'))).toBe(true)
+    expect(commands.some((c) => c.includes('checkout -b factory/7'))).toBe(false)
+  })
+
   it('returns to done, and tells the person why, when the agent finds nothing to change', async () => {
     const id = await seedTask()
+    branchPushed()
     await getDb()
       .update(task)
       .set({ stage: 'intake', headSha: 'oldsha1', pullRequestUrl: PR_URL })
@@ -1757,6 +1884,7 @@ describe('runTask continuing from a branch a person sent back', () => {
 
   it('hands to a person work whose required checks failed when the agent finds nothing to change', async () => {
     const id = await seedTask()
+    branchPushed()
     await getDb()
       .update(task)
       .set({ stage: 'intake', headSha: 'oldsha1', pullRequestUrl: PR_URL })

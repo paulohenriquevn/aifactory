@@ -275,6 +275,27 @@ describe('buildPrompt', () => {
     expect(buildPrompt({ ...base, feedback: 'rename' })).toContain('A person reviewed')
   })
 
+  it('says the earlier branch is gone, and not that it holds the work, when the run starts over', () => {
+    const base = { repo: 'o/r', issueNumber: 1, title: 't', body: 'b', branch: 'x' }
+    const startsOver = buildPrompt({ ...base, feedback: 'rename', startsOver: true })
+    expect(startsOver).toContain('rename')
+    expect(startsOver).toContain('The branch of that run no longer exists')
+    expect(startsOver).not.toContain('The branch already holds your earlier work')
+    expect(startsOver).not.toContain('pull request')
+    expect(buildPrompt({ ...base, feedback: 'rename' })).toContain(
+      'The branch already holds your earlier work',
+    )
+    expect(buildPrompt({ ...base, startsOver: true })).not.toContain('no longer exists')
+    const checks = buildPrompt({
+      ...base,
+      feedback: 'CI',
+      feedbackFrom: 'checks',
+      startsOver: true,
+    })
+    expect(checks).toContain("The repository's required checks failed on what an earlier run")
+    expect(checks).not.toContain('A person')
+  })
+
   it('says when the issue has no description', () => {
     const prompt = buildPrompt({ repo: 'o/r', issueNumber: 1, title: 't', body: '', branch: 'b' })
     expect(prompt).toContain('the issue has no description')

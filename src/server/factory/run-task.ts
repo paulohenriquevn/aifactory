@@ -31,7 +31,8 @@ export function runTask(
   signal?: AbortSignal,
   /**
    * Set when a person sent the pull request back: the run starts from the branch the agent already
-   * pushed, with what the person asked for in its prompt.
+   * pushed, with what the person asked for in its prompt. When GitHub does not have that branch, it
+   * starts from the integration branch as a first run does, with the same words in its prompt.
    */
   continuation?: Continuation,
 ): Promise<RunResult> {

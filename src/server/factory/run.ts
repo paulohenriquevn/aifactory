@@ -112,6 +112,11 @@ export type RunContext = {
   signal?: AbortSignal
   resuming?: Parked
   continuation?: Continuation
+  /**
+   * What was asked of a run that could not continue: the task's branch is not on GitHub, so the run starts
+   * from the integration branch as a first run does, and only the builder's prompt knows it was sent back.
+   */
+  startingOver?: Continuation
 }
 
 type Timeouts = NonNullable<RunTaskDeps['timeouts']>
@@ -304,7 +309,8 @@ export class Run {
    * prepares the agents. The agents come from the issue's labels, and each signs its own calls: its
    * secret is read here, on the host, and becomes a firewall rule, so the sandbox never holds one.
    */
-  static async open(c: RunContext): Promise<Run> {
+  static async open(given: RunContext): Promise<Run> {
+    const c = await Run.withoutLostBranch(given)
     const { deps, issue, resuming } = c
     // Before any sandbox exists: a repository without the integration and pre-release branches gets them.
     if (!resuming) {
@@ -371,6 +377,17 @@ export class Run {
       `test -f ${repoDir}/.changeset/config.json && echo yes || echo no`,
     )
     return found.stdout.trim() === 'yes'
+  }
+
+  /**
+   * A run sent back continues on the task's branch only while GitHub has it. A task resolved with no change
+   * never pushed one, and a retry deletes it: fetching it would fail the task before any agent read the note
+   * (paulohenriquevn/aifactory#54). Such a run starts over instead, and keeps what was asked for its prompt.
+   */
+  private static async withoutLostBranch(c: RunContext): Promise<RunContext> {
+    if (!c.continuation) return c
+    const head = await c.api.branchHead(c.row.repository, c.token, c.branch)
+    return head ? c : { ...c, continuation: undefined, startingOver: c.continuation }
   }
 
   private static async checkout(c: RunContext, backend: SandboxBackend) {
@@ -630,15 +647,17 @@ export class Run {
 
   /** What the builder is told about the issue and its rules, the same for the plan and the work. */
   private buildInput(): Parameters<typeof buildPrompt>[0] {
-    const { row, issue, branch, continuation } = this.c
+    const { row, issue, branch, startingOver } = this.c
+    const sentBack = this.c.continuation ?? startingOver
     return {
       repo: row.repository,
       issueNumber: row.issueNumber,
       title: issue.title,
       body: issue.body,
       branch,
-      feedback: continuation?.feedback,
-      feedbackFrom: continuation?.fromChecks ? 'checks' : 'person',
+      feedback: sentBack?.feedback,
+      feedbackFrom: sentBack?.fromChecks ? 'checks' : 'person',
+      startsOver: startingOver !== undefined,
       askQuestions: this.c.repo.askQuestions,
       knowledgeDir: this.feed?.dir,
       checks: this.checks,
