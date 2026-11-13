@@ -78,7 +78,11 @@ export function NewJob({
           <Dialog.Description>{t.newJob.description}</Dialog.Description>
         </Dialog.Header>
         <Dialog.Body className="space-y-3 text-sm">
-          {enabled.length === 0 ? (
+          {repos === undefined ? (
+            message ? null : (
+              <p className="text-muted-foreground">{t.newJob.loading}</p>
+            )
+          ) : enabled.length === 0 ? (
             <p className="text-muted-foreground">{t.newJob.enableFirst}</p>
           ) : (
             <>

@@ -73,6 +73,14 @@ describe('the language switch', () => {
   })
 })
 
+describe('the work tab', () => {
+  it('has a Portuguese name of its own', () => {
+    mount('/work')
+    expect(ptBR.topBar.work).not.toBe(en.topBar.work)
+    expect(screen.getByRole('tab', { name: ptBR.topBar.work })).toBeDefined()
+  })
+})
+
 describe('the way to the guide', () => {
   const ALL = '["board","plans","repositories","inbox","health","setup"]'
 

@@ -2,6 +2,10 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { CopyProvider, LANGUAGE_KEY } from '../lib/copy'
+import { en } from '../lib/copy/en'
+import { ptBR } from '../lib/copy/pt-BR'
+
 import { Assist } from './Assist'
 
 type Agent = {
@@ -161,5 +165,39 @@ describe('the assistant under a text box', () => {
     agent.error = new Error('invalid x-api-key')
     mount()
     expect(screen.getByRole('alert').textContent).toMatch(/ANTHROPIC_API_KEY/)
+  })
+})
+
+describe('the assistant in the language of the panel', () => {
+  afterEach(() => window.localStorage.clear())
+
+  it.each([
+    ['en', en],
+    ['pt-BR', ptBR],
+  ] as const)('writes its button and its hint in %s', (language, copy) => {
+    window.localStorage.setItem(LANGUAGE_KEY, language)
+    render(
+      <CopyProvider>
+        <Assist kind="job" text="" onUse={vi.fn()} />
+      </CopyProvider>,
+    )
+    expect(screen.getByRole('button', { name: copy.assist.label.job })).toBeTruthy()
+    expect(screen.getByText(copy.assist.needsWords)).toBeTruthy()
+  })
+
+  it('writes a suggestion and its buttons in Portuguese', () => {
+    window.localStorage.setItem(LANGUAGE_KEY, 'pt-BR')
+    agent.thread = proposed({ text: 'Uma página', domains: ['a.com'] })
+    render(
+      <CopyProvider>
+        <Assist kind="job" text="uma página" onUse={vi.fn()} />
+      </CopyProvider>,
+    )
+    expect(screen.getByRole('region', { name: ptBR.assist.suggestion })).toBeTruthy()
+    expect(screen.getByRole('button', { name: ptBR.assist.use })).toBeTruthy()
+    expect(screen.getByRole('button', { name: ptBR.assist.dismiss })).toBeTruthy()
+    expect(screen.getByRole('button', { name: ptBR.assist.change })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: ptBR.assist.askChange })).toBeTruthy()
+    expect(screen.getByText(ptBR.assist.extraDomains('a.com'))).toBeTruthy()
   })
 })

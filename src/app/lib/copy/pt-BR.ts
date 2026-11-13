@@ -45,7 +45,7 @@ export const ptBR: Copy = {
   topBar: {
     part: 'Parte do app',
     chat: 'Chat',
-    work: 'Work',
+    work: 'Trabalho',
     guide: 'Guia',
     openGuide: (name) => `Abrir o ${name}`,
     closeGuide: (name) => `Fechar o ${name}`,
@@ -135,6 +135,7 @@ export const ptBR: Copy = {
     description:
       'Abre uma issue no GitHub. Com \u201cComeçar agora\u201d a fábrica começa assim que ela é criada.',
     enableFirst: 'Primeiro, ative um repositório em Repositórios.',
+    loading: 'Lendo os seus repositórios…',
     repository: 'Repositório',
     titleField: 'Título',
     bodyField: 'O que ele deve fazer, e como você vai saber que funcionou?',
@@ -251,6 +252,25 @@ export const ptBR: Copy = {
     seconds: (n: string) => `${n} s`,
     proofFailed: (reason: string) => `A prova não pôde rodar: ${reason}`,
   },
+  assist: {
+    label: {
+      goal: 'Me ajude a dizer',
+      job: 'Me ajude a dizer',
+      issue: 'Melhorar isto',
+      changes: 'Me ajude a dizer',
+      resolution: 'Me ajude a dizer',
+      setup: 'Configure para mim',
+    },
+    working: 'Trabalhando nisso…',
+    needsWords: 'Escreva algumas palavras primeiro.',
+    suggestion: 'Sugestão',
+    extraDomains: (domains) => `Domínios extras: ${domains}`,
+    use: 'Usar isto',
+    dismiss: 'Descartar',
+    askChange: 'Pedir uma mudança',
+    changePlaceholder: 'Quer diferente? Diga o quê, com as suas palavras',
+    change: 'Mudar',
+  },
   onboarding: {
     title: 'Primeiros passos',
     stepsLabel: 'Passos para ligar um repositório',
@@ -271,6 +291,8 @@ export const ptBR: Copy = {
       none: 'Nenhum repositório corresponde à busca.',
       empty:
         'O App ainda não alcança nenhum repositório. Instale-o no GitHub e escolha os repositórios.',
+      private: 'privado',
+      public: 'público',
       pick: 'Ligar',
       picking: 'Ligando…',
       chosen: (name: string) => `${name} está ligado.`,
