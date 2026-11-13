@@ -9,7 +9,14 @@ import { ActionRefused } from '../panel/actions'
 import { changeAgentSettings } from '../panel/agent-settings'
 
 import { agentsView } from './agent-view'
-import { agentSettings, effectiveEnv, loadChosen, saveChosen, SettingRefused } from './settings'
+import {
+  agentSettings,
+  effectiveEnv,
+  listSettingChanges,
+  loadChosen,
+  saveChosen,
+  SettingRefused,
+} from './settings'
 import { optionsFor } from './engine-models'
 
 beforeAll(async () => {
@@ -17,7 +24,9 @@ beforeAll(async () => {
   await migrate(getDb(), { migrationsFolder: 'drizzle' })
 })
 beforeEach(async () => {
-  await getPool().query('truncate table setting, repository restart identity cascade')
+  await getPool().query(
+    'truncate table setting, agent_setting_change, repository restart identity cascade',
+  )
 })
 afterAll(() => getStorageManager().dispose())
 
@@ -275,5 +284,39 @@ describe('the model and the effort, kept in the panel', () => {
     expect(view.agents.find((a) => a.id === 'builder')?.engine.value).toBe(
       'codex · gpt-6.1-sol · esforço high',
     )
+  })
+})
+
+describe('the history of the agent settings', () => {
+  it('keeps both changes of the reviewer, in order, with their times and what each replaced', async () => {
+    const before = Date.now()
+    await changeAgentSettings(getDb(), { reviewer: 'claude-code' }, ready)
+    await changeAgentSettings(
+      getDb(),
+      { reviewer: 'codex', models: { reviewer: 'gpt-6-luna' } },
+      ready,
+    )
+
+    const changes = (await listSettingChanges(getDb())).filter((c) => c.role === 'reviewer')
+
+    expect(changes.map((c) => [c.field, c.oldValue, c.newValue])).toEqual([
+      ['engine', null, 'claude-code'],
+      ['engine', 'claude-code', 'codex'],
+      ['model', null, 'codex:gpt-6-luna'],
+    ])
+    const times = changes.map((c) => Date.parse(c.at))
+    expect(times[0]).toBeGreaterThanOrEqual(before - 1000)
+    expect(times).toEqual([...times].sort((a, b) => a - b))
+  })
+
+  it('records nothing for a save that changes nothing, and a reset to the default as a null', async () => {
+    await changeAgentSettings(getDb(), { reviewer: 'codex' }, ready)
+    await changeAgentSettings(getDb(), { reviewer: 'codex' }, ready)
+    await changeAgentSettings(getDb(), { reviewer: null }, ready)
+
+    expect((await listSettingChanges(getDb())).map((c) => [c.oldValue, c.newValue])).toEqual([
+      [null, 'codex'],
+      ['codex', null],
+    ])
   })
 })

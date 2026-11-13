@@ -2,7 +2,7 @@ import { route } from 'theokit/server/define'
 import { z } from 'zod'
 
 import { getDb } from '../../../db'
-import { changeAgentSettings } from '../../../panel/agent-settings'
+import { agentSettingHistory, changeAgentSettings } from '../../../panel/agent-settings'
 import { refusal } from '../../../panel/deps'
 import { ownerOnly } from '../../../panel/policy'
 
@@ -28,4 +28,10 @@ export const PUT = route()
       return refusal(error)
     }
   })
+  .build()
+
+/** Every change of the agent settings, oldest first, with its time. */
+export const GET = route()
+  .policy(ownerOnly)
+  .handler(async () => agentSettingHistory(getDb()))
   .build()

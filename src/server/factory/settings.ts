@@ -1,8 +1,8 @@
-import { eq, inArray } from 'drizzle-orm'
+import { asc, eq, inArray } from 'drizzle-orm'
 
-import type { AgentRole, AgentSettings, EngineOption } from '../../shared/panel'
+import type { AgentRole, AgentSettingChange, AgentSettings, EngineOption } from '../../shared/panel'
 import type { Database } from '../db'
-import { repository, setting } from '../db/schema'
+import { agentSettingChange, repository, setting } from '../db/schema'
 
 import { EFFORT_ENV, engineModels, isSafeName, MODEL_ENV, tagged, untag } from './engine-models'
 import { withClaudeToken } from './claude-token'
@@ -19,6 +19,13 @@ const ROLES = Object.keys(ROLE_ENV) as AgentRole[]
 const ENGINE_KEY = (role: AgentRole) => `agent.${role}`
 const MODEL_KEY = (role: AgentRole) => `agent.${role}.model`
 const EFFORT_KEY = (role: AgentRole) => `agent.${role}.effort`
+
+type Write = {
+  key: string
+  value: string | null
+  role: AgentRole
+  field: AgentSettingChange['field']
+}
 
 export type Chosen = Record<AgentRole, string | null>
 type Stored = { engine: Chosen; model: Chosen; effort: Chosen }
@@ -138,7 +145,7 @@ export async function saveChosen(
   const after = effectiveOf({ ...env, ...overlay })
   const catalog = engineModels(env, read)
 
-  const writes: [string, string | null][] = []
+  const writes: Write[] = []
   for (const role of ROLES) {
     const engine = after[role]
     const offered = catalog[engine] ?? { models: [], efforts: [] }
@@ -158,13 +165,29 @@ export async function saveChosen(
       const levels = offered.models.find((m) => m.id === chosenModel)?.efforts ?? offered.efforts
       known('effort', effort, levels, engine)
     }
-    if (patch[role] !== undefined) writes.push([ENGINE_KEY(role), patch[role] ?? null])
-    if (model !== undefined) writes.push([MODEL_KEY(role), model ? tagged(engine, model) : null])
+    if (patch[role] !== undefined)
+      writes.push({ key: ENGINE_KEY(role), value: patch[role] ?? null, role, field: 'engine' })
+    if (model !== undefined)
+      writes.push({
+        key: MODEL_KEY(role),
+        value: model ? tagged(engine, model) : null,
+        role,
+        field: 'model',
+      })
     if (effort !== undefined)
-      writes.push([EFFORT_KEY(role), effort ? tagged(engine, effort) : null])
+      writes.push({
+        key: EFFORT_KEY(role),
+        value: effort ? tagged(engine, effort) : null,
+        role,
+        field: 'effort',
+      })
   }
 
-  for (const [key, value] of writes) {
+  for (const { key, value, role, field } of writes) {
+    const before = stored[field][role]
+    if (before !== value) {
+      await db.insert(agentSettingChange).values({ role, field, oldValue: before, newValue: value })
+    }
     if (value === null) await db.delete(setting).where(eq(setting.key, key))
     else {
       await db
@@ -200,4 +223,18 @@ export async function agentSettings(
       .filter((r) => r.harness || r.reviewer)
       .map((r) => ({ repository: r.fullName, builder: r.harness, reviewer: r.reviewer })),
   }
+}
+
+/** Every change of the agent settings, oldest first, each with when it was made. */
+export async function listSettingChanges(db: Database): Promise<AgentSettingChange[]> {
+  const rows = await db.select().from(agentSettingChange).orderBy(asc(agentSettingChange.id))
+  return rows.map((r) => ({
+    id: r.id,
+    role: r.role,
+    field: r.field,
+    oldValue: r.oldValue,
+    newValue: r.newValue,
+    actor: r.actor,
+    at: r.at.toISOString(),
+  }))
 }

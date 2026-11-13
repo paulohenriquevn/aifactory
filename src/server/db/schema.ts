@@ -351,6 +351,12 @@ export const agentRun = pgTable('agent_run', {
     .references(() => task.id),
   role: text('role', { enum: ['builder', 'reviewer'] }).notNull(),
   harness: text('harness').notNull(),
+  /** The model and effort the pass ran with; null when the owner chose none and the agent used its own default. */
+  model: text('model'),
+  effort: text('effort'),
+  /** Tokens the agent reported; null for an agent that reports none. */
+  tokensIn: integer('tokens_in'),
+  tokensOut: integer('tokens_out'),
   attempt: integer('attempt').notNull(),
   costUsd: real('cost_usd'),
   durationMs: integer('duration_ms').notNull(),
@@ -529,6 +535,22 @@ export const setting = pgTable('setting', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/**
+ * Every change of the agent settings, oldest first: which role, which field, from what to what, and when.
+ * `setting` keeps only the latest choice; this keeps the proof that a pass ran under one. A null is the
+ * agent's own default.
+ */
+export const agentSettingChange = pgTable('agent_setting_change', {
+  id: serial('id').primaryKey(),
+  role: text('role', { enum: ['builder', 'planner', 'reviewer'] }).notNull(),
+  field: text('field', { enum: ['engine', 'model', 'effort'] }).notNull(),
+  oldValue: text('old_value'),
+  newValue: text('new_value'),
+  /** Who changed it. The panel has one owner, so it is always `owner`. */
+  actor: text('actor').notNull().default('owner'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 })
 
 /**

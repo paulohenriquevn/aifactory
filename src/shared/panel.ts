@@ -123,6 +123,12 @@ export type RunView = {
   id: number
   role: 'builder' | 'reviewer'
   harness: string
+  /** The model and effort the pass ran with; null when the agent used its own default. */
+  model: string | null
+  effort: string | null
+  /** Null for an agent that reports no tokens. */
+  tokensIn: number | null
+  tokensOut: number | null
   attempt: number
   /** Empty for an agent that does not report a cost. */
   costUsd: number | null
@@ -639,6 +645,26 @@ export type AgentSettings = {
   engines: Record<string, EngineModels>
   /** Repositories that name an agent of their own, which wins over what is chosen here. */
   repositoriesWithOwn: { repository: string; builder: string | null; reviewer: string | null }[]
+}
+
+/** One change of the agent settings: what a role had, what it has now, and when. A null is the default. */
+export type AgentSettingChange = {
+  id: number
+  role: AgentRole
+  field: 'engine' | 'model' | 'effort'
+  oldValue: string | null
+  newValue: string | null
+  actor: string
+  at: string
+}
+
+/** How the first review of each run went, for the agent that did it. */
+export type ReviewerApproval = {
+  reviewer: string
+  reviews: number
+  approved: number
+  /** approved / reviews. */
+  share: number
 }
 
 /** A model a coding agent can be told to use, and the effort levels it takes. */

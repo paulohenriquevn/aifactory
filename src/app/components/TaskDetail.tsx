@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { columnOf, type TaskDetail } from '../../shared/panel'
+import { columnOf, type ReviewView, type RunView, type TaskDetail } from '../../shared/panel'
 import { Pass, StageBadge } from './Badges'
 import { PlanSection } from './PlanSection'
 import { WatchPanel } from './WatchPanel'
@@ -155,7 +155,9 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
               <tr>
                 <th className="py-1 pr-3">{t.task.role}</th>
                 <th className="py-1 pr-3">{t.task.agent}</th>
+                <th className="py-1 pr-3">{t.task.model}</th>
                 <th className="py-1 pr-3">{t.task.attempt}</th>
+                <th className="py-1 pr-3">{t.task.tokens}</th>
                 <th className="py-1 pr-3">{t.task.cost}</th>
                 <th className="py-1 pr-3">{t.task.time}</th>
                 <th className="py-1 pr-3">{t.task.result}</th>
@@ -166,7 +168,15 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
                 <tr key={r.id} className="border-t border-border">
                   <td className="py-1 pr-3">{r.role}</td>
                   <td className="py-1 pr-3">{r.harness}</td>
+                  <td className="py-1 pr-3">{modelOf(r, t.task.defaultModel)}</td>
                   <td className="py-1 pr-3">{r.attempt}</td>
+                  <td className="py-1 pr-3">
+                    {r.tokensIn === null && r.tokensOut === null ? (
+                      <span className="text-muted-foreground">{t.task.notReported}</span>
+                    ) : (
+                      `${r.tokensIn ?? '?'} / ${r.tokensOut ?? '?'}`
+                    )}
+                  </td>
                   <td className="py-1 pr-3">
                     {r.costUsd === null ? (
                       <span className="text-muted-foreground">{t.task.notReported}</span>
@@ -234,6 +244,9 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
                   <span className="font-medium">{t.task.reviewLine(r.round, r.verdict)}</span>
                   <span className="text-xs text-muted-foreground">
                     {t.task.reviewedOn(r.reviewer, shortSha(r.sha))}
+                    {reviewRun(detail.runs, r) ? (
+                      <> · {modelOf(reviewRun(detail.runs, r)!, t.task.defaultModel)}</>
+                    ) : null}
                   </span>
                 </div>
                 <p className="mt-1 text-foreground">{r.summary}</p>
@@ -253,5 +266,18 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
         )}
       </section>
     </div>
+  )
+}
+
+/** The model and effort a pass ran with, said as one line; the agent's own default when none was chosen. */
+function modelOf(run: RunView, fallback: string): string {
+  if (!run.model && !run.effort) return fallback
+  return [run.model ?? fallback, run.effort].filter(Boolean).join(' · ')
+}
+
+/** The agent pass that made a review: the reviewer's own run of that round. */
+function reviewRun(runs: RunView[], r: ReviewView): RunView | undefined {
+  return runs.find(
+    (x) => x.role === 'reviewer' && x.harness === r.reviewer && x.attempt === r.round,
   )
 }

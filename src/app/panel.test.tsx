@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -878,6 +878,10 @@ describe('health', () => {
             id: 1,
             role: 'builder',
             harness: 'claude-code',
+            model: null,
+            effort: null,
+            tokensIn: null,
+            tokensOut: null,
             attempt: 1,
             costUsd: 0.12,
             durationMs: 31_500,
@@ -889,6 +893,10 @@ describe('health', () => {
             id: 2,
             role: 'reviewer',
             harness: 'codex',
+            model: null,
+            effort: null,
+            tokensIn: null,
+            tokensOut: null,
             attempt: 1,
             costUsd: null,
             durationMs: 9_000,
@@ -903,9 +911,70 @@ describe('health', () => {
     await waitFor(() => expect(screen.getByRole('region', { name: 'Executions' })).toBeDefined())
     expect(screen.getByText('$0.12')).toBeDefined()
     expect(screen.getByText('31.5 s')).toBeDefined()
-    expect(screen.getByText('not reported')).toBeDefined()
+    // The reviewer's cost, and the tokens of both passes.
+    expect(screen.getAllByText('not reported')).toHaveLength(3)
     expect(screen.getByText('out of quota')).toBeDefined()
     expect(screen.getByText('finished')).toBeDefined()
+  })
+
+  it('shows which agent, model and effort built and reviewed, and the tokens each used', async () => {
+    const run = {
+      attempt: 1,
+      costUsd: null,
+      durationMs: 1000,
+      ok: true,
+      quota: false,
+      at: '2026-11-04T10:00:00Z',
+    }
+    serve({
+      'GET /api/panel/tasks/5': detail({
+        reviews: [
+          {
+            id: 1,
+            round: 1,
+            sha: 'abcdef123456',
+            reviewer: 'codex',
+            verdict: 'approve',
+            summary: 'fine',
+            findings: [],
+            at: '2026-11-04T10:04:00Z',
+          },
+        ],
+        runs: [
+          {
+            ...run,
+            id: 1,
+            role: 'builder',
+            harness: 'claude-code',
+            model: 'opus',
+            effort: 'high',
+            tokensIn: 1200,
+            tokensOut: 300,
+          },
+          {
+            ...run,
+            id: 2,
+            role: 'reviewer',
+            harness: 'codex',
+            model: 'gpt-6.1-sol',
+            effort: 'medium',
+            tokensIn: null,
+            tokensOut: null,
+          },
+        ],
+      }),
+    })
+    renderTask()
+    const runs = await screen.findByRole('region', { name: 'Executions' })
+    const rows = within(runs).getAllByRole('row')
+    expect(rows[1].textContent).toContain('claude-code')
+    expect(rows[1].textContent).toContain('opus · high')
+    expect(rows[1].textContent).toContain('1200 / 300')
+    expect(rows[2].textContent).toContain('codex')
+    expect(rows[2].textContent).toContain('gpt-6.1-sol · medium')
+    const reviews = screen.getByRole('region', { name: 'Reviews' })
+    expect(reviews.textContent).toContain('codex on abcdef1')
+    expect(reviews.textContent).toContain('gpt-6.1-sol · medium')
   })
 })
 

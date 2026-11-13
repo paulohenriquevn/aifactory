@@ -976,6 +976,33 @@ describe('runTask review loop', () => {
     expect(seen.drafts).toEqual([false])
   })
 
+  it('records the model, the effort and the tokens of the reviewer pass on its agent_run row', async () => {
+    const id = await seedTask()
+    const reviewer = {
+      ...reviewerSaying(verdictJson('approve')),
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+    }
+    const run = reviewer.run
+    reviewer.run = async (backend, input) => ({
+      ...(await run(backend, input)),
+      tokensIn: 900,
+      tokensOut: 40,
+    })
+
+    await runTask(deps(new FakeSandbox(changed()), { reviewer }), id)
+
+    const rows = await getDb().select().from(agentRun).where(eq(agentRun.taskId, id))
+    expect(rows.find((r) => r.role === 'reviewer')).toMatchObject({
+      harness: 'fake-reviewer',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+      tokensIn: 900,
+      tokensOut: 40,
+    })
+    expect(rows.find((r) => r.role === 'builder')).toMatchObject({ model: null, effort: null })
+  })
+
   it('sends the work back to the same session, then opens the pull request on the next approval', async () => {
     const id = await seedTask()
     const builder = resumableBuilder()

@@ -15,7 +15,7 @@ import {
   task,
   watch,
 } from '../db/schema'
-import { metricsReport } from '../panel/metrics'
+import { approvalByAgent, metricsReport } from '../panel/metrics'
 
 import { BANDS } from './config'
 import { loadHistories, measure } from './measure'
@@ -327,5 +327,32 @@ describe('metricsReport', () => {
       band: 'in_band',
     })
     expect(report.signals).toEqual([])
+  })
+})
+
+describe('first-review approval by agent', () => {
+  it('gives one series for each agent that reviewed, so a change of reviewer can be compared', async () => {
+    const db = getDb()
+    const reviewed = async (reviewer: string, verdict: 'approve' | 'changes') => {
+      const taskId = await delivered(10, 1)
+      await db.insert(review).values({
+        taskId,
+        round: 1,
+        sha: 'a1',
+        reviewer,
+        verdict,
+        summary: '',
+        findings: [],
+        at: dayAt(10, 20),
+      })
+    }
+    await reviewed('claude-code', 'changes')
+    await reviewed('claude-code', 'approve')
+    await reviewed('codex', 'approve')
+
+    expect(await approvalByAgent(db)).toEqual([
+      { reviewer: 'claude-code', reviews: 2, approved: 1, share: 0.5 },
+      { reviewer: 'codex', reviews: 1, approved: 1, share: 1 },
+    ])
   })
 })
