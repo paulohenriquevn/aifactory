@@ -30,3 +30,4 @@ minimumReleaseAgeExclude:
   - theokit@0.77.4 || 0.78.0 || 0.79.0
   - '@theokit/sdk@5.14.0'
   - '@theokit/agents@16.3.0'
+  - '@usetheo/ui@0.36.0'
