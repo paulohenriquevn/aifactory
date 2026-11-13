@@ -4,7 +4,7 @@ import { ThemeProvider, builtinThemes } from '@theokit/ui'
 import { useEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router'
 
-import type { HealthReport, InboxItem } from '../shared/panel'
+import type { HealthReport, InboxItem, RepositoriesView } from '../shared/panel'
 
 import { GuidePanel } from './components/guide/GuidePanel'
 import { Rail } from './components/shell/Rail'
@@ -57,6 +57,10 @@ function Shell() {
   const me = useResource<{ owner: boolean; name?: string }>('/api/panel/me', { everyMs: 60_000 })
   const inbox = useResource<{ items: InboxItem[] }>('/api/panel/inbox')
   const health = useResource<HealthReport>('/api/panel/health', { everyMs: 60_000 })
+  const repositories = useResource<RepositoriesView>('/api/panel/repositories', {
+    everyMs: 60_000,
+    stream: false,
+  })
   const [menuHidden, setMenuHidden] = useMenuHidden()
   const [searchOnOpen, setSearchOnOpen] = useState(false)
 
@@ -95,6 +99,7 @@ function Shell() {
                     setMenuHidden(true)
                   }}
                   startSearching={searchOnOpen}
+                  showOnboarding={repositories.data?.repositories.some((r) => r.enabled) === false}
                   waiting={inbox.data?.items.length ?? 0}
                   wrong={health.data?.findings.length ?? 0}
                   name={me.data?.name ?? t.layout.ownerName}
