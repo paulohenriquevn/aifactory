@@ -88,9 +88,14 @@ describe('stalled work', () => {
     expect(found.detail).toContain('in build and silent for 50 minutes')
   })
 
+  it('flags a run stalled while planning', async () => {
+    const stuck = await seed('plan', 50)
+    expect(await keys()).toEqual([`stalled:run:${stuck}`])
+  })
+
   it('looks at every stage where a run is alive, and at none where nothing should be moving', async () => {
-    for (const stage of ['sandbox', 'push', 'verify', 'review', 'pr']) await seed(stage, 90)
-    expect(await keys()).toHaveLength(5)
+    for (const stage of ['sandbox', 'plan', 'push', 'verify', 'review', 'pr']) await seed(stage, 90)
+    expect(await keys()).toHaveLength(6)
     await getPool().query('truncate table stage_event, task, ingress restart identity cascade')
     for (const stage of ['waiting', 'done', 'released', 'handoff', 'failed']) await seed(stage, 600)
     expect(await keys()).toEqual([])

@@ -84,8 +84,8 @@ const each = <S extends TaskStage>(stages: readonly S[], rule: Rule) =>
 
 /** The stages in which a run is alive. */
 const WORKING = ['sandbox', 'plan', 'build', 'push', 'verify', 'review', 'pr'] as const
-/** The stages the supervisor looks at for a run that stalled or was lost. `plan` is not one of them. */
-const SUPERVISED = ['intake', 'sandbox', 'build', 'push', 'verify', 'review', 'pr'] as const
+/** The stages the supervisor looks at for a run that stalled or was lost. */
+const SUPERVISED = ['intake', 'sandbox', 'plan', 'build', 'push', 'verify', 'review', 'pr'] as const
 
 const START_OVER = act('start_over')
 
@@ -203,7 +203,7 @@ const TRANSITIONS: Record<TransitionEvent, Record<TaskStage, Rule>> = {
   },
   retry_from_finding: {
     ...each(SUPERVISED, START_OVER),
-    ...each(['plan', 'waiting', 'released', 'cancelled'], NOT_RETRIED),
+    ...each(['waiting', 'released', 'cancelled'], NOT_RETRIED),
     done: whenNeverMerged(NOT_RETRIED),
     handoff: START_OVER,
     failed: START_OVER,
