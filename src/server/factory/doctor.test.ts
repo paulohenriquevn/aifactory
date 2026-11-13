@@ -55,6 +55,7 @@ describe('issues_disabled', () => {
         'Turn Issues on under Settings, General, Features. A fork starts with Issues off. If you cannot change the settings, ask an administrator of the repository.',
       link: 'https://github.com/o/r/settings',
       canRepair: false,
+      say: { code: 'issues_off', values: { repo: 'o/r' } },
     })
   })
 
@@ -172,6 +173,7 @@ describe('app_events', () => {
       repair: 'Turn the missing events on under "Subscribe to events" in the App settings.',
       link: settingsUrl,
       canRepair: false,
+      say: { code: 'app_events', values: { missing: 'check_run' } },
     })
   })
 
@@ -189,6 +191,7 @@ describe('branches', () => {
       repair: 'The factory can create what is missing from the head of the release branch.',
       link: 'https://github.com/o/r/branches',
       canRepair: true,
+      say: { code: 'branches_missing', values: { repo: 'o/r', missing: 'workspace, develop' } },
     })
   })
 
@@ -214,6 +217,7 @@ describe('label', () => {
       repair: 'The factory can create the label.',
       link: 'https://github.com/o/r/labels',
       canRepair: true,
+      say: { code: 'label_missing', values: { repo: 'o/r' } },
     })
   })
 
@@ -251,6 +255,15 @@ describe('auto_merge', () => {
       repair: 'Turn on "Allow auto-merge" under Settings, General, Pull Requests.',
       link: 'https://github.com/o/r/settings',
       canRepair: false,
+      say: {
+        code: 'auto_merge_off',
+        values: {
+          integration: 'workspace',
+          repo: 'o/r',
+          off: '"Allow auto-merge"',
+          turnOn: '"Allow auto-merge"',
+        },
+      },
     })
   })
 
@@ -341,6 +354,10 @@ describe('ci_silent', () => {
         'Open the Actions tab: enable a workflow GitHub disabled for inactivity, or make the workflow run on pull requests into workspace.',
       link: 'https://github.com/o/r/actions',
       canRepair: false,
+      say: {
+        code: 'ci_silent',
+        values: { integration: 'workspace', silent: 'lint', commits: '2' },
+      },
     })
   })
 
@@ -368,6 +385,7 @@ describe('checks_parity', () => {
         'Add a check that runs the same command to the checks of the repository in the panel, or to .factory/setup.json.',
       link: '/repositories',
       canRepair: false,
+      say: { code: 'checks_alone', values: { integration: 'workspace', alone: 'static gates' } },
     })
   })
 
@@ -499,6 +517,15 @@ describe('publish_mode', () => {
         'Set the version in package.json to the one the release will have before promoting, or publish with changesets.',
       link: 'https://github.com/o/r/blob/develop/.github/workflows/release.yml',
       canRepair: false,
+      say: {
+        code: 'tag_mismatch',
+        values: {
+          workflow: '.github/workflows/release.yml',
+          ref: 'develop',
+          version: '1.2.3',
+          next: 'v1.2.4, v1.3.0 or v2.0.0',
+        },
+      },
     })
   })
 
@@ -537,6 +564,7 @@ describe('recipe', () => {
       repair: 'Fix .factory/setup.json on the default branch: a run stops with the same reason.',
       link: url,
       canRepair: false,
+      say: { code: 'recipe_problem', values: { problem } },
     })
   })
 
@@ -549,6 +577,7 @@ describe('recipe', () => {
       repair: 'Approve the domains on the page of the repository in the panel.',
       link: '/repositories',
       canRepair: false,
+      say: { code: 'recipe_pending', values: { pending: 'a.example.org, b.example.org' } },
     })
   })
 
@@ -598,6 +627,10 @@ describe('sandbox', () => {
         'Add credit to the sandbox provider, or fix its key on the server. The task retries itself once the provider accepts.',
       link: '/tasks/7',
       canRepair: false,
+      say: {
+        code: 'sandbox_refused',
+        values: { taskId: '7', at: '2026-11-13T10:00:00.000Z', error: 'Status code 402' },
+      },
     })
     expect(sandboxItem(readOf({ refusal, lastStartedAt: '2026-11-13T09:59:59.000Z' })).status).toBe(
       'blocked',
@@ -741,5 +774,56 @@ describe('what the factory can repair itself', () => {
         new RegExp(`^the factory cannot repair ${id} itself: \\S.{20,}$`),
       )
     }
+  })
+})
+
+describe('the sentences of an item that is not fine', () => {
+  it('names the owner of the App in the repair of app_events when the owner is known', () => {
+    const item = appEventsItem(
+      readOf({
+        events: [],
+        settingsUrl: 'https://github.com/settings/apps/x/permissions',
+        owner: 'paulo',
+      }),
+    )
+    expect(item.say?.values.owner).toBe('paulo')
+    expect(item.repair).toBe(
+      'Turn the missing events on under "Subscribe to events" in the App settings. The page opens only when you are signed in to GitHub as paulo, the owner of the App.',
+    )
+  })
+
+  it('sends what was tried and what came back with an item it could not read', () => {
+    const item = labelItem(REPO, unread('reading the labels of o/r', 'GitHub answered 502'))
+    expect(item.say).toEqual({
+      code: 'unknown',
+      values: { tried: 'reading the labels of o/r', error: 'GitHub answered 502' },
+    })
+    expect(item.cause).toBe(
+      'Not known: reading the labels of o/r failed (GitHub answered 502). Nothing is assumed to be fine.',
+    )
+  })
+
+  it('says a tag workflow has no version to compare, with the workflow and the branch', () => {
+    const item = publishItem(
+      REPO,
+      readOf({
+        ref: 'develop',
+        changesets: false,
+        tagWorkflows: ['.github/workflows/release.yml'],
+        manifestVersion: undefined,
+        versionTags: [],
+      }),
+    )
+    expect(item.say).toEqual({
+      code: 'tag_no_version',
+      values: { workflow: '.github/workflows/release.yml', ref: 'develop' },
+    })
+    expect(item.cause).toBe(
+      'tag: .github/workflows/release.yml runs on a tag, and package.json on develop has no version to compare with the next tag.',
+    )
+  })
+
+  it('sends no code with an item that is fine', () => {
+    expect(labelItem(REPO, readOf(true)).say).toBeUndefined()
   })
 })

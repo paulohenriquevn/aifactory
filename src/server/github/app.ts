@@ -51,7 +51,7 @@ export type AppRepos = {
 /** What the App is subscribed to, which its owner changes on GitHub and nowhere else. */
 export type AppEvents = {
   /** The webhook events GitHub sends the App, and the page where its owner chooses them. */
-  subscriptions(): Promise<{ events: string[]; settingsUrl: string }>
+  subscriptions(): Promise<{ events: string[]; settingsUrl: string; owner?: string }>
 }
 
 /** What an installation was granted, which its account accepts on GitHub and nowhere else. */
@@ -187,7 +187,11 @@ export function createGithubApp(
       // An App's settings live under its owner: the account's own, or the organization's.
       const account =
         owner.type === 'Organization' ? `organizations/${owner.login}/settings` : 'settings'
-      return { events, settingsUrl: `https://github.com/${account}/apps/${slug}/permissions` }
+      return {
+        events,
+        settingsUrl: `https://github.com/${account}/apps/${slug}/permissions`,
+        owner: owner.login,
+      }
     },
     async installationPermissions(repo) {
       if (!REPO.test(repo)) {

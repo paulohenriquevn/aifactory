@@ -1,3 +1,5 @@
+import type { DoctorSay } from './doctor-say'
+
 /** What the panel's API returns. The server builds these, the interface reads them. */
 
 export type Stage =
@@ -480,6 +482,8 @@ export type DoctorItem = {
   link?: string
   /** Whether the factory can make the repair itself. */
   canRepair: boolean
+  /** The code and values of the two sentences, for an item that is not fine: the panel translates from it. */
+  say?: DoctorSay
 }
 
 /** How a repository publishes a release: its own changesets workflow, a workflow that runs on a tag, or nothing. */

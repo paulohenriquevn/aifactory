@@ -442,6 +442,7 @@ describe('where the App is installed and who owns it', () => {
     expect(await app(fetch).subscriptions()).toEqual({
       events: ['issues', 'issue_comment'],
       settingsUrl: 'https://github.com/settings/apps/my-app/permissions',
+      owner: 'paulo',
     })
   })
 
@@ -451,6 +452,7 @@ describe('where the App is installed and who owns it', () => {
     expect(await app(fetch).subscriptions()).toEqual({
       events: [],
       settingsUrl: 'https://github.com/organizations/acme/settings/apps/my-app/permissions',
+      owner: 'acme',
     })
   })
 

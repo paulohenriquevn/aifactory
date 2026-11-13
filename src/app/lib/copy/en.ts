@@ -1,4 +1,6 @@
 /** The panel's text in English. `pt-BR.ts` is typed against this one, so the two always have the same keys. */
+import { DOCTOR_SAY_EN } from '../../../shared/doctor-say'
+
 export const en = {
   layout: {
     loading: 'Loading…',
@@ -249,6 +251,7 @@ export const en = {
     tooSlow: 'Too slow',
     seconds: (n: string) => `${n}s`,
     proofFailed: (reason: string) => `The proof could not run: ${reason}`,
+    say: DOCTOR_SAY_EN,
   },
   assist: {
     label: {
