@@ -16,7 +16,7 @@ export type Found = {
 }
 
 /** The stages in which a run is alive and should be producing events. */
-const WORKING = ['sandbox', 'build', 'push', 'verify', 'review', 'pr'] as const
+const WORKING = ['sandbox', 'plan', 'build', 'push', 'verify', 'review', 'pr'] as const
 
 export type Limits = {
   /** The longest a working task may go without entering a stage: past the agent's own timeout. */
