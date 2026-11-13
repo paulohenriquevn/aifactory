@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import type { AppHooks, AppRepos, HookDelivery } from '../github/app'
+import type { AppEvents, AppHooks, AppRepos, HookDelivery } from '../github/app'
 
 import type { KnowledgeStatus } from '../../shared/knowledge'
 
-import { chatItem, knowledgeItem, sandboxItem, setupReport } from './setup'
+import { chatItem, eventsItem, knowledgeItem, sandboxItem, setupReport } from './setup'
 import { openrouterCredit } from './setup-probes'
 
 const full = {
@@ -25,7 +25,11 @@ const delivery = (statusCode: number): HookDelivery => ({
   event: 'issues',
 })
 
-const app = (over: Partial<AppHooks & AppRepos> = {}): AppHooks & AppRepos => ({
+type App = AppHooks & AppRepos & AppEvents
+
+const SETTINGS = 'https://github.com/settings/apps/my-app/permissions'
+
+const app = (over: Partial<App> = {}): App => ({
   installations: async () => [
     {
       id: 1,
@@ -39,6 +43,18 @@ const app = (over: Partial<AppHooks & AppRepos> = {}): AppHooks & AppRepos => ({
   installationRepositories: async () => [{ fullName: 'o/a', private: true, defaultBranch: 'main' }],
   hookDeliveries: async () => [delivery(200)],
   redeliver: async () => {},
+  subscriptions: async () => ({
+    events: [
+      'check_run',
+      'check_suite',
+      'issue_comment',
+      'issues',
+      'pull_request',
+      'pull_request_review',
+      'pull_request_review_comment',
+    ],
+    settingsUrl: SETTINGS,
+  }),
   ...over,
 })
 
@@ -52,6 +68,7 @@ describe('the setup report', () => {
     expect(report.items.map((i) => [i.id, i.status])).toEqual([
       ['github', 'ok'],
       ['webhook', 'ok'],
+      ['events', 'ok'],
       ['secret', 'ok'],
       ['sandbox', 'ok'],
       ['claude', 'ok'],
@@ -447,5 +464,66 @@ describe('the knowledge base line', () => {
     expect(knowledgeItem(status({ okfProblems: ['a', 'b', 'c'] })).detail).toBe(
       'me/kb: the agents read it, but it is not an OKF bundle in everything: a (and 2 more).',
     )
+  })
+})
+
+describe('the events the App subscribes to', () => {
+  it('says so when the App subscribes to every event the factory reads', async () => {
+    expect(await eventsItem(app())).toEqual({
+      id: 'events',
+      label: 'Webhook events',
+      status: 'ok',
+      detail: 'The App subscribes to every event the factory reads.',
+    })
+  })
+
+  it('warns and names the missing events when the App subscribes only to issues', async () => {
+    const only = app({ subscriptions: async () => ({ events: ['issues'], settingsUrl: SETTINGS }) })
+    expect(await eventsItem(only)).toEqual({
+      id: 'events',
+      label: 'Webhook events',
+      status: 'warn',
+      detail:
+        'The App does not subscribe to issue_comment, pull_request_review, pull_request_review_comment, check_suite, check_run, so GitHub never tells the factory about them. Turn them on under "Subscribe to events".',
+      link: { label: 'Open the App settings', href: SETTINGS },
+    })
+  })
+
+  it('names only what is missing', async () => {
+    const most = app({
+      subscriptions: async () => ({
+        events: ['issues', 'issue_comment', 'pull_request_review', 'check_suite', 'check_run'],
+        settingsUrl: SETTINGS,
+      }),
+    })
+    const found = await eventsItem(most)
+    expect(found.status).toBe('warn')
+    expect(found.detail).toContain('subscribe to pull_request_review_comment, so')
+  })
+
+  it('warns with what GitHub answered when the App cannot be read', async () => {
+    const broken = app({
+      subscriptions: async () => {
+        throw new Error('GitHub answered 401 reading the App')
+      },
+    })
+    expect(await eventsItem(broken)).toEqual({
+      id: 'events',
+      label: 'Webhook events',
+      status: 'warn',
+      detail: 'GitHub answered 401 reading the App',
+    })
+  })
+
+  it('is a line of the report, and never stops the factory from being ready', async () => {
+    const only = app({ subscriptions: async () => ({ events: ['issues'], settingsUrl: SETTINGS }) })
+    const report = await setupReport({ env: full, github: only, enabledRepositories: 1 })
+    expect(item(report, 'events').status).toBe('warn')
+    expect(report.ready).toBe(true)
+  })
+
+  it('is not asked when there is no App to ask', async () => {
+    const report = await setupReport({ env: full, github: undefined, enabledRepositories: 1 })
+    expect(report.items.map((i) => i.id)).not.toContain('events')
   })
 })

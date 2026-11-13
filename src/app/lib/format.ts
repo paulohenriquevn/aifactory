@@ -44,6 +44,7 @@ const LABELS: Record<Stage, string> = {
   released: 'released',
   handoff: 'handed to a person',
   failed: 'failed',
+  cancelled: 'cancelled',
 }
 
 /**

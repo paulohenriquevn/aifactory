@@ -58,21 +58,50 @@ agente, como "todos os testes passam", nunca vira evidência.
 
 Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `task.stage`.
 
-| Estágio    | O que acontece                                                                                                    |
-| ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| `intake`   | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                         |
-| `sandbox`  | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.           |
-| `plan`     | Numa task nova, o agente lê o código e escreve um plano, sem mudar nada. O plano é gravado em `change_plan`.      |
-| `build`    | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                              |
-| `push`     | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).           |
-| `verify`   | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.           |
-| `review`   | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.            |
-| `waiting`  | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.           |
-| `pr`       | Se o portão abriu, cria o check run `aifactory/verify`, abre o PR contra `workspace`, mergeia e avança `develop`. |
-| `done`     | Guarda o SHA, a URL do PR, a pré-release, o número de tentativas e o custo total (construtor e revisor).          |
-| `released` | `develop` foi promovida para `main` e a release publicada, por um humano ou pelo veredito de um agente.           |
-| `handoff`  | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.             |
-| `failed`   | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                       |
+| Estágio     | O que acontece                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------- |
+| `intake`    | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                         |
+| `sandbox`   | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.           |
+| `plan`      | Numa task nova, o agente lê o código e escreve um plano, sem mudar nada. O plano é gravado em `change_plan`.      |
+| `build`     | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                              |
+| `push`      | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).           |
+| `verify`    | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.           |
+| `review`    | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.            |
+| `waiting`   | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.           |
+| `pr`        | Se o portão abriu, cria o check run `aifactory/verify`, abre o PR contra `workspace`, mergeia e avança `develop`. |
+| `done`      | Guarda o SHA, a URL do PR, a pré-release, o número de tentativas e o custo total (construtor e revisor).          |
+| `released`  | `develop` foi promovida para `main` e a release publicada, por um humano ou pelo veredito de um agente.           |
+| `handoff`   | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.             |
+| `failed`    | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                       |
+| `cancelled` | Uma run interrompida porque a issue deixou de pedir o trabalho. Nenhum caminho entra nele ainda.                  |
+
+### O que cada entrega do webhook significa
+
+`decideIngress` (`src/server/ingest/decide.ts`) lê o evento e o payload, validado com Zod, e devolve uma
+de três coisas. A entrega fica em `ingress` com o resultado, um código e o motivo.
+
+| Resultado em `ingress.outcome` | Quando                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------ |
+| `task_created`, `task_exists`  | `issues` com a label `factory` posta, ou aberta já com ela.                          |
+| `routed`                       | Um dos eventos da tabela abaixo. Não cria task nem job.                              |
+| `ignored`                      | Todo o resto, com o código de sempre (`event_not_issues`, `action_not_relevant`...). |
+
+| Evento e ação                         | Código                                                    | O que a intenção leva                             |
+| ------------------------------------- | --------------------------------------------------------- | ------------------------------------------------- |
+| `issue_comment.created`               | `issue_comment_created` ou `pull_request_comment_created` | número da issue ou do PR, id do comentário, autor |
+| `pull_request_review.submitted`       | `pull_request_review_submitted`                           | número do PR, id do review, head SHA, autor       |
+| `pull_request_review_comment.created` | `pull_request_review_comment_created`                     | número do PR, id do comentário, head SHA, autor   |
+| `check_suite.completed`               | `check_suite_completed`                                   | head SHA, conclusão                               |
+| `check_run.completed`                 | `check_run_completed`                                     | head SHA, nome do check, conclusão                |
+| `issues.unlabeled` (label `factory`)  | `issue_unlabeled`                                         | número da issue, quem tirou a label               |
+| `issues.closed`, `issues.reopened`    | `issue_closed`, `issue_reopened`                          | número da issue, quem fechou ou reabriu           |
+
+Toda intenção leva o repositório. O autor de um comentário ou review vem com o login e a associação que
+o GitHub informa (`OWNER`, `MEMBER`, `NONE`...). Um payload que não bate com o schema do seu evento fica
+como `payload_invalid`. Por enquanto a fábrica só registra a intenção: nada lê uma entrega `routed`, a
+resposta a uma pergunta continua vindo da sondagem e a integração depois do CI continua vindo do cron.
+A App só recebe os eventos que assina, e a página Setup tem uma linha que lê as assinaturas (`GET /app`)
+e diz quais faltam.
 
 Depois de um retrabalho, a task volta a `build` e repete `push`, `verify` e `review`: o histórico mostra cada tentativa.
 
@@ -911,9 +940,9 @@ login já atrás de algo mais forte que um token (por exemplo, o Cloudflare Acce
 Tudo o que o dono precisa fazer acontece no painel (`http://localhost:3000`) e nas páginas do GitHub que
 ele abre. Nenhum comando.
 
-1. **Setup.** A página lista o que falta: a GitHub App, o webhook, o segredo do webhook, o sandbox, ao
-   menos um agente (Claude Code ou Codex) e um repositório habilitado. Cada linha diz o que está
-   errado e leva à página que conserta. Nunca mostra um segredo, só se ele existe e o que o paga.
+1. **Setup.** A página lista o que falta: a GitHub App, o webhook, os eventos que a App assina, o
+   segredo do webhook, o sandbox, ao menos um agente (Claude Code ou Codex) e um repositório
+   habilitado. Cada linha diz o que está errado e leva à página que conserta. Nunca mostra um segredo, só se ele existe e o que o paga.
 2. **Instalar a App e dar acesso aos repositórios.** O botão "Install on GitHub" (em Repositories e no
    Setup) abre a página de instalação da App no GitHub, numa aba nova. Lá o dono escolhe a conta ou a
    organização e os repositórios, e o painel, que passa a perguntar ao GitHub a cada poucos segundos,

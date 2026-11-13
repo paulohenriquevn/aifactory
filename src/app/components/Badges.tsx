@@ -19,6 +19,7 @@ const TONE: Record<Stage, Variant> = {
   released: 'accent',
   handoff: 'warning',
   failed: 'destructive',
+  cancelled: 'default',
 }
 
 export function StageBadge({

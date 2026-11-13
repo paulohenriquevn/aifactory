@@ -20,7 +20,8 @@ export type Observation = { metric: MetricName; repository: string; at: Date; va
 
 type Run = { start: Date; end: number; events: HistoryEvent[] }
 
-const TERMINAL: TaskStage[] = ['done', 'failed', 'handoff']
+/** How a run ends. A cancelled run ended too, but it is not a delivery and not a delivery coming back. */
+const TERMINAL: TaskStage[] = ['done', 'failed', 'handoff', 'cancelled']
 /** What, after a delivery in the same run, means the delivery did not hold. */
 const CAME_BACK: TaskStage[] = ['failed', 'handoff']
 const MINUTE = 60_000

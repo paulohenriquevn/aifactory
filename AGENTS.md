@@ -78,6 +78,14 @@ reads that file, not a convention.
   so `installationToken(repo)` is the only way to get one, and it always names the repository.
 - **`src/server/jobs/` holds only jobs.** `theokit build` treats every file there as one and fails the
   build on a helper; a test guards it. Shared helpers live in `factory/`.
+- **A delivery is taken, routed or ignored, and `decideIngress` is the only place that says which.** An
+  `issues` delivery that is labelled `factory`, or opened with the label, is taken and becomes a task. A
+  comment (`issue_comment`, `pull_request_review_comment`), a submitted `pull_request_review`, a completed
+  `check_suite` or `check_run`, and an issue that is closed, reopened or loses the `factory` label are
+  routed: `ingress.outcome` is `routed`, the code names the intent, and `recordDelivery` creates no task and
+  queues no job for it. Nothing acts on a routed delivery yet. A new event is a new entry in `ROUTES` with a
+  Zod schema that produces its intent, and the setup report reads `ROUTED_EVENTS` to say which events the
+  App does not subscribe to. Any other event or action keeps the code it always had.
 - **A labelled issue is not permission.** The App is installed on every repository of the account, so ingestion
   turns an issue into a task only in a repository the owner enabled in the panel (`repository.enabled`).
   Listing what the App reaches is the one place a token is not limited to a repository, and it can only read

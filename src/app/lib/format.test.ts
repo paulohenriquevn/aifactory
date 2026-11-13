@@ -85,6 +85,7 @@ describe('stageLabel', () => {
       'released',
       'handoff',
       'failed',
+      'cancelled',
     ]
     expect(all.map((s) => stageLabel(s))).toEqual([
       'queued',
@@ -100,6 +101,7 @@ describe('stageLabel', () => {
       'released',
       'handed to a person',
       'failed',
+      'cancelled',
     ])
   })
 

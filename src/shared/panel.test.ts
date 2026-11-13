@@ -17,6 +17,7 @@ describe('columnOf', () => {
     released: 'released',
     handoff: 'attention',
     failed: 'attention',
+    cancelled: 'attention',
   }
 
   it('puts every stage on the board where a person would look for it', () => {
@@ -81,6 +82,7 @@ describe('a failure that passes by itself', () => {
     expect(columnOf('failed', null)).toBe('attention')
     expect(columnOf('failed')).toBe('attention')
     expect(columnOf('build', 'quota')).toBe('working')
+    expect(columnOf('cancelled', 'quota')).toBe('attention')
   })
 
   it('is told by the usage limit flag or by an error of the environment', () => {

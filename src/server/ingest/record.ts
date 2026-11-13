@@ -3,7 +3,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import type { Database } from '../db'
 import { ingress, repository, stageEvent, task } from '../db/schema'
 
-import { decideIngress } from './decide'
+import { decideIngress, type IngressDecision, type RoutedIntent } from './decide'
 
 export type Delivery = {
   /** The `X-GitHub-Delivery` header. */
@@ -16,6 +16,8 @@ export type Delivery = {
 export type RecordResult =
   | { status: 'duplicate' }
   | { status: 'ignored'; code: string; reason: string }
+  /** Understood and stored for a later step to act on: no task, no job. */
+  | { status: 'routed'; code: string; reason: string; intent: RoutedIntent }
   | { status: 'task_created'; taskId: number }
   | { status: 'task_exists'; taskId: number }
 
@@ -25,8 +27,8 @@ export type RecordResult =
  */
 async function withRepositoryPermission(
   tx: Database,
-  decision: ReturnType<typeof decideIngress>,
-): Promise<ReturnType<typeof decideIngress>> {
+  decision: IngressDecision,
+): Promise<IngressDecision> {
   if (!decision.accept) return decision
   const [allowed] = await tx
     .select({ id: repository.id })
@@ -46,11 +48,18 @@ async function withRepositoryPermission(
   }
 }
 
+/** What `ingress.outcome` says of a decision before any task is looked for. */
+function outcomeOf(decision: IngressDecision) {
+  if (decision.accept) return 'task_created'
+  return 'intent' in decision ? 'routed' : 'ignored'
+}
+
 /**
  * Records one delivery and, when it asks for work, the task. Both writes are one transaction, so
  * a delivery is never recorded without the task it created. A delivery ID already on file is a
  * redelivery and changes nothing. A second delivery for an issue that already has a task is
- * recorded and points at the existing one.
+ * recorded and points at the existing one. A routed delivery is recorded with its own code and
+ * nothing else: it creates no task and `onTaskCreated` never runs for it.
  */
 export async function recordDelivery(
   db: Database,
@@ -69,7 +78,7 @@ export async function recordDelivery(
         event: delivery.event,
         repository: decision.repository,
         payload: delivery.payload,
-        outcome: decision.accept ? 'task_created' : 'ignored',
+        outcome: outcomeOf(decision),
         code: decision.code,
         reason: decision.reason,
       })
@@ -77,6 +86,10 @@ export async function recordDelivery(
       .returning({ id: ingress.id })
 
     if (!row) return { status: 'duplicate' }
+    if ('intent' in decision) {
+      const { code, reason, intent } = decision
+      return { status: 'routed', code, reason, intent }
+    }
     if (!decision.accept) return { status: 'ignored', code: decision.code, reason: decision.reason }
 
     const [created] = await tx

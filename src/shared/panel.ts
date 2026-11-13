@@ -14,6 +14,7 @@ export type Stage =
   | 'released'
   | 'handoff'
   | 'failed'
+  | 'cancelled'
 
 /** Where a stage sits on the board. */
 export type Column =
@@ -85,6 +86,8 @@ export function columnOf(
       return 'released'
     case 'handoff':
     case 'failed':
+    // Nothing enters it yet. Until something does and says where it belongs, a person sees it.
+    case 'cancelled':
       return 'attention'
     default:
       return 'working'

@@ -429,4 +429,40 @@ describe('where the App is installed and who owns it', () => {
     }
     expect(await app(fetch).owner()).toBe('paulo')
   })
+
+  it('reads the events the App subscribes to, and where its owner changes them', async () => {
+    const fetch: FetchLike = async (url) => {
+      expect(url).toBe('https://api.github.com/app')
+      return Response.json({
+        slug: 'my-app',
+        owner: { login: 'paulo', type: 'User' },
+        events: ['issues', 'issue_comment'],
+      })
+    }
+    expect(await app(fetch).subscriptions()).toEqual({
+      events: ['issues', 'issue_comment'],
+      settingsUrl: 'https://github.com/settings/apps/my-app/permissions',
+    })
+  })
+
+  it('points at the organization settings when an organization owns the App', async () => {
+    const fetch: FetchLike = async () =>
+      Response.json({ slug: 'my-app', owner: { login: 'acme', type: 'Organization' }, events: [] })
+    expect(await app(fetch).subscriptions()).toEqual({
+      events: [],
+      settingsUrl: 'https://github.com/organizations/acme/settings/apps/my-app/permissions',
+    })
+  })
+
+  it('says what GitHub answered when it cannot read the subscribed events', async () => {
+    const failing: FetchLike = async () => Response.json({}, { status: 401 })
+    await expect(app(failing).subscriptions()).rejects.toThrow(
+      'GitHub answered 401 reading the App',
+    )
+  })
+
+  it('refuses an answer about the App that does not list its events', async () => {
+    const odd: FetchLike = async () => Response.json({ slug: 'my-app', owner: { login: 'p' } })
+    await expect(app(odd).subscriptions()).rejects.toThrow('GitHub described the App without')
+  })
 })

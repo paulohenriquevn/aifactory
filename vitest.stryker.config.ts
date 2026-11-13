@@ -6,6 +6,7 @@ export default defineConfig({
     // A mutant that reaches the real Docker fails instead of starting a container nobody stops.
     setupFiles: ['src/test/no-real-docker.ts'],
     include: [
+      'src/server/ingest/decide.test.ts',
       'src/server/factory/clone.test.ts',
       'src/server/github/pulls.test.ts',
       'src/server/evals/compare.test.ts',

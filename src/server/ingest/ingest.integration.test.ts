@@ -173,6 +173,66 @@ describe('GitHub deliveries', () => {
   })
 })
 
+describe('deliveries that are routed', () => {
+  const comment = {
+    action: 'created',
+    issue: { number: 7 },
+    comment: { id: 9001, user: { login: 'alice' }, author_association: 'MEMBER' },
+    repository: { full_name: 'paulo/app' },
+  }
+
+  it('stores a signed issue_comment as routed, with its own code, and creates no task', async () => {
+    const response = await handleGithubDelivery(delivery(comment, { event: 'issue_comment' }), deps)
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      status: 'routed',
+      code: 'issue_comment_created',
+      intent: { kind: 'issue_comment_created', issueNumber: 7, commentId: 9001 },
+    })
+    expect(await rows()).toEqual({ deliveries: 1, tasks: 0 })
+    const [row] = await getDb().select().from(ingress)
+    expect(row).toMatchObject({
+      event: 'issue_comment',
+      outcome: 'routed',
+      code: 'issue_comment_created',
+      repository: 'paulo/app',
+    })
+  })
+
+  it('stores a payload that does not match its schema as payload_invalid', async () => {
+    const response = await handleGithubDelivery(
+      delivery({ ...comment, comment: { id: 'not-a-number' } }, { event: 'issue_comment' }),
+      deps,
+    )
+
+    expect(await response.json()).toMatchObject({ status: 'ignored', code: 'payload_invalid' })
+    const [row] = await getDb().select().from(ingress)
+    expect(row).toMatchObject({ outcome: 'ignored', code: 'payload_invalid' })
+    expect(await rows()).toEqual({ deliveries: 1, tasks: 0 })
+  })
+
+  it('keeps the code of an event the factory does not read', async () => {
+    const response = await handleGithubDelivery(
+      delivery({ repository: { full_name: 'paulo/app' } }, { event: 'push' }),
+      deps,
+    )
+
+    expect(await response.json()).toMatchObject({ status: 'ignored', code: 'event_not_issues' })
+    const [row] = await getDb().select().from(ingress)
+    expect(row).toMatchObject({ outcome: 'ignored', code: 'event_not_issues' })
+  })
+
+  it('routes a delivery in a repository that is not enabled, since it starts nothing', async () => {
+    const elsewhere = { ...comment, repository: { full_name: 'paulo/other' } }
+    await handleGithubDelivery(delivery(elsewhere, { event: 'issue_comment' }), deps)
+
+    const [row] = await getDb().select().from(ingress)
+    expect(row).toMatchObject({ outcome: 'routed', repository: 'paulo/other' })
+    expect(await rows()).toEqual({ deliveries: 1, tasks: 0 })
+  })
+})
+
 describe('which repositories may start work', () => {
   const take = (repo: string, id: string) =>
     recordDelivery(getDb(), {

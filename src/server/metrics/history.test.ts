@@ -189,6 +189,21 @@ describe('observe', () => {
     expect(value(h, 'change_failure')).toEqual([1, 0])
   })
 
+  it('measures a cancelled run as a run that ended, and never as a delivery', () => {
+    const h = history({
+      events: [ev(0, 'intake'), ev(2, 'build', { attempt: 1 }), ev(9, 'cancelled', {})],
+    })
+    expect(observe(h)).toEqual([
+      { metric: 'rework_rounds', repository: 'o/r', at: at(9), value: 0 },
+    ])
+  })
+
+  it('does not say a delivery failed because the task was cancelled after it', () => {
+    const h = history({ events: [ev(0, 'intake'), ev(30, 'done', {}), ev(60, 'cancelled', {})] })
+    expect(value(h, 'change_failure')).toEqual([0])
+    expect(value(h, 'minutes_to_delivery')).toEqual([30])
+  })
+
   it('says a delivery failed when it was handed to a person after it', () => {
     const h = history({ events: [ev(0, 'intake'), ev(30, 'done', {}), ev(60, 'handoff', {})] })
     expect(value(h, 'change_failure')).toEqual([1])

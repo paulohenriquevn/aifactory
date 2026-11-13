@@ -13,7 +13,10 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
-/** The stages of a task, in the order a successful run passes through them. */
+/**
+ * The stages of a task, in the order a successful run passes through them, then the ways a run ends
+ * without delivering. `cancelled` is a run that was stopped because its issue no longer asks for it.
+ */
 export const TASK_STAGES = [
   'intake',
   'sandbox',
@@ -28,6 +31,7 @@ export const TASK_STAGES = [
   'released',
   'handoff',
   'failed',
+  'cancelled',
 ] as const
 export type TaskStage = (typeof TASK_STAGES)[number]
 
@@ -41,7 +45,10 @@ export const ingress = pgTable('ingress', {
   event: text('event').notNull(),
   repository: text('repository'),
   payload: jsonb('payload').notNull(),
-  outcome: text('outcome', { enum: ['task_created', 'task_exists', 'ignored'] }).notNull(),
+  /** `routed` is a delivery that was understood and starts no task: its code names what it means. */
+  outcome: text('outcome', {
+    enum: ['task_created', 'task_exists', 'ignored', 'routed'],
+  }).notNull(),
   /** Stable code for the decision, so a refusal can be counted and searched. */
   code: text('code').notNull(),
   reason: text('reason').notNull(),

@@ -62,6 +62,11 @@ repositórios em que está instalada, com o secret de `GITHUB_WEBHOOK_SECRET`; s
 repositório um webhook de eventos `Issues`, com conteúdo `application/json` e o mesmo secret.
 
 - Uma issue que recebe a label `factory`, ou que é aberta com ela, vira uma task em `intake`.
+- Um comentário (`issue_comment`, `pull_request_review_comment`), um review enviado
+  (`pull_request_review`), um check concluído (`check_suite`, `check_run`) e uma issue fechada,
+  reaberta ou que perde a label `factory` são reconhecidos e gravados com o resultado `routed` e
+  um código próprio. Por enquanto nada age sobre eles: não criam task nem job. A App precisa
+  assinar esses eventos para recebê-los, e a página Setup diz quais faltam.
 - Cada entrega fica em `ingress`, com o resultado, um código e o motivo. Uma entrega repetida
   (mesmo `X-GitHub-Delivery`) não muda nada. Uma issue tem no máximo uma task, mesmo que a label
   seja removida e posta de novo.
