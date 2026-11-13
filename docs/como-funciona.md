@@ -365,6 +365,14 @@ aí), não há o que esperar: a fábrica mergeia na hora, fixada ao SHA verifica
 repositório sem checks obrigatórios. Qualquer outra recusa faz a execução falhar com uma mensagem dizendo o
 que configurar.
 
+**PR que ainda é o rascunho de um handoff.** Quando uma pessoa pede mudanças numa task em `handoff` e a
+execução nova é aprovada, o PR aberto é o mesmo rascunho, com o título `[needs a person] ...`. O GitHub não
+mergeia rascunho, nem direto nem por auto-merge. Antes de integrar, nos dois caminhos, a fábrica marca o PR
+como pronto para revisão e devolve o título sem o prefixo (uma chamada GraphQL,
+`markPullRequestReadyForReview` com `updatePullRequest`; a API REST não tira um PR de rascunho). Um PR que
+não é rascunho não recebe chamada nenhuma. Se mesmo assim o GitHub recusar o auto-merge dizendo que o PR é
+rascunho, a fábrica marca como pronto e pede o auto-merge mais uma vez; uma segunda recusa falha a execução.
+
 O cron `integrate-after-ci` olha essas tasks a cada dois minutos:
 
 - O GitHub mergeou o SHA verificado: a fábrica grava `merged_sha` e faz o mesmo que depois de um merge

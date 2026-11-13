@@ -48,7 +48,7 @@
     "src/server/metrics/bands.ts",
     "src/server/metrics/history.ts",
     "src/server/metrics/series.ts",
-    "src/server/github/pulls.ts:104-137"
+    "src/server/github/pulls.ts:108-167"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral", "TemplateLiteral"]

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { AutoMergeRefused, autoMergeOrMergeable, createGithubApi } from './pulls'
+import { AutoMergeRefused, autoMergeOrMergeable, createGithubApi, titleToRestore } from './pulls'
 
 type Call = { method: string; url: string; body?: unknown; auth?: string }
 
@@ -133,6 +133,93 @@ describe('openPullRequest', () => {
 
     expect(result.number).toBe(3)
     expect(calls.some((c) => c.method === 'POST')).toBe(false)
+  })
+
+  it('says whether the pull request that is already open is a draft, and its title', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls': {
+        status: 200,
+        body: [
+          {
+            number: 3,
+            html_url: 'https://github.com/o/r/pull/3',
+            draft: true,
+            title: '[needs a person] T',
+          },
+        ],
+      },
+    })
+
+    const result = await createGithubApi(fetch).openPullRequest('o/r', 'tok', pull)
+
+    expect(result).toEqual({
+      number: 3,
+      url: 'https://github.com/o/r/pull/3',
+      draft: true,
+      title: '[needs a person] T',
+    })
+  })
+})
+
+describe('titleToRestore', () => {
+  it('is nothing for a pull request that is not a draft', () => {
+    expect(titleToRestore({ draft: false, title: '[needs a person] T' }, 'T')).toBeUndefined()
+    expect(titleToRestore({}, 'T')).toBeUndefined()
+  })
+
+  it('is the title of a draft without the handoff prefix', () => {
+    expect(titleToRestore({ draft: true, title: '[needs a person] Fix it' }, 'T')).toBe('Fix it')
+  })
+
+  it('keeps a title a person already rewrote, and only strips the prefix at the start', () => {
+    expect(titleToRestore({ draft: true, title: 'Mine' }, 'T')).toBe('Mine')
+    expect(titleToRestore({ draft: true, title: 'A [needs a person] B' }, 'T')).toBe(
+      'A [needs a person] B',
+    )
+  })
+
+  it('falls back to the title of the run when the draft came without one', () => {
+    expect(titleToRestore({ draft: true }, 'T')).toBe('T')
+    expect(titleToRestore({ draft: true }, '')).toBe('')
+  })
+})
+
+describe('markReadyForReview', () => {
+  it('takes the pull request out of draft and sets its title, in one GraphQL call', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { data: { markPullRequestReadyForReview: { pullRequest: { number: 12 } } } },
+      },
+    })
+
+    await createGithubApi(fetch).markReadyForReview('o/r', 'tok', 12, 'Fix it')
+
+    const graphql = calls.filter((c) => c.url.includes('graphql'))
+    expect(graphql).toHaveLength(1)
+    expect(graphql[0].auth).toBe('Bearer tok')
+    expect((graphql[0].body as { variables: object }).variables).toEqual({
+      id: 'PR_12',
+      title: 'Fix it',
+    })
+    const query = (graphql[0].body as { query: string }).query
+    expect(query).toContain('markPullRequestReadyForReview(input: { pullRequestId: $id })')
+    expect(query).toContain('updatePullRequest(input: { pullRequestId: $id, title: $title })')
+  })
+
+  it('throws with what GitHub said when it will not', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { errors: [{ message: 'Resource not accessible by integration' }] },
+      },
+    })
+
+    await expect(createGithubApi(fetch).markReadyForReview('o/r', 't', 12, 'T')).rejects.toThrow(
+      /o\/r#12 ready for review: Resource not accessible by integration/,
+    )
   })
 })
 
@@ -1055,6 +1142,15 @@ describe('what integrating through the repository CI needs', () => {
     expect(unstable.pullRequestIsClean).toBe(false)
   })
 
+  it('tells a refusal because the pull request is a draft from any other refusal', () => {
+    const refused = (why: string) => new AutoMergeRefused('o/r', 12, why).pullRequestIsDraft
+
+    expect(refused('Pull request Pull request is a draft')).toBe(true)
+    expect(refused('Draft pull requests cannot be merged')).toBe(true)
+    expect(refused('Pull request Pull request is in clean status')).toBe(false)
+    expect(refused('Auto merge is not allowed for this repository')).toBe(false)
+  })
+
   describe('autoMergeOrMergeable', () => {
     const pull = { repo: 'o/r', token: 't', number: 12, sha: 'abc' }
     const refusing = (error: Error) => ({
@@ -1081,6 +1177,70 @@ describe('what integrating through the repository CI needs', () => {
       const notAllowed = new AutoMergeRefused('o/r', 12, 'Auto merge is not allowed')
 
       await expect(autoMergeOrMergeable(refusing(notAllowed), pull)).rejects.toBe(notAllowed)
+    })
+
+    describe('when the refusal says the pull request is a draft', () => {
+      const draft = () => new AutoMergeRefused('o/r', 12, 'Pull request Pull request is a draft')
+      /** A GitHub that refuses a draft `refusals` times, then turns auto-merge on. */
+      const draftFor = (refusals: number) => {
+        const log: string[] = []
+        const api = {
+          enableAutoMerge: async () => {
+            log.push('auto-merge')
+            if (log.filter((l) => l === 'auto-merge').length <= refusals) throw draft()
+          },
+        }
+        const ready = async () => void log.push('ready')
+        return { api, ready, log }
+      }
+
+      it('marks it ready and asks once more', async () => {
+        const { api, ready, log } = draftFor(1)
+
+        await expect(autoMergeOrMergeable(api, pull, ready)).resolves.toBe('waiting')
+        expect(log).toEqual(['auto-merge', 'ready', 'auto-merge'])
+      })
+
+      it('throws the second refusal instead of asking a third time', async () => {
+        const { api, ready, log } = draftFor(2)
+
+        await expect(autoMergeOrMergeable(api, pull, ready)).rejects.toBeInstanceOf(
+          AutoMergeRefused,
+        )
+        expect(log).toEqual(['auto-merge', 'ready', 'auto-merge'])
+      })
+
+      it('says the pull request is mergeable when the second answer is that it is clean', async () => {
+        const answers = [
+          draft(),
+          new AutoMergeRefused('o/r', 12, 'Pull request Pull request is in clean status'),
+        ]
+        const api = {
+          enableAutoMerge: async () => {
+            throw answers.shift()
+          },
+        }
+
+        await expect(autoMergeOrMergeable(api, pull, async () => {})).resolves.toBe('mergeable')
+      })
+
+      it('throws it as it came when the caller has no way to mark it ready', async () => {
+        const { api, log } = draftFor(1)
+
+        await expect(autoMergeOrMergeable(api, pull)).rejects.toBeInstanceOf(AutoMergeRefused)
+        expect(log).toEqual(['auto-merge'])
+      })
+    })
+
+    it('marks nothing ready for a refusal that is not about a draft', async () => {
+      const notAllowed = new AutoMergeRefused('o/r', 12, 'Auto merge is not allowed')
+      let readied = 0
+      const ready = async () => void (readied += 1)
+
+      await expect(autoMergeOrMergeable(refusing(notAllowed), pull, ready)).rejects.toBe(notAllowed)
+      const clean = new AutoMergeRefused('o/r', 12, 'Pull request Pull request is in clean status')
+      await expect(autoMergeOrMergeable(refusing(clean), pull, ready)).resolves.toBe('mergeable')
+      expect(readied).toBe(0)
     })
 
     it('throws an error that is not a refusal, even when it mentions a clean status', async () => {

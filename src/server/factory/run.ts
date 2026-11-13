@@ -10,7 +10,13 @@ import {
   task,
 } from '../db/schema'
 import type { Issue } from '../github/issues'
-import { autoMergeOrMergeable, type GithubApi } from '../github/pulls'
+import {
+  autoMergeOrMergeable,
+  NEEDS_A_PERSON,
+  titleToRestore,
+  type GithubApi,
+  type PullRequest,
+} from '../github/pulls'
 import { KnowledgeFeed } from '../knowledge/feed'
 import { parseLearned, withoutLearned } from '../knowledge/format'
 
@@ -1149,15 +1155,28 @@ export class Run {
    * An integration branch that requires status checks gets the repository's own CI first: GitHub merges
    * the pull request through auto-merge once they pass, pinned to the same commit, and the
    * `integrate-after-ci` cron does the rest. When GitHub refuses auto-merge because the checks already
-   * passed (the pull request is clean), it is merged at once like one with no required checks. Any other
-   * refusal fails the run, with what to set.
+   * passed (the pull request is clean), it is merged at once like one with no required checks. When it
+   * refuses because the pull request is a draft, the pull request is marked ready and asked once more. Any
+   * other refusal fails the run, with what to set.
+   *
+   * The pull request may be the draft a handoff left, when a person asked for changes and the new run was
+   * approved. A draft is marked ready for review first, with its title restored, on either path: GitHub
+   * merges no draft. One that is not a draft gets no call.
    */
-  private async integrate(sha: string, pullNumber: number): Promise<Integrated> {
+  private async integrate(sha: string, opened: PullRequest): Promise<Integrated> {
     const { deps, taskId, row, api, branch } = this.c
+    const pullNumber = opened.number
+    const markReady = (title: string) =>
+      api.markReadyForReview(row.repository, this.c.token, pullNumber, title)
+    const restored = titleToRestore(opened, this.title)
+    if (restored !== undefined) await markReady(restored)
     const integration = integrationBranch(this.c.repo)
     const required = await api.requiredChecks(row.repository, this.c.token, integration)
     const pull = { repo: row.repository, token: this.c.token, number: pullNumber, sha }
-    if (required.length > 0 && (await autoMergeOrMergeable(api, pull)) === 'waiting') {
+    if (
+      required.length > 0 &&
+      (await autoMergeOrMergeable(api, pull, () => markReady(this.title))) === 'waiting'
+    ) {
       return { awaitingChecks: required }
     }
     let merged: { sha: string }
@@ -1249,7 +1268,7 @@ export class Run {
         plan: this.renderedPlan,
       }),
     })
-    const integrated = await this.integrate(sha, pull.number)
+    const integrated = await this.integrate(sha, pull)
     if (integrated.awaitingChecks) return this.awaitChecks(sha, attempt, pull.url, integrated)
     const handed = await this.deliver(sha, pull.url, attempt, integrated)
     await enterStage(
@@ -1330,7 +1349,7 @@ export class Run {
     const pull = await api.openPullRequest(row.repository, this.c.token, {
       head: branch,
       base: integrationBranch(this.c.repo),
-      title: `[needs a person] ${this.title}`,
+      title: `${NEEDS_A_PERSON}${this.title}`,
       draft: true,
       body: pullRequestBody({
         issueNumber: row.issueNumber,

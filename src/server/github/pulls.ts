@@ -71,7 +71,11 @@ export type CommitChecks = {
   statuses: 'success' | 'failure' | 'error' | 'pending' | 'none'
 }
 
-export type PullRequest = { number: number; url: string }
+/**
+ * A pull request the factory asked for. `draft` and `title` are what it holds on GitHub, known only for
+ * one that was already open: one the call opened is as it was asked for.
+ */
+export type PullRequest = { number: number; url: string; draft?: boolean; title?: string }
 
 /** A pull request read by its number, as the wait for the repository's checks needs it. */
 export type PullRequestDetail = {
@@ -107,6 +111,8 @@ export class AutoMergeRefused extends Error {
    * auto-merge was asked for, so there is nothing to wait for and it can be merged right away.
    */
   readonly pullRequestIsClean: boolean
+  /** GitHub refused because the pull request is a draft: marked ready for review, it can be asked again. */
+  readonly pullRequestIsDraft: boolean
 
   constructor(repo: string, number: number, why: string) {
     super(
@@ -114,25 +120,50 @@ export class AutoMergeRefused extends Error {
     )
     this.name = 'AutoMergeRefused'
     this.pullRequestIsClean = why.includes('clean status')
+    this.pullRequestIsDraft = why.toLowerCase().includes('draft')
   }
 }
 
 /**
  * Turns auto-merge on, pinned to `sha`, and says what follows. `waiting`: GitHub merges once the required
  * checks pass. `mergeable`: GitHub refused because the pull request is already clean, so the caller merges
- * it itself, pinned to the same commit. Any other refusal is thrown as it came.
+ * it itself, pinned to the same commit. When GitHub refused because the pull request is a draft and the
+ * caller gave a way to mark it ready, it is marked and asked once more. Any other refusal is thrown as it
+ * came.
  */
 export async function autoMergeOrMergeable(
   api: Pick<GithubApi, 'enableAutoMerge'>,
   pull: { repo: string; token: string; number: number; sha: string },
+  markReady?: () => Promise<void>,
 ): Promise<'waiting' | 'mergeable'> {
   try {
     await api.enableAutoMerge(pull.repo, pull.token, pull.number, pull.sha)
     return 'waiting'
   } catch (error) {
-    if (error instanceof AutoMergeRefused && error.pullRequestIsClean) return 'mergeable'
-    throw error
+    if (!(error instanceof AutoMergeRefused)) throw error
+    if (error.pullRequestIsClean) return 'mergeable'
+    if (!error.pullRequestIsDraft || !markReady) throw error
+    await markReady()
+    // Without a way to mark it ready this time, so a second refusal is thrown.
+    return autoMergeOrMergeable(api, pull)
   }
+}
+
+/** What a handoff puts before the title of the draft pull request it leaves for a person. */
+export const NEEDS_A_PERSON = '[needs a person] '
+
+/**
+ * The title a pull request gets when it is marked ready for review before approved work is integrated,
+ * or nothing when it is not a draft and so needs no call at all. A draft is what a handoff left: its
+ * title comes back without the handoff prefix, and `fallback` stands in for a title GitHub did not give.
+ */
+export function titleToRestore(
+  pull: { draft?: boolean; title?: string },
+  fallback: string,
+): string | undefined {
+  if (!pull.draft) return undefined
+  const title = pull.title ?? fallback
+  return title.startsWith(NEEDS_A_PERSON) ? title.slice(NEEDS_A_PERSON.length) : title
 }
 
 export type GithubApi = {
@@ -204,6 +235,8 @@ export type GithubApi = {
    * its head is still `sha`. Throws `AutoMergeRefused` when GitHub will not.
    */
   enableAutoMerge(repo: string, token: string, number: number, sha: string): Promise<void>
+  /** Takes a draft pull request out of draft and gives it `title`. Throws when GitHub will not. */
+  markReadyForReview(repo: string, token: string, number: number, title: string): Promise<void>
   disableAutoMerge(repo: string, token: string, number: number): Promise<void>
   /** Every check run and commit status on a commit, with what each said. */
   checkReports(repo: string, token: string, sha: string): Promise<CheckReport[]>
@@ -397,8 +430,11 @@ export function createGithubApi(
           `listing pull requests of ${repo}`,
           [200],
         )
-      ).json()) as { number: number; html_url: string }[]
-      if (open[0]) return { number: open[0].number, url: open[0].html_url }
+      ).json()) as { number: number; html_url: string; draft?: boolean; title?: string }[]
+      if (open[0]) {
+        const { number, html_url: url, draft, title } = open[0]
+        return { number, url, draft, title }
+      }
 
       const base =
         pull.base ??
@@ -837,6 +873,22 @@ export function createGithubApi(
         { sha },
       )
       if (answer.why) throw new AutoMergeRefused(repo, number, answer.why)
+    },
+
+    // GraphQL only: the REST API cannot take a pull request out of draft.
+    async markReadyForReview(repo, token, number, title) {
+      const answer = await onPullRequest(
+        repo,
+        token,
+        number,
+        'mutation($id: ID!, $title: String!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { number } } updatePullRequest(input: { pullRequestId: $id, title: $title }) { pullRequest { number } } }',
+        { title },
+      )
+      if (answer.why) {
+        throw new Error(
+          `GitHub would not mark ${repo}#${number} ready for review: ${answer.why}. A draft pull request cannot be merged: mark it ready for review by hand, or let the GitHub App write pull requests.`,
+        )
+      }
     },
 
     async disableAutoMerge(repo, token, number) {

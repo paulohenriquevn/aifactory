@@ -36,6 +36,8 @@ import { AutoMergeRefused } from '../github/pulls'
 const NOT_ALLOWED = 'Auto merge is not allowed for this repository'
 /** What GitHub answers when the required checks already passed, so there is nothing to wait for. */
 const CLEAN = 'Pull request Pull request is in clean status'
+/** What GitHub answers when the pull request is still a draft. */
+const DRAFT = 'Pull request Pull request is a draft'
 
 import { retryableFailure } from '../../shared/panel'
 import {
@@ -163,7 +165,19 @@ const githubApi: GithubApi & {
   autoMergeRefused: boolean
   /** What GitHub says when it refuses. */
   autoMergeRefusal: string
+  /** What the pull request that is already open says of itself; undefined when the factory opens it. */
+  existing: { draft: boolean; title: string } | undefined
+  /** GitHub holds the pull request as a draft, and refuses to merge it, until it is marked ready. */
+  draftOnGithub: boolean
+  /** Each pull request marked ready for review, with the title it was given. */
+  readied: { number: number; title: string }[]
+  /** How many times auto-merge was asked for, refused or not. */
+  autoMergeAsks: number
 } = {
+  existing: undefined,
+  draftOnGithub: false,
+  readied: [],
+  autoMergeAsks: 0,
   required: [],
   releaseRequired: [],
   autoMerges: [],
@@ -205,7 +219,11 @@ const githubApi: GithubApi & {
     this.bodies.push(pull.body)
     this.bases.push(pull.base)
     this.drafts.push(pull.draft ?? false)
-    return { number: 12, url: PR_URL }
+    return { number: 12, url: PR_URL, ...this.existing }
+  },
+  async markReadyForReview(_repo, _token, number, title) {
+    this.readied.push({ number, title })
+    this.draftOnGithub = false
   },
   async deleteBranch() {},
   async createRelease(_repo, _token, release) {
@@ -258,6 +276,8 @@ const githubApi: GithubApi & {
     throw new Error('a run never reads a pull request by number')
   },
   async enableAutoMerge(repo, _token, number, sha) {
+    this.autoMergeAsks += 1
+    if (this.draftOnGithub) throw new AutoMergeRefused(repo, number, DRAFT)
     if (this.autoMergeRefused) throw new AutoMergeRefused(repo, number, this.autoMergeRefusal)
     this.autoMerges.push({ number, sha })
   },
@@ -269,6 +289,7 @@ const githubApi: GithubApi & {
   },
   async mergePullRequest(_repo, _token, number, sha, merge) {
     if (this.mergeFails) throw new Error('GitHub answered 405 merging paulo/app#12: conflicts')
+    if (this.draftOnGithub) throw new Error('GitHub answered 405 merging paulo/app#12: draft')
     this.merges.push({ number, sha })
     this.mergeKinds.push(merge)
     return { sha: 'merge0001' }
@@ -330,6 +351,10 @@ beforeEach(() => {
   githubApi.releaseRequired = []
   githubApi.autoMerges = []
   githubApi.autoMergeRefused = false
+  githubApi.existing = undefined
+  githubApi.draftOnGithub = false
+  githubApi.readied = []
+  githubApi.autoMergeAsks = 0
   githubApi.autoMergeRefusal = NOT_ALLOWED
   githubApi.branches = FakeBranches.prepared()
   dirty = true
@@ -2366,6 +2391,79 @@ describe('the factory always makes a pre-release', () => {
     expect(String((failed.detail as Record<string, unknown>).error)).toMatch(
       /unstable status.*Allow auto-merge/,
     )
+  })
+
+  describe('when the pull request is the draft a handoff left', () => {
+    const handedOver = () => {
+      githubApi.existing = { draft: true, title: '[needs a person] Truncate, by hand (#7)' }
+      githubApi.draftOnGithub = true
+    }
+    const ready = [{ number: 12, title: 'Truncate, by hand (#7)' }]
+
+    it('marks it ready, restores its title, and then turns auto-merge on', async () => {
+      githubApi.required = ['CI']
+      handedOver()
+      const id = await seedTask()
+
+      const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+      expect(result).toMatchObject({ status: 'done' })
+      expect(githubApi.readied).toEqual(ready)
+      expect(githubApi.autoMerges).toEqual([{ number: 12, sha: 'abc123def' }])
+      // Ready came first: GitHub was never asked while the pull request was a draft.
+      expect(githubApi.autoMergeAsks).toBe(1)
+      const [row] = await getDb().select().from(task).where(eq(task.id, id))
+      expect(row).toMatchObject({ stage: 'done', awaitingCiSha: 'abc123def' })
+    })
+
+    it('marks it ready, restores its title, and then merges it when no check is required', async () => {
+      handedOver()
+      const id = await seedTask()
+
+      const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+      expect(result).toMatchObject({ status: 'done', preRelease: 'pre/7-develop' })
+      expect(githubApi.readied).toEqual(ready)
+      expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+      const [row] = await getDb().select().from(task).where(eq(task.id, id))
+      expect(row).toMatchObject({ stage: 'done', mergedSha: 'merge0001' })
+    })
+  })
+
+  it('makes no extra call for a pull request that is not a draft', async () => {
+    githubApi.required = ['CI']
+    githubApi.existing = { draft: false, title: '[needs a person] left by a person' }
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(githubApi.readied).toEqual([])
+    expect(githubApi.autoMergeAsks).toBe(1)
+  })
+
+  it('makes no extra call for a pull request the run opened itself, merged with no check required', async () => {
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(githubApi.readied).toEqual([])
+    expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+  })
+
+  it('marks the pull request ready and asks again when GitHub still refuses auto-merge on a draft', async () => {
+    githubApi.required = ['CI']
+    githubApi.draftOnGithub = true
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(githubApi.readied).toEqual([{ number: 12, title: expect.stringMatching(/ \(#7\)$/) }])
+    expect(githubApi.readied[0].title).not.toContain('[needs a person]')
+    expect(githubApi.autoMergeAsks).toBe(2)
+    expect(githubApi.autoMerges).toEqual([{ number: 12, sha: 'abc123def' }])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'done', awaitingCiSha: 'abc123def' })
   })
 
   it('keeps the work integrated and says why when develop cannot be advanced', async () => {
