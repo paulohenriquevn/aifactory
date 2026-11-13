@@ -11,11 +11,21 @@ import { Assist } from './Assist'
 export type CreatedJob = { number: number; url: string; started: boolean }
 
 /** One issue, written here, opened on GitHub, and started if asked. The task comes back through the webhook. */
-export function NewJob({ onCreated }: { onCreated: (job: CreatedJob) => void }) {
+export function NewJob({
+  onCreated,
+  repository: preferred = '',
+  label,
+}: {
+  onCreated: (job: CreatedJob) => void
+  /** The repository the form starts on, when it is not the first enabled one. */
+  repository?: string
+  /** The text of the button that opens the form. */
+  label?: string
+}) {
   const { t } = useCopy()
   const [open, setOpen] = useState(false)
   const [repos, setRepos] = useState<RepositoriesView>()
-  const [repository, setRepository] = useState('')
+  const [repository, setRepository] = useState(preferred)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [start, setStart] = useState(true)
@@ -60,7 +70,7 @@ export function NewJob({ onCreated }: { onCreated: (job: CreatedJob) => void }) 
   return (
     <Dialog open={open} onOpenChange={toggle}>
       <Dialog.Trigger asChild>
-        <Button size="sm">{t.newJob.open}</Button>
+        <Button size="sm">{label ?? t.newJob.open}</Button>
       </Dialog.Trigger>
       <Dialog.Content>
         <Dialog.Header>

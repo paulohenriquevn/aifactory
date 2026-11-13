@@ -251,4 +251,37 @@ export const ptBR: Copy = {
     seconds: (n: string) => `${n} s`,
     proofFailed: (reason: string) => `A prova não pôde rodar: ${reason}`,
   },
+  onboarding: {
+    title: 'Primeiros passos',
+    stepsLabel: 'Passos para ligar um repositório',
+    reopen: 'Rever este passo',
+    steps: {
+      connect: 'Conectar o GitHub',
+      choose: 'Escolher um repositório',
+      enable: 'Ligar',
+    },
+    connect: {
+      about: 'A fábrica precisa disto para chegar ao GitHub.',
+      ready: 'O GitHub está conectado.',
+      loading: 'Verificando a conexão…',
+    },
+    choose: {
+      about: 'Escolha o repositório em que a fábrica pode trabalhar.',
+      search: 'Buscar repositórios',
+      none: 'Nenhum repositório corresponde à busca.',
+      empty:
+        'O App ainda não alcança nenhum repositório. Instale-o no GitHub e escolha os repositórios.',
+      pick: 'Ligar',
+      picking: 'Ligando…',
+      chosen: (name: string) => `${name} está ligado.`,
+      loading: 'Lendo seus repositórios…',
+    },
+    enable: {
+      about: (name: string) =>
+        `A fábrica está verificando ${name}. Resolva o que estiver bloqueado.`,
+      ready: 'Nada bloqueia este repositório. Já dá para dar o primeiro trabalho a ele.',
+      notRead: 'Alguns itens não puderam ser lidos, então não contam como certos.',
+      firstJob: 'Abrir o primeiro trabalho',
+    },
+  },
 }

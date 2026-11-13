@@ -50,7 +50,14 @@ function Row({
 }
 
 /** What the doctor found in one repository, one row for each thing that is not fine. */
-export function RepositoryDoctor({ repo }: { repo: RepositoryView }) {
+export function RepositoryDoctor({
+  repo,
+  onReport,
+}: {
+  repo: RepositoryView
+  /** Told every time the report on screen changes, so a page can decide from what the owner sees. */
+  onReport?: (report: DoctorReport | undefined) => void
+}) {
   const { t, language } = useCopy()
   const base = `/api/panel/repositories/${repo.fullName}/doctor`
   const resource = useResource<DoctorReport>(base, { everyMs: 60_000, stream: false })
@@ -62,6 +69,7 @@ export function RepositoryDoctor({ repo }: { repo: RepositoryView }) {
   // A newer read from the server replaces what a repair answered with.
   useEffect(() => setFixed(undefined), [resource.data])
   const report = fixed ?? resource.data
+  useEffect(() => onReport?.(report), [report, onReport])
 
   async function fix(id: DoctorItem['id']) {
     setFixing(id)
