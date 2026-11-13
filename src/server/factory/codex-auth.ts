@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -135,13 +135,21 @@ const provider = new AuthProvider(CODEX_PROVIDER.oauth, CODEX_STORE, {
  * re-reads the file under its lock, so two runs never both spend the rotating refresh token and a renewal
  * never writes an old account over a login that just replaced it.
  */
-export async function freshCodexLogin(deps: CodexAuthDeps = {}): Promise<CodexLogin> {
+export async function freshCodexLogin(
+  deps: CodexAuthDeps & { force?: boolean } = {},
+): Promise<CodexLogin> {
   const env = deps.env ?? process.env
-  const stored = await storedOrMigrated(env)
+  let stored = await storedOrMigrated(env)
   if (!stored) {
     throw new CodexLoginError(
       `there is no Codex login in ${codexHomeOf(env)}: connect Codex from the Setup page`,
     )
+  }
+  if (deps.force) {
+    // The provider refused a token its own `exp` called good: mark it expired so the renewal below runs.
+    const expired = { ...stored, expires: 0 }
+    await withFileLock(codexAuthFile(env), async () => writeCredential(expired, CODEX_STORE, env))
+    stored = expired
   }
   try {
     await provider.ensureFresh(
@@ -165,7 +173,39 @@ export async function freshCodexLogin(deps: CodexAuthDeps = {}): Promise<CodexLo
   // The ID token and the account are in the file, not in what the refresh returns.
   const current = readStoredOAuth(CODEX_STORE, env)
   if (!current) throw new CodexLoginError('the renewed Codex login was not found in its store')
+  if (deps.force) clearCodexRefusal(env)
   return loginOf(current, env)
+}
+
+/** Renews the login whatever its `exp` says, for when the provider refused the token it holds. */
+export const renewCodexLogin = (deps: CodexAuthDeps = {}): Promise<CodexLogin> =>
+  freshCodexLogin({ ...deps, force: true })
+
+const refusalFile = (env: Env) => join(codexHomeOf(env), 'refused.json')
+
+/** Records that the provider refused the login, so the panel stops saying it is connected. */
+export function markCodexRefused(detail: string, env: Env = process.env): void {
+  try {
+    mkdirSync(codexHomeOf(env), { recursive: true, mode: 0o700 })
+    writeFileSync(refusalFile(env), JSON.stringify({ detail: detail.slice(0, 300) }), {
+      mode: 0o600,
+    })
+  } catch {
+    // The marker is a courtesy to the panel; losing it must not hide the failure it describes.
+  }
+}
+
+export function clearCodexRefusal(env: Env = process.env): void {
+  rmSync(refusalFile(env), { force: true })
+}
+
+function refusalOf(env: Env): string | undefined {
+  try {
+    const { detail } = JSON.parse(readFileSync(refusalFile(env), 'utf8')) as { detail?: string }
+    return `Codex refused the login${detail ? ` (${detail})` : ''}: connect Codex again from the Setup page`
+  } catch {
+    return undefined
+  }
 }
 
 /** Keeps a new login, under the lock a renewal takes, so the two can never interleave. */
@@ -175,6 +215,7 @@ export function saveCodexLogin(tokens: OAuthTokens, env: Env = process.env): Pro
   }
   return withFileLock(codexAuthFile(env), async () => {
     persistOAuthTokens(CODEX_PROVIDER.oauth.provider, tokens, CODEX_STORE, env)
+    clearCodexRefusal(env)
   })
 }
 
@@ -194,6 +235,8 @@ export function codexAccount(env: Env = process.env): CodexAccount {
     return { connected: false, problem: reason(error) }
   }
   if (!stored) return { connected: false }
+  const refused = refusalOf(env)
+  if (refused) return { connected: false, problem: refused }
   const claims = stored.id_token ? claimsOf(stored.id_token) : {}
   const auth = claims['https://api.openai.com/auth'] as { chatgpt_plan_type?: unknown } | undefined
   return {

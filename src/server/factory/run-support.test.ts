@@ -1,7 +1,10 @@
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { pushWithRetry, resolvedComment, runContinuation } from './run-support'
+import { retryableFailure } from '../../shared/panel'
+
+import type { CodingHarness, HarnessResult } from './harness'
+import { passRenewing, pushWithRetry, resolvedComment, runContinuation } from './run-support'
 
 const failing = (times: number) => {
   let calls = 0
@@ -100,5 +103,71 @@ describe('runContinuation', () => {
   it('starts from the beginning for any other decision, or none', () => {
     expect(runContinuation({ kind: 'retry', note: '' }, undefined)).toBeUndefined()
     expect(runContinuation(undefined, undefined)).toBeUndefined()
+  })
+})
+
+describe('passRenewing', () => {
+  const refusedPass: HarnessResult = {
+    ok: false,
+    summary: 'codex failed: HTTP 401 token_expired',
+    unauthorized: true,
+  }
+  const good: HarnessResult = { ok: true, summary: 'done' }
+  const setup = (reauthorize: CodingHarness['reauthorize'], answers: HarnessResult[]) => {
+    const who = {
+      name: 'codex',
+      egress: async () => [],
+      run: vi.fn(),
+      reauthorize,
+    } as CodingHarness
+    const updates: unknown[] = []
+    const egress = [
+      { domain: 'github.com', headers: { authorization: 'old' } },
+      { domain: 'chatgpt.com', headers: { authorization: 'Bearer old' } },
+    ]
+    const pass = vi.fn(async () => answers.shift()!)
+    const run = () =>
+      passRenewing(who, pass, {
+        backend: {} as SandboxBackend,
+        egress,
+        githubToken: () => 'gh',
+        updateEgress: async (rules) => void updates.push(structuredClone(rules)),
+      })
+    return { run, pass, updates, egress }
+  }
+
+  it('renews once on a 401 and runs the pass again with the new credential', async () => {
+    const t = setup(
+      async () => [{ domain: 'chatgpt.com', headers: { authorization: 'Bearer new' } }],
+      [refusedPass, good],
+    )
+    await expect(t.run()).resolves.toBe(good)
+    expect(t.pass).toHaveBeenCalledTimes(2)
+    expect(t.updates).toHaveLength(1)
+    expect(t.egress.find((r) => r.domain === 'chatgpt.com')?.headers).toEqual({
+      authorization: 'Bearer new',
+    })
+  })
+
+  it('fails as an environment failure that names the login when the renewal fails', async () => {
+    const t = setup(async () => {
+      throw new Error('refresh token rejected')
+    }, [refusedPass])
+    const error = (await t.run().catch((e: Error) => e)) as Error
+    expect(error.message).toMatch(/codex login was refused and could not be renewed/)
+    expect(t.pass).toHaveBeenCalledTimes(1)
+    expect(retryableFailure({ error: error.message })).toBe('environment')
+  })
+
+  it('does not renew twice when the second pass is refused too', async () => {
+    const reauthorize = vi.fn(async () => [])
+    const t = setup(reauthorize, [refusedPass, refusedPass])
+    await expect(t.run()).rejects.toThrow(/was refused/)
+    expect(reauthorize).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a refusal alone when the agent cannot renew', async () => {
+    const t = setup(undefined, [refusedPass])
+    await expect(t.run()).resolves.toBe(refusedPass)
   })
 })

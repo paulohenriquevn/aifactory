@@ -134,3 +134,14 @@ describe('a failure that passes by itself', () => {
     )
   })
 })
+
+describe('a refused Codex login', () => {
+  it('is a failure of the environment, so the task retries itself', () => {
+    expect(
+      retryableFailure({
+        error:
+          'the codex login was refused and could not be renewed: connect codex again from the Setup page',
+      }),
+    ).toBe('environment')
+  })
+})

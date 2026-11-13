@@ -123,6 +123,26 @@ describe('a failure with no event that says why', () => {
   })
 })
 
+describe('a refused login', () => {
+  it('is flagged as unauthorized, and a quota stop is not', () => {
+    const refused = parseCodexResult(
+      1,
+      '{"type":"error","message":"unexpected status 401: {\\"code\\": \\"token_expired\\"}"}\n',
+      '',
+    )
+    expect(refused.unauthorized).toBe(true)
+    expect(parseCodexResult(1, '', 'usage limit reached').unauthorized).toBeUndefined()
+    expect(parseCodexResult(1, '', 'boom').unauthorized).toBeUndefined()
+  })
+
+  it('can be renewed with a subscription, and not with an API key', () => {
+    const key = codexHarness({ kind: 'api-key', secret: 'k' })
+    expect(key.reauthorize).toBeUndefined()
+    const login = codexHarness({ kind: 'subscription', home: '/nowhere' })
+    expect(login.reauthorize).toBeTypeOf('function')
+  })
+})
+
 describe('codexCredentialFromEnv', () => {
   const home = '/factory-home'
   const has = (yes: boolean) => () => yes

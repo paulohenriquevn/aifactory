@@ -12,6 +12,8 @@ import {
   fromCliAuth,
   hasCodexLogin,
   legacyAuthFile,
+  markCodexRefused,
+  renewCodexLogin,
   REFRESH_MARGIN_MS,
   saveCodexLogin,
 } from './codex-auth'
@@ -219,5 +221,50 @@ describe('codexAccount', () => {
     const account = codexAccount(env)
     expect(account.connected).toBe(false)
     expect(account).toHaveProperty('problem')
+  })
+})
+
+describe('a login the provider refused', () => {
+  it('is renewed on demand even when its exp is far away', async () => {
+    const env = newHome()
+    writeCliLogin(env, accessExpiring(REFRESH_MARGIN_MS + 66 * 3_600_000))
+    const renewed = accessExpiring(10 * 86_400_000)
+    const fetch = answering({
+      access_token: renewed,
+      refresh_token: 'rotated',
+      expires_in: 864_000,
+    })
+
+    const login = await renewCodexLogin({ env, fetch, now: () => NOW })
+
+    expect(login.accessToken).toBe(renewed)
+    expect(stored(env)).toMatchObject({ access: renewed, refresh: 'rotated' })
+  })
+
+  it('fails with an error that names the Codex login when the renewal fails', async () => {
+    const env = newHome()
+    writeCliLogin(env, accessExpiring(REFRESH_MARGIN_MS + 66 * 3_600_000))
+    await expect(renewCodexLogin({ env, fetch: refusing, now: () => NOW })).rejects.toThrow(
+      /Codex login .* could not be renewed/,
+    )
+  })
+
+  it('is not shown as connected until it is renewed or signed in again', async () => {
+    const env = newHome()
+    writeCliLogin(env, accessExpiring(REFRESH_MARGIN_MS + 66 * 3_600_000))
+    expect(codexAccount(env)).toMatchObject({ connected: true })
+
+    markCodexRefused('HTTP 401 token_expired', env)
+    const refused = codexAccount(env)
+    expect(refused).toMatchObject({ connected: false })
+    expect((refused as { problem?: string }).problem).toMatch(/refused.*token_expired/)
+
+    const fetch = answering({
+      access_token: accessExpiring(10 * 86_400_000),
+      refresh_token: 'rotated',
+      expires_in: 864_000,
+    })
+    await renewCodexLogin({ env, fetch, now: () => NOW })
+    expect(codexAccount(env)).toMatchObject({ connected: true })
   })
 })

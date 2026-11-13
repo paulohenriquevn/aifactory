@@ -1,5 +1,7 @@
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 
+import { githubEgress } from './credential-renewal'
+import type { CodingHarness, HarnessResult } from './harness'
 import type { EgressRule } from './sandbox'
 import type { CheckResult } from './evidence'
 import { renderFindings, type ReviewVerdict } from './review'
@@ -194,4 +196,42 @@ export function runContinuation(
 ): Continuation | undefined {
   if (decided?.kind === 'request_changes') return { feedback: decided.note }
   return feedback ? { feedback, fromChecks: true } : undefined
+}
+
+/**
+ * Runs one pass of an agent. When the provider refuses its login (a 401), the login is renewed once,
+ * whatever its expiry says, the firewall gets the new credential, and the pass runs again. A renewal that
+ * fails, or a second refusal, is a failure of the environment, not of the work.
+ */
+export async function passRenewing(
+  who: CodingHarness,
+  pass: () => Promise<HarnessResult>,
+  sandbox: {
+    backend: SandboxBackend
+    /** The rules the run holds; renewed rules are written into it, so a later session keeps them. */
+    egress: EgressRule[]
+    githubToken: () => string
+    updateEgress?: (egress: EgressRule[]) => Promise<void>
+  },
+): Promise<HarnessResult> {
+  const first = await pass()
+  if (!first.unauthorized || !who.reauthorize) return first
+  const refused = `the ${who.name} login was refused and could not be renewed: connect ${who.name} again from the Setup page`
+  try {
+    const rules = sandbox.egress
+    for (const rule of await who.reauthorize(sandbox.backend)) {
+      const at = rules.findIndex((r) => r.domain === rule.domain)
+      if (at >= 0) rules[at] = rule
+      else rules.push(rule)
+    }
+    const github = rules.findIndex((r) => r.domain === 'github.com')
+    if (github >= 0) rules[github] = githubEgress(sandbox.githubToken())
+    if (!sandbox.updateEgress) throw new Error('the sandbox cannot change its egress')
+    await sandbox.updateEgress(rules)
+  } catch (error) {
+    throw new StageFailure(`${refused} (${error instanceof Error ? error.message : error})`)
+  }
+  const second = await pass()
+  if (second.unauthorized) throw new StageFailure(refused)
+  return second
 }

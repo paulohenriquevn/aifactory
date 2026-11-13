@@ -24,6 +24,8 @@ export type HarnessResult = {
   /** What `resume` needs to continue this conversation. */
   sessionId?: string
   quota?: QuotaStop
+  /** The provider refused the agent's login (HTTP 401): renewing it may fix this. */
+  unauthorized?: boolean
 }
 
 /**
@@ -37,6 +39,8 @@ export interface CodingHarness {
    * and the sandbox only ever gets a placeholder, so this is the one place a credential is read.
    */
   egress(): Promise<EgressRule[]>
+  /** Renews a login the provider refused and returns the new firewall rules. Absent when nothing can be renewed. */
+  reauthorize?(backend: SandboxBackend): Promise<EgressRule[]>
   /** Installs and configures the agent in a fresh sandbox, when it is not already there. */
   prepare?(backend: SandboxBackend): Promise<void>
   run(backend: SandboxBackend, input: HarnessInput): Promise<HarnessResult>

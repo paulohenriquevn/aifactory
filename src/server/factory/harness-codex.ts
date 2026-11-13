@@ -7,7 +7,14 @@ import type { SandboxBackend } from '@theokit/agents/sandbox'
 
 import type { FetchLike } from '../github/app'
 
-import { codexHomeOf, freshCodexLogin, hasCodexLogin, type CodexLogin } from './codex-auth'
+import {
+  codexHomeOf,
+  freshCodexLogin,
+  hasCodexLogin,
+  markCodexRefused,
+  renewCodexLogin,
+  type CodexLogin,
+} from './codex-auth'
 
 import {
   assertSessionId,
@@ -109,6 +116,14 @@ export function codexHarness(
         }))
       : undefined
 
+  const place = async (backend: SandboxBackend, current: CodexLogin) => {
+    await backend.uploadFile('/tmp/codex-auth.json', placeholderAuth(current, io.now))
+    const placed = await backend.execute(
+      `mkdir -p $HOME/.codex && mv /tmp/codex-auth.json ${AUTH_FILE} && chmod 600 ${AUTH_FILE}`,
+    )
+    if (placed.exitCode !== 0) throw new Error(`could not place the Codex login: ${placed.stderr}`)
+  }
+
   async function invoke(backend: SandboxBackend, input: HarnessInput, resume: string) {
     await backend.uploadFile(PROMPT_FILE, input.prompt)
     const env = credential.kind === 'api-key' ? 'OPENAI_API_KEY=placeholder-not-a-secret ' : ''
@@ -119,7 +134,12 @@ export function codexHarness(
       input,
       codexEvents,
     )
-    return parseCodexResult(result.exitCode, result.stdout, result.stderr)
+    const parsed = parseCodexResult(result.exitCode, result.stdout, result.stderr)
+    // The panel says so until a renewal or a new sign-in clears it.
+    if (parsed.unauthorized && credential.kind === 'subscription') {
+      markCodexRefused(parsed.summary, { FACTORY_CODEX_HOME: credential.home })
+    }
+    return parsed
   }
 
   return {
@@ -150,15 +170,22 @@ export function codexHarness(
         )
       }
       const current = await subscriptionLogin()
-      if (current) {
-        await backend.uploadFile('/tmp/codex-auth.json', placeholderAuth(current, io.now))
-        const placed = await backend.execute(
-          `mkdir -p $HOME/.codex && mv /tmp/codex-auth.json ${AUTH_FILE} && chmod 600 ${AUTH_FILE}`,
-        )
-        if (placed.exitCode !== 0)
-          throw new Error(`could not place the Codex login: ${placed.stderr}`)
-      }
+      if (current) await place(backend, current)
     },
+
+    ...(credential.kind === 'subscription' && {
+      async reauthorize(backend: SandboxBackend): Promise<EgressRule[]> {
+        login = await renewCodexLogin({
+          env: { FACTORY_CODEX_HOME: credential.home },
+          ...(io.fetch ? { fetch: io.fetch as typeof fetch } : {}),
+          ...(io.now ? { now: io.now } : {}),
+        })
+        await place(backend, login)
+        return [
+          { domain: 'chatgpt.com', headers: { authorization: `Bearer ${login.accessToken}` } },
+        ]
+      },
+    }),
 
     run: (backend, input) => invoke(backend, input, ''),
     resume: async (backend, sessionId, input) => invoke(backend, input, assertSessionId(sessionId)),
@@ -197,6 +224,9 @@ function withExitCode(exitCode: number, text: string): string {
   return text ? `${text} (${killed}exit ${exitCode})` : `${killed}exit ${exitCode}`
 }
 
+/** What the provider says when it refuses the login. */
+const UNAUTHORIZED = /\b401\b|token_expired|unauthorized/i
+
 export function parseCodexResult(exitCode: number, stdout: string, stderr: string): HarnessResult {
   let sessionId: string | undefined
   let summary = ''
@@ -229,8 +259,10 @@ export function parseCodexResult(exitCode: number, stdout: string, stderr: strin
   const text =
     failure ?? (ok ? '' : withExitCode(exitCode, (cleaned(stderr) || stdout).trim().slice(-1000)))
   const quota = ok ? undefined : detectQuota(text)
+  const unauthorized = !ok && !quota && UNAUTHORIZED.test(text)
   return {
     ok,
+    ...(unauthorized ? { unauthorized } : {}),
     summary: (ok ? summary : `codex failed: ${text || `exit ${exitCode}`}`).slice(0, SUMMARY_MAX),
     ...(sessionId ? { sessionId } : {}),
     ...(quota ? { quota } : {}),

@@ -73,6 +73,7 @@ import {
   must,
   oneLine,
   pullRequestBody,
+  passRenewing,
   pushWithRetry,
   resolvedComment,
   Asked,
@@ -439,7 +440,12 @@ export class Run {
     const started = Date.now()
     let result: HarnessResult
     try {
-      result = await call(this.transcript.sink(role, attempt))
+      result = await passRenewing(who, () => call(this.transcript!.sink(role, attempt)), {
+        backend: this.backend,
+        egress: this.spec.egress,
+        githubToken: () => this.c.token,
+        updateEgress: this.sandbox.updateEgress?.bind(this.sandbox),
+      })
     } catch (error) {
       await this.transcript.drain()
       // The agent did not come back (the sandbox died, say). It still ran, and that is on record.
