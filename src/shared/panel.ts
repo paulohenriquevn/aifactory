@@ -119,11 +119,17 @@ export type WatchView = {
   acknowledged: boolean
 }
 
+/**
+ * What `agent_run.model` and `.effort` hold for a pass that ran on the agent's own default. A null there is a
+ * pass from before the model was recorded: unknown, not the default.
+ */
+export const AGENT_DEFAULT = 'default'
+
 export type RunView = {
   id: number
   role: 'builder' | 'planner' | 'reviewer'
   harness: string
-  /** The model and effort the pass ran with; null when the agent used its own default. */
+  /** The model and effort the pass ran with, `AGENT_DEFAULT` for the agent's own; null when it was not recorded. */
   model: string | null
   effort: string | null
   /** Null for an agent that reports no tokens. */
@@ -214,9 +220,12 @@ export type AgentDeliveryCost = {
   agent: string
   model: string | null
   deliveredRuns: number
+  /** How many of them have a cost for every pass of this agent; the rest are unknown, never zero. */
+  reportedRuns: number
+  /** The cost of the reported runs. */
   costUsd: number
-  /** costUsd / deliveredRuns. */
-  perDelivery: number
+  /** costUsd / reportedRuns; null when no run reported a cost. */
+  perDelivery: number | null
 }
 
 /** The indicators the factory keeps, split by agent, so a change of agent can be compared with what came before. */

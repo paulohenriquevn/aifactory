@@ -1,6 +1,8 @@
 import { type SandboxBackend } from '@theokit/agents/sandbox'
 import { asc, desc, eq } from 'drizzle-orm'
 
+import { AGENT_DEFAULT } from '../../shared/panel'
+
 import {
   agentRun,
   changePlan,
@@ -447,8 +449,8 @@ export class Run {
         taskId,
         role,
         harness: who.name,
-        model: who.model ?? null,
-        effort: who.effort ?? null,
+        model: who.model ?? AGENT_DEFAULT,
+        effort: who.effort ?? AGENT_DEFAULT,
         attempt,
         durationMs: Date.now() - started,
         ok: false,
@@ -462,8 +464,8 @@ export class Run {
       taskId,
       role,
       harness: who.name,
-      model: who.model ?? null,
-      effort: who.effort ?? null,
+      model: who.model ?? AGENT_DEFAULT,
+      effort: who.effort ?? AGENT_DEFAULT,
       tokensIn: result.tokensIn ?? null,
       tokensOut: result.tokensOut ?? null,
       attempt,

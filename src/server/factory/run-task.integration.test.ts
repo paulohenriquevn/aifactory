@@ -1000,7 +1000,10 @@ describe('runTask review loop', () => {
       tokensIn: 900,
       tokensOut: 40,
     })
-    expect(rows.find((r) => r.role === 'builder')).toMatchObject({ model: null, effort: null })
+    expect(rows.find((r) => r.role === 'builder')).toMatchObject({
+      model: 'default',
+      effort: 'default',
+    })
   })
 
   it('sends the work back to the same session, then opens the pull request on the next approval', async () => {

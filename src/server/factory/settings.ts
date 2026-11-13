@@ -114,32 +114,15 @@ const known = (what: 'model' | 'effort', value: string, list: string[], agent: s
 }
 
 /**
- * Saves the choice of agent, model and effort for one or more roles; a null goes back to the default. An
- * agent the factory does not know, or one that could not start because its credential is missing, is
- * refused, and so is a model or an effort the agent chosen does not offer: a choice that breaks every run is
- * worse than no choice. Nothing is saved unless all of it is valid.
+ * What saving the patch writes, given what is stored now: the agent each role will use once it is saved is
+ * the list a model and an effort come from. Throws a `SettingRefused` for what the agent does not offer.
  */
-export async function saveChosen(
-  db: Database,
+function planWrites(
+  stored: Stored,
   patch: AgentSettingsPatch,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   read?: (path: string) => string,
-): Promise<Chosen> {
-  const options = engineOptions(env)
-  for (const role of ROLES) {
-    const value = patch[role]
-    if (value === undefined || value === null) continue
-    const option = options.find((o) => o.id === value)
-    if (!option) {
-      throw new SettingRefused(
-        `"${value}" is not an agent the factory knows (known: ${options.map((o) => o.id).join(', ')})`,
-      )
-    }
-    if (!option.ready) throw new SettingRefused(`${value} cannot start: ${option.problem}`)
-  }
-
-  // The agent each role will use once this is saved: that is the list a model and an effort come from.
-  const stored = await loadStored(db)
+): Write[] {
   const overlay: NodeJS.ProcessEnv = {}
   for (const role of ROLES) {
     const engine = patch[role] === undefined ? stored.engine[role] : patch[role]
@@ -185,12 +168,41 @@ export async function saveChosen(
         field: 'effort',
       })
   }
+  return writes
+}
 
-  // The writes and their history commit together, one save at a time, so a failed write leaves no change on
-  // record and the old value of each change is what the save before it left.
+/**
+ * Saves the choice of agent, model and effort for one or more roles; a null goes back to the default. An
+ * agent the factory does not know, or one that could not start because its credential is missing, is
+ * refused, and so is a model or an effort the agent chosen does not offer: a choice that breaks every run is
+ * worse than no choice. Nothing is saved unless all of it is valid.
+ */
+export async function saveChosen(
+  db: Database,
+  patch: AgentSettingsPatch,
+  env: NodeJS.ProcessEnv = process.env,
+  read?: (path: string) => string,
+): Promise<Chosen> {
+  const options = engineOptions(env)
+  for (const role of ROLES) {
+    const value = patch[role]
+    if (value === undefined || value === null) continue
+    const option = options.find((o) => o.id === value)
+    if (!option) {
+      throw new SettingRefused(
+        `"${value}" is not an agent the factory knows (known: ${options.map((o) => o.id).join(', ')})`,
+      )
+    }
+    if (!option.ready) throw new SettingRefused(`${value} cannot start: ${option.problem}`)
+  }
+
+  // One save at a time: what is stored is read and the writes are derived and checked only once the lock is
+  // held, so a save that changed the agent a moment ago is what this one is checked against. The writes and
+  // their history commit together, so a refusal or a failed write leaves no change on record.
   await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(${SETTINGS_LOCK})`)
     const current = await loadStored(tx)
+    const writes = planWrites(current, patch, env, read)
     for (const { key, value, role, field } of writes) {
       const before = current[field][role]
       if (before !== value) {

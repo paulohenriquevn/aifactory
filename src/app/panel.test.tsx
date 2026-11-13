@@ -982,6 +982,36 @@ describe('health', () => {
     expect(reviews.textContent).toContain('gpt-6.1-sol · medium')
   })
 
+  it('says a pass from before the model was recorded is unknown, and one on the default is the default', async () => {
+    const run = {
+      role: 'builder' as const,
+      harness: 'claude-code',
+      tokensIn: null,
+      tokensOut: null,
+      attempt: 1,
+      costUsd: null,
+      durationMs: 1000,
+      ok: true,
+      quota: false,
+      at: '2026-11-04T10:00:00Z',
+    }
+    serve({
+      'GET /api/panel/tasks/5': detail({
+        runs: [
+          { ...run, id: 1, model: null, effort: null },
+          { ...run, id: 2, model: 'default', effort: 'default' },
+        ],
+      }),
+    })
+    renderTask()
+    const runs = await screen.findByRole('region', { name: 'Executions' })
+    const rows = within(runs).getAllByRole('row')
+    expect(rows[1].textContent).toContain('not recorded')
+    expect(rows[1].textContent).not.toContain('default')
+    expect(rows[2].textContent).toContain('default')
+    expect(rows[2].textContent).not.toContain('not recorded')
+  })
+
   it('gives each review the model of its own pass, also after a retry restarted the attempts', async () => {
     const run = {
       role: 'reviewer' as const,

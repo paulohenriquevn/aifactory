@@ -161,6 +161,7 @@ export const ptBR: Copy = {
     executions: 'Execuções',
     role: 'Papel',
     model: 'Modelo',
+    notRecorded: 'não registrado',
     defaultModel: 'padrão',
     tokens: 'Tokens (entrada / saída)',
     agent: 'Agente',

@@ -161,6 +161,7 @@ export const en = {
     executions: 'Executions',
     role: 'Role',
     model: 'Model',
+    notRecorded: 'not recorded',
     defaultModel: 'default',
     tokens: 'Tokens (in / out)',
     agent: 'Agent',
