@@ -31,7 +31,7 @@ export function AgentList({
                       type="button"
                       aria-current={active ? 'true' : undefined}
                       onClick={() => onSelect(agent.id)}
-                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${active ? 'bg-white/[0.14] font-medium text-foreground' : 'text-foreground/85 hover:bg-white/[0.06]'}`}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${active ? 'bg-muted font-medium text-foreground' : 'text-foreground/85 hover:bg-muted/60'}`}
                     >
                       <span className="min-w-0 flex-1 truncate">{agent.name}</span>
                       {agent.prompts.length > 1 ? (

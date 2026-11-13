@@ -4,7 +4,7 @@ import type { GuideId } from '../../../shared/guides'
 import { guideFor } from '../../lib/guides'
 
 /** How the item of the menu the owner is in looks: clearly lighter than a hover, and heavier in weight. */
-export const ACTIVE = 'bg-white/[0.14] text-foreground font-medium'
+export const ACTIVE = 'bg-muted text-foreground font-medium'
 
 /**
  * The place of the factory the owner is in, which is the one to mark in the menu. A page inside a place

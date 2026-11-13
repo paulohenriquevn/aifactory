@@ -109,7 +109,7 @@ export function AgentDetail({
                 role="tab"
                 aria-selected={i === index}
                 onClick={() => setChosen(i)}
-                className={`rounded-full px-3 py-1 text-[13px] transition-colors ${i === index ? 'bg-white/[0.14] font-medium text-foreground' : 'border border-border text-foreground/75 hover:bg-white/[0.06]'}`}
+                className={`rounded-full px-3 py-1 text-[13px] transition-colors ${i === index ? 'bg-muted font-medium text-foreground' : 'border border-border text-foreground/75 hover:bg-muted/60'}`}
               >
                 {p.title}
               </button>

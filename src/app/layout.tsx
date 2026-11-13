@@ -65,7 +65,7 @@ export default function RootLayout() {
     <ThemeProvider themes={builtinThemes} defaultTheme="violet-forge" defaultMode="dark">
       <ChatsProvider enabled={signedIn}>
         <GuideProvider>
-          <div className="flex h-screen bg-[#0b0b0c] text-foreground">
+          <div className="flex h-screen bg-background text-foreground">
             {signedIn ? (
               menuHidden ? (
                 <Rail

@@ -37,7 +37,7 @@ export function ChatgptConnect({ onConnected }: { onConnected: () => void }) {
   return (
     <section
       aria-label="Conectar o ChatGPT"
-      className="mb-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-[14px]"
+      className="mb-3 rounded-2xl border border-border bg-muted p-4 text-[14px]"
     >
       <p className="text-foreground">
         Conecte a sua assinatura do ChatGPT para conversar com este modelo.

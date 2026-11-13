@@ -142,7 +142,7 @@ export function ChatView({ chatId }: { chatId?: string }) {
               <button
                 type="button"
                 onClick={() => send(text)}
-                className="flex w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[15px] text-foreground/55 transition-colors hover:bg-white/[0.05] hover:text-foreground"
+                className="flex w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[15px] text-foreground/55 transition-colors hover:bg-muted/60 hover:text-foreground"
               >
                 <MessageSquare className="size-[18px] shrink-0" />
                 {text}
