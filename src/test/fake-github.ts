@@ -1,3 +1,5 @@
+import type { AppAccess, AppEvents, GithubApp } from '../server/github/app'
+import type { IssuesApi } from '../server/github/issues-api'
 import {
   AutoMergeRefused,
   type ChangedFile,
@@ -149,6 +151,10 @@ export class FakeRepository {
   hasIssues = true
   /** "Allow auto-merge" in the repository settings. */
   allowAutoMerge = true
+  /** "Allow merge commits" in the repository settings. */
+  allowMergeCommit = true
+  /** The labels that exist, by name. */
+  readonly labels = new Set<string>()
   /** The commit each branch points at. */
   readonly heads = new Map<string, string>([['main', 'a'.repeat(40)]])
   /** Branches GitHub does not let the App push or merge into directly. */
@@ -168,6 +174,7 @@ export class FakeRepository {
   /** The number the next issue or pull request gets: GitHub counts both in one sequence. */
   nextNumber = 1
 
+  private readonly logs = new Map<string, string[]>()
   private readonly trees = new Map<string, Map<string, string>>()
   private readonly comparisons = new Map<string, ChangedFile[]>()
   private readonly aheadBy = new Map<string, number>()
@@ -189,6 +196,21 @@ export class FakeRepository {
     this.heads.set('workspace', 'b'.repeat(40))
     this.heads.set('develop', 'c'.repeat(40))
     return this
+  }
+
+  /** Says what the last commits of a branch are, newest first. Its head becomes the first of them. */
+  log(branch: string, shas: string[]): this {
+    this.logs.set(branch, shas)
+    if (shas[0]) this.heads.set(branch, shas[0])
+    return this
+  }
+
+  /** The last commits of a branch, newest first: what a test said, or its head alone. */
+  history(branch: string): string[] | undefined {
+    const head = this.heads.get(branch)
+    if (head === undefined) return undefined
+    const said = this.logs.get(branch)
+    return said?.[0] === head ? said : [head]
   }
 
   /** The commit a ref names: where a branch points, or the ref itself when it is not a branch. */
@@ -458,7 +480,7 @@ export class FakeRepository {
 }
 
 export class FakeGithub implements GithubApi {
-  /** What the App may do and hears. Nothing here reads it yet: it is state for what checks an installation. */
+  /** What the App may do and hears, which `appClient` answers from. */
   readonly app: FakeApp = {
     slug: 'aifactory',
     permissions: {
@@ -467,6 +489,7 @@ export class FakeGithub implements GithubApi {
       issues: 'write',
       pull_requests: 'write',
       checks: 'write',
+      workflows: 'write',
       statuses: 'read',
     },
     events: ['issues'],
@@ -475,6 +498,9 @@ export class FakeGithub implements GithubApi {
   now: () => Date = () => new Date()
   /** Every call in the order it was made, the refused ones included. */
   readonly calls: Call[] = []
+
+  /** Repositories the App is not installed on, by name: no token can be had for them. */
+  readonly unreached = new Set<string>()
 
   private readonly repositories = new Map<string, FakeRepository>()
   private readonly hooks: ((call: Call, repo: FakeRepository) => void | Promise<void>)[] = []
@@ -488,6 +514,34 @@ export class FakeGithub implements GithubApi {
       this.repositories.set(key, repo)
     }
     return repo
+  }
+
+  private reaches(name: string): boolean {
+    return ![...this.unreached].some((other) => other.toLowerCase() === name.toLowerCase())
+  }
+
+  /**
+   * The App as the factory holds it, answered from the same state: a token names its repository
+   * (`token-for-<repo>`), and a repository in `unreached` gets none.
+   */
+  appClient(): GithubApp & AppEvents & AppAccess {
+    return {
+      installationToken: async (repo) => {
+        if (!this.reaches(repo)) throw new Error(`the GitHub App is not installed on ${repo}`)
+        return { token: `token-for-${repo}`, expiresAt: new Date(this.now().getTime() + 3_600_000) }
+      },
+      subscriptions: async () => ({
+        events: [...this.app.events],
+        settingsUrl: `https://github.com/settings/apps/${this.app.slug}/permissions`,
+      }),
+      installationPermissions: async (repo) =>
+        this.reaches(repo) ? { ...this.app.permissions } : undefined,
+    }
+  }
+
+  /** Creates a label, as the panel's `IssuesApi` does. One that is already there stays as it is. */
+  ensureLabel: IssuesApi['ensureLabel'] = async (repo, _token, label) => {
+    this.repo(repo).labels.add(label.name)
   }
 
   /** Every repository the fake holds, declared or reached by a call. */
@@ -855,6 +909,49 @@ export class FakeGithub implements GithubApi {
         })
         return { number: made.number, url: made.url }
       },
+    )
+  }
+
+  async repositorySettings(repo: string, token: string) {
+    return this.call(
+      { method: 'repositorySettings', repo, token, args: [], failed: false },
+      (r) => ({
+        hasIssues: r.hasIssues,
+        defaultBranch: r.defaultBranch,
+        allowAutoMerge: r.allowAutoMerge,
+        allowMergeCommit: r.allowMergeCommit,
+      }),
+    )
+  }
+
+  async labelExists(repo: string, token: string, name: string) {
+    return this.call({ method: 'labelExists', repo, token, args: [name], failed: false }, (r) =>
+      r.labels.has(name),
+    )
+  }
+
+  async recentCommits(repo: string, token: string, branch: string, count: number) {
+    return this.call(
+      { method: 'recentCommits', repo, token, args: [branch, count], failed: false },
+      (r) => {
+        const history = r.history(branch)
+        if (!history) {
+          throw githubAnswered(404, `listing the commits of ${branch} on ${repo}`, 'Not Found')
+        }
+        return history.slice(0, count)
+      },
+    )
+  }
+
+  async recentPullRequestHeads(repo: string, token: string, base: string, count: number) {
+    return this.call(
+      { method: 'recentPullRequestHeads', repo, token, args: [base, count], failed: false },
+      (r) =>
+        r.pulls
+          .filter((pull) => pull.baseRef === base)
+          .reverse()
+          .slice(0, count)
+          .map((pull) => r.headOf(pull)),
     )
   }
 

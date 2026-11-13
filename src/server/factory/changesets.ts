@@ -20,13 +20,40 @@ const CHANGESET_FILE = /^\.changeset\/[^/]+\.md$/
  * The changesets that wait to ship: the `.changeset/*.md` files, the README aside, that a comparison of the
  * pre-release branch with the release branch lists as added since their merge base. Being on the branch is
  * not enough: a release whose Version Packages pull request consumed changesets deletes them on the release
- * branch only, and with no back-merge the pre-release branch keeps them (theokit-plugins after #250).
+ * branch only, and with no back-merge the pre-release branch keeps them (theokit-plugins after #250). Being
+ * added is not enough either: `changesetsWaiting` in `changed-packages.ts` reads each one and leaves out
+ * those that name no package.
  */
 export function addedChangesets(files: ChangedFile[]): string[] {
   return files
-    .filter((file) => file.status === 'added' && CHANGESET_FILE.test(file.path))
+    .filter((file) => file.status === 'added' && isChangesetFile(file.path))
     .map((file) => file.path)
-    .filter((path) => path !== '.changeset/README.md')
+}
+
+/** Whether a path is a changeset: a markdown file directly under `.changeset`, the README aside. */
+export const isChangesetFile = (path: string) =>
+  CHANGESET_FILE.test(path) && path !== '.changeset/README.md'
+
+/**
+ * The packages a changeset names: one for each `name: bump` line of its front matter, the name quoted or
+ * not. A changeset that names none (`changeset add --empty`, or a front matter written empty by hand)
+ * releases nothing. One that reached a release branch made the release workflow take its version branch,
+ * version no package and refuse to publish (usetheokit/theokit on 2026-11-13, twelve of them for a private
+ * app), so such a file never counts as a changeset that waits, nor as a file a check asked for.
+ */
+export function changesetPackages(text: string): string[] {
+  const [first, ...rest] = text.trimStart().split(/\r?\n/)
+  const end = rest.findIndex((line) => line.trim() === '---')
+  if (first.trim() !== '---' || end === -1) return []
+  return rest.slice(0, end).flatMap((line) => {
+    const colon = line.lastIndexOf(':')
+    const name = line
+      .slice(0, Math.max(colon, 0))
+      .trim()
+      .replace(/^["']|["']$/g, '')
+    const bump = line.slice(colon + 1).trim()
+    return name !== '' && bump !== '' ? [name] : []
+  })
 }
 
 /** Every path a comparison touches, a rename by both its names. */
@@ -238,11 +265,17 @@ export const isPackageTag = (tag: string) => PACKAGE_TAG.test(tag)
 /** The check that fails a commit changing a package without saying how its version moves. */
 export const CHANGESET_CHECK = 'changeset'
 
+/** Where the factory writes the script of its changeset check in a sandbox (`changeset-check.ts`). */
+export const CHANGESET_CHECK_PATH = '/tmp/factory-changeset-check.mjs'
+
 /**
- * The checks with `changeset status` added when the repository uses changesets. The work starts from the
- * integration branch, so that is what it is compared with; a package changed with no changeset makes it
- * exit 1, and the agent is sent back to add one. Without it, work reached the release branch and nothing
- * was published (theokit-ui's i18n layer on 2026-11-11).
+ * The checks with the factory's changeset check added when the repository uses changesets. The work starts
+ * from the integration branch, so that is what it is compared with. A published package changed with no
+ * changeset naming it makes the check exit 1, and the agent is sent back to add one: without it, work
+ * reached the release branch and nothing was published (theokit-ui's i18n layer on 2026-11-11). A change to
+ * a private or an ignored package passes with no changeset, and an added changeset that names no package
+ * fails. `changeset status` could say neither: it counts private packages and takes an empty changeset as
+ * an answer (paulohenriquevn/aifactory#67).
  */
 export function withChangesetCheck(
   checks: CheckSpec[],
@@ -254,7 +287,7 @@ export function withChangesetCheck(
     ...checks,
     {
       name: CHANGESET_CHECK,
-      command: `pnpm exec changeset status --since=origin/${integrationBranch}`,
+      command: `node ${CHANGESET_CHECK_PATH} origin/${integrationBranch}`,
     },
   ]
 }

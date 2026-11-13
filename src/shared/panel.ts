@@ -384,6 +384,56 @@ export type RepositoryView = {
   harness: string | null
   reviewer: string | null
   releaseMode: 'manual' | 'trial' | 'auto' | null
+  /** The commit of the integration branch the proven checks passed on; null when none was proven. */
+  checksProvenSha: string | null
+  /** The names of the saved checks that no proof ran: the owner typed them, and the first task tries them. */
+  unprovenChecks: string[]
+  /** The last proof of proposed checks, running or finished; null when none was asked for. */
+  checksProof: ChecksProof | null
+}
+
+/**
+ * How one proposed check did on the head of the integration branch. `too_slow` is a check that was still
+ * running at its time limit: it did not fail, and no run could wait for it either.
+ */
+export type ProvenCheck = {
+  name: string
+  command: string
+  status: 'passed' | 'failed' | 'too_slow'
+  exitCode: number
+  durationMs: number
+  /** The tail of what the command printed. */
+  output: string
+}
+
+/**
+ * One proof of proposed checks, from the request to its end. `proving` has no results yet; `done` has one
+ * for each check, and `saved` names the ones that passed and were stored; `failed` is a proof that could
+ * not run (no sandbox, no clone), with the reason.
+ */
+export type ChecksProof = {
+  fullName: string
+  status: 'proving' | 'done' | 'failed'
+  /** When it was asked for. */
+  at: string
+  /** What was proposed. */
+  checks: { name: string; command: string }[]
+  /** The commit the checks ran on; null until the sandbox has the repository. */
+  sha: string | null
+  /** How long one check may take in a run, which is what `too_slow` was measured against. */
+  limitMs: number
+  results: ProvenCheck[]
+  saved: string[]
+  error: string | null
+}
+
+/** What saving a repository answers with. */
+export type RepositorySaved = {
+  fullName: string
+  /** The doctor's report, when the save enabled the repository. */
+  doctor?: DoctorReport
+  /** The names of the saved checks that no proof ran. */
+  unprovenChecks: string[]
 }
 
 /** A project's `.factory/setup.json` on its default branch, and which of its domains wait for the owner. */
@@ -399,6 +449,48 @@ export type RecipeView = {
   approved: string[]
   /** Why the recipe cannot be used; a run fails with the same reason. */
   problem: string | null
+}
+
+/** One diagnosis of the repository doctor. */
+export type DoctorItemId =
+  | 'issues_disabled'
+  | 'app_access'
+  | 'app_events'
+  | 'branches'
+  | 'label'
+  | 'auto_merge'
+  | 'ci_silent'
+  | 'checks_parity'
+  | 'publish_mode'
+  | 'recipe'
+  | 'sandbox'
+
+/**
+ * What the doctor found about one thing a repository needs. `blocked` stops work, `warn` does not, and
+ * `unknown` is something the doctor could not read: its cause says what it tried, and it is never `ok`.
+ */
+export type DoctorItem = {
+  id: DoctorItemId
+  status: 'ok' | 'warn' | 'blocked' | 'unknown'
+  /** What is wrong, or what was found to be fine, in one sentence. */
+  cause: string
+  /** The exact repair; empty when there is nothing to repair. */
+  repair: string
+  /** Where the repair is made: a page on GitHub, or a path of the panel. */
+  link?: string
+  /** Whether the factory can make the repair itself. */
+  canRepair: boolean
+}
+
+/** How a repository publishes a release: its own changesets workflow, a workflow that runs on a tag, or nothing. */
+export type PublishMode = 'changesets' | 'tag' | 'none'
+
+/** The last examination of a repository. `publishMode` is null when it could not be read. */
+export type DoctorReport = {
+  fullName: string
+  at: string
+  items: DoctorItem[]
+  publishMode: PublishMode | null
 }
 
 export type RepositoriesView = {

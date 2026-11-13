@@ -46,9 +46,9 @@ src/server/         backend — never leaves the machine
   knowledge/        the owner's knowledge repository: mirror, sync, the slice each agent gets, notes
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
-  factory/          one task end to end: sandbox, agent, push, stage history
+  factory/          one task end to end: sandbox, agent, push, stage history; the repository doctor
   github/           GitHub App auth (repository-scoped tokens) and issue reads
-  jobs/             defineJob files; `run-task` runs a task
+  jobs/             defineJob files; `run-task` runs a task, `prove-checks` proves proposed checks
   routes/           file-based HTTP
 src/shared/         contracts both sides import (`panel.ts` is what the panel API returns)
 .theokit/           agent context read at runtime (no rebuild)
@@ -104,6 +104,17 @@ reads that file, not a convention.
   nothing of the factory; `knowledge/format.ts` is the factory's layout on top of it. What the factory writes
   conforms (a test checks every file it writes), and what it reads may not: never refuse a bundle for missing
   front matter, an unknown type or a broken link (§11 of the specification).
+- **The doctor never calls fine what it did not read.** `factory/doctor.ts` decides over facts and reads
+  nothing; `factory/doctor-facts.ts` reads and decides nothing. A read that fails is a fact that was not
+  read, and its item is `unknown` with what was tried. A new diagnosis is a new item function and a new
+  fact, listed in `DOCTOR_ITEMS`. The doctor asks GitHub only for what the App's permissions allow, and
+  `repairRepository` does only what the App can do (create a branch, create the label).
+- **Only a proof stores a check as proven.** `proveChecks` in `factory/prove-checks.ts` runs proposed checks
+  on the head of the integration branch, all in one sandbox that it always stops, and the `prove-checks` job
+  saves only the ones that passed, with the commit (`repository.checks_proven_sha`, `checks_proven`). A check
+  cut at its limit is `too_slow`, never `failed`. The settings form saves what the owner types and answers
+  with `unprovenChecks`. No agent runs in that sandbox, which is why it opens no knowledge feed
+  (`NO_AGENT` in `every-agent.test.ts`): a file listed there may not mention a harness.
 - **Every text box in the panel has an `<Assist>`.** `src/app/every-box.test.ts` fails when a file with a
   textarea has none. The premise is that the owner never has to be a programmer.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;
@@ -133,7 +144,8 @@ reads that file, not a convention.
 - **A repository that publishes with changesets tags its own releases.** When `.changeset/config.json` is on
   `develop` and a changeset waits, `release()` makes no tag: it promotes and records a `publication`. A changeset
   waits only when the comparison of `develop` with the release branch lists it as added since their merge base
-  (`addedChangesets`); one a past release consumed on the release branch but `develop` still holds does not.
+  and it names a package (`changesetsWaiting`); one a past release consumed on the release branch but `develop`
+  still holds does not, and neither does an empty one, which releases nothing.
   With no changeset waiting, it reads what that comparison lists (`changed-packages.ts`):
   when a package changesets publishes changed, it refuses and names the package; when every change is in a
   private package, an ignored one (`ignore` in `.changeset/config.json`) or no package, the release is the
@@ -149,7 +161,12 @@ reads that file, not a convention.
   finished without a Version Packages pull request or such a branch
   (`publication-end.ts`, after a 10 minute grace window), the publication ends: a failed
   check, or a promotion that changes a published package, fails it with the reason on the task; otherwise the
-  promotion becomes the factory's own patch release. Such a repository also gets a `changeset` check.
+  promotion becomes the factory's own patch release. Such a repository also gets a `changeset` check,
+  a script the factory writes into the sandbox before every round of checks (`changeset-check.ts`): it fails
+  when a published package changed and no changeset the work added names it, and when the work added a
+  changeset that names no package; a change only to private or ignored packages passes with no changeset.
+  The script repeats the rules of `changesets.ts` in JavaScript a sandbox can run, so a change to which
+  package counts as published goes into both.
 - **The factory opens a revert and never merges it.** `watch-main` may open a pull request that
   reverts a release when its merge commit goes red. Nothing in `factory/watch.ts` calls a merge, and a
   test fails if it does.

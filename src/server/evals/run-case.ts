@@ -15,6 +15,7 @@ import {
   type ChangePlan,
 } from '../factory/change-plan'
 import { cloneRepository } from '../factory/clone'
+import { uploadChangesetCheck } from '../factory/changeset-check'
 import { failingChecks, runChecks, type CheckResult } from '../factory/evidence'
 import { diffFacts } from '../factory/diff-facts'
 import type { CheckRun, RequiredByCheck } from '../factory/required-files'
@@ -214,6 +215,7 @@ class CaseRun {
   /** Runs the checks on the commit and keeps every result, as the factory keeps its evidence. */
   private async check(sha: string): Promise<CheckResult[]> {
     await must(this.backend, `git -C ${this.repoDir} clean -fdxq`)
+    await uploadChangesetCheck(this.backend, this.c.checks)
     const results = await runChecks(
       this.backend,
       this.repoDir,

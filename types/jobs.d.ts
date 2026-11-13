@@ -13,6 +13,8 @@ declare module 'theokit/server/jobs' {
     'resume-task': { taskId: number; questionId: number }
     /** Has an agent read a repository and split a goal into issues. */
     'plan-run': { planId: number }
+    /** Runs the checks proposed for a repository in a sandbox and saves the ones that pass. */
+    'prove-checks': { repository: string; at: string }
   }
 }
 

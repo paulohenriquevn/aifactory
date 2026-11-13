@@ -190,6 +190,20 @@
       "when": 1794443656190,
       "tag": "0029_release_wait",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794590749968,
+      "tag": "0030_repository_doctor",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794592462430,
+      "tag": "0031_checks_proof",
+      "breakpoints": true
     }
   ]
 }

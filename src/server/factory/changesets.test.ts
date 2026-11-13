@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CHANGESET_CHECK,
+  CHANGESET_CHECK_PATH,
   addedChangesets,
   changesetIgnore,
+  changesetPackages,
   enclosingPackages,
   isIgnored,
   packageDirs,
@@ -48,6 +50,8 @@ describe('addedChangesets', () => {
         file('.changeset/pre.json'),
         file('docs/notes.md'),
         file('.changeset/nested/deep.md'),
+        file('docs/.changeset/elsewhere.md'),
+        file('.changeset/draft.md.bak'),
       ]),
     ).toEqual(['.changeset/brave-fox.md'])
   })
@@ -274,14 +278,59 @@ describe('isPackageTag', () => {
   })
 })
 
+describe('changesetPackages', () => {
+  it('is the packages the front matter names, quoted either way or bare', () => {
+    const text =
+      '---\n"@theokit/ui": minor\n\'theokit\': patch\n  create-app : major\n---\n\nSays why.\n'
+
+    expect(changesetPackages(text)).toEqual(['@theokit/ui', 'theokit', 'create-app'])
+  })
+
+  it('is nothing for an empty changeset, the one `changeset add --empty` writes', () => {
+    expect(changesetPackages('---\n---\n')).toEqual([])
+    expect(changesetPackages('---\n\n---\n\nA private app changed.\n')).toEqual([])
+  })
+
+  it('reads only the front matter: a line of the summary names nothing', () => {
+    expect(changesetPackages('---\n---\n\nfix: the parser\n"@theokit/ui": minor\n')).toEqual([])
+    expect(changesetPackages('"@theokit/ui": minor\n')).toEqual([])
+    expect(changesetPackages('---\n"@theokit/ui": minor\n')).toEqual([])
+  })
+
+  it('takes a line only when it has a name and a bump', () => {
+    expect(
+      changesetPackages('---\n"@theokit/ui":\n: patch\n"": patch\nno bump here\n---\n'),
+    ).toEqual([])
+  })
+
+  it('takes the fences with spaces around them, and no bump made only of spaces', () => {
+    expect(changesetPackages('---  \n"@theokit/ui": minor\n ---  \n')).toEqual(['@theokit/ui'])
+    expect(changesetPackages('---\n"@theokit/ui":   \n---\n')).toEqual([])
+  })
+
+  it('names nothing when the file does not open with a fence, though one closes later', () => {
+    expect(changesetPackages('Notes\n"@theokit/ui": minor\n---\n')).toEqual([])
+  })
+
+  it('strips only the quotes around a name', () => {
+    expect(changesetPackages('---\n"o\'neil": patch\n---\n')).toEqual(["o'neil"])
+    expect(changesetPackages("---\n'say\"cheese': patch\n---\n")).toEqual(['say"cheese'])
+  })
+
+  it('reads a file with Windows line ends, or with blank lines before the front matter', () => {
+    expect(changesetPackages('\n\n---\r\n"@theokit/ui": minor\r\n---\r\n')).toEqual(['@theokit/ui'])
+  })
+})
+
 describe('withChangesetCheck', () => {
   const checks = [{ name: 'install', command: 'pnpm install --frozen-lockfile' }]
 
   it('adds the changeset check, against the integration branch, when the repository uses changesets', () => {
     expect(withChangesetCheck(checks, true, 'workspace')).toEqual([
       ...checks,
-      { name: CHANGESET_CHECK, command: 'pnpm exec changeset status --since=origin/workspace' },
+      { name: CHANGESET_CHECK, command: `node ${CHANGESET_CHECK_PATH} origin/workspace` },
     ])
+    expect(CHANGESET_CHECK_PATH).toBe('/tmp/factory-changeset-check.mjs')
   })
 
   it('leaves the checks alone when the repository does not use changesets', () => {

@@ -13,6 +13,8 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
+import type { ChecksProof, DoctorReport, ProvenCheck } from '../../shared/panel'
+
 /**
  * The stages of a task, in the order a successful run passes through them, then the ways a run ends
  * without delivering. `cancelled` is a run that was stopped because its issue no longer asks for it.
@@ -440,6 +442,16 @@ export const repository = pgTable('repository', {
   harness: text('harness'),
   reviewer: text('reviewer'),
   releaseMode: text('release_mode', { enum: ['manual', 'trial', 'auto'] }),
+  /** The doctor's last report on the repository, with its time. */
+  doctor: jsonb('doctor').$type<DoctorReport>(),
+  /** How the repository publishes a release, as the doctor last read it. */
+  publishMode: text('publish_mode', { enum: ['changesets', 'tag', 'none'] }),
+  /** The commit of the integration branch the checks in `checksProven` passed on. */
+  checksProvenSha: text('checks_proven_sha'),
+  /** The saved checks a proof ran and saw pass, each with its result; one the owner typed is not here. */
+  checksProven: jsonb('checks_proven').$type<ProvenCheck[]>().notNull().default([]),
+  /** The last proof of proposed checks, running or finished. */
+  checksProof: jsonb('checks_proof').$type<ChecksProof>(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })

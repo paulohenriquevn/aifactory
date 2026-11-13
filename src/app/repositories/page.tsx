@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router'
 import type { RepositoriesView, RepositoryView } from '../../shared/panel'
 import { Assist } from '../components/Assist'
 import { RecipeCard } from '../components/RecipeCard'
+import { ProveChecks, RepositoryDoctor } from '../components/RepositoryDoctor'
 import { put } from '../lib/api'
 import { useResource } from '../lib/live'
 import { formatChecks, formatDomains, parseChecks, parseDomains } from '../lib/repo-form'
@@ -230,7 +231,9 @@ function Repo({
         ) : null}
         {repo.enabled ? (
           <>
+            <RepositoryDoctor repo={repo} />
             <Settings repo={repo} agents={agents} onSaved={onChanged} />
+            <ProveChecks repo={repo} />
             <div className="mt-4 border-t border-border pt-3">
               <RecipeCard fullName={repo.fullName} />
             </div>

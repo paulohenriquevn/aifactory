@@ -394,3 +394,75 @@ describe('the state the fake GitHub holds', () => {
     expect(github.app.events).toContain('issues')
   })
 })
+
+describe('what the doctor reads on the fake GitHub', () => {
+  it('answers the settings, the labels and the last commits of a branch from its state', async () => {
+    const github = new FakeGithub()
+    const repo = github.repo(REPO).prepare()
+    repo.hasIssues = false
+    repo.allowMergeCommit = false
+    repo.labels.add('factory')
+    repo.log('workspace', ['c3', 'c2', 'c1'])
+
+    expect(await github.repositorySettings(REPO, 't')).toEqual({
+      hasIssues: false,
+      defaultBranch: 'main',
+      allowAutoMerge: true,
+      allowMergeCommit: false,
+    })
+    expect(await github.labelExists(REPO, 't', 'factory')).toBe(true)
+    expect(await github.labelExists(REPO, 't', 'bug')).toBe(false)
+    expect(await github.recentCommits(REPO, 't', 'workspace', 2)).toEqual(['c3', 'c2'])
+    expect(await github.branchHead(REPO, 't', 'workspace')).toBe('c3')
+    expect(await github.recentCommits(REPO, 't', 'develop', 2)).toEqual(['c'.repeat(40)])
+    await expect(github.recentCommits(REPO, 't', 'gone', 2)).rejects.toThrow(/404 listing/)
+  })
+
+  it('forgets the commits it was told once the branch moves', async () => {
+    const github = new FakeGithub()
+    const repo = github.repo(REPO).prepare()
+    repo.log('workspace', ['c2', 'c1'])
+    repo.heads.set('workspace', 'c9')
+
+    expect(await github.recentCommits(REPO, 't', 'workspace', 5)).toEqual(['c9'])
+  })
+
+  it('lists the heads of the pull requests into a branch, the latest first', async () => {
+    const github = new FakeGithub()
+    const repo = github.repo(REPO).prepare()
+    repo.pullRequest({ baseRef: 'workspace', headSha: 'p1' })
+    repo.pullRequest({ baseRef: 'main', headSha: 'other' })
+    repo.pullRequest({ baseRef: 'workspace', headSha: 'p2', state: 'closed' })
+
+    expect(await github.recentPullRequestHeads(REPO, 't', 'workspace', 5)).toEqual(['p2', 'p1'])
+    expect(await github.recentPullRequestHeads(REPO, 't', 'workspace', 1)).toEqual(['p2'])
+  })
+
+  it('answers as the App from the same state, and has no token for a repository it does not reach', async () => {
+    const github = new FakeGithub()
+    const client = github.appClient()
+
+    expect((await client.installationToken(REPO)).token).toBe('token-for-paulo/app')
+    expect(await client.installationPermissions(REPO)).toMatchObject({ workflows: 'write' })
+    expect(await client.subscriptions()).toEqual({
+      events: ['issues'],
+      settingsUrl: 'https://github.com/settings/apps/aifactory/permissions',
+    })
+
+    github.unreached.add('Paulo/App')
+    await expect(client.installationToken(REPO)).rejects.toThrow(
+      'the GitHub App is not installed on paulo/app',
+    )
+    expect(await client.installationPermissions(REPO)).toBeUndefined()
+  })
+
+  it('creates a label once, as the panel asks for it', async () => {
+    const github = new FakeGithub()
+    const label = { name: 'factory', color: '5319e7', description: '' }
+
+    await github.ensureLabel(REPO, 't', label)
+    await github.ensureLabel(REPO, 't', label)
+
+    expect([...github.repo(REPO).labels]).toEqual(['factory'])
+  })
+})

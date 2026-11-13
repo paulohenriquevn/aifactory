@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { FakeGithub } from '../../test/fake-github'
 
-import { publishedPackagesChanged, versionedTags } from './changed-packages'
+import { changesetsWaiting, publishedPackagesChanged, versionedTags } from './changed-packages'
 
 /** What a fake GitHub was asked to read, as `ref:path`. */
 const readsOf = (api: FakeGithub) => api.callsTo('readFile').map(([path, ref]) => `${ref}:${path}`)
@@ -23,6 +23,51 @@ const theokit = {
   'packages/ui/package.json': '{"name":"@theokit/ui"}',
   'apps/theoclaw/package.json': '{"name":"theoclaw"}',
 }
+
+describe('changesetsWaiting', () => {
+  const added = (...paths: string[]) => paths.map((path) => ({ path, status: 'added' }))
+  const NAMED = '---\n"@theokit/ui": patch\n---\n\nFixes the button.\n'
+
+  it('is the added changesets that name a package, read on the head', async () => {
+    const { api, reads } = repository({
+      ...theokit,
+      '.changeset/brave-fox.md': NAMED,
+      '.changeset/theocode-a.md': '---\n---\n\nA private app changed.\n',
+    })
+    const files = added('.changeset/brave-fox.md', '.changeset/theocode-a.md')
+
+    expect(await changesetsWaiting(api, 'o/r', 't', { head: 'develop', files })).toEqual([
+      '.changeset/brave-fox.md',
+    ])
+    expect(reads().sort()).toEqual([
+      'develop:.changeset/brave-fox.md',
+      'develop:.changeset/theocode-a.md',
+    ])
+  })
+
+  it('is nothing when every added changeset is empty: none of them releases anything', async () => {
+    const { api } = repository({ ...theokit, '.changeset/theocode-a.md': '---\n---\n' })
+    const files = added('.changeset/theocode-a.md')
+
+    expect(await changesetsWaiting(api, 'o/r', 't', { head: 'develop', files })).toEqual([])
+  })
+
+  it('reads no changeset the comparison does not list as added', async () => {
+    const { api, reads } = repository({ ...theokit, '.changeset/old.md': NAMED })
+    const files = [{ path: '.changeset/old.md', status: 'modified' }]
+
+    expect(await changesetsWaiting(api, 'o/r', 't', { head: 'develop', files })).toEqual([])
+    expect(reads()).toEqual([])
+  })
+
+  it('fails, naming the file, when an added changeset cannot be read', async () => {
+    const { api } = repository(theokit)
+
+    await expect(
+      changesetsWaiting(api, 'o/r', 't', { head: 'develop', files: added('.changeset/gone.md') }),
+    ).rejects.toThrow('.changeset/gone.md is not on develop of o/r')
+  })
+})
 
 describe('publishedPackagesChanged', () => {
   it('is nothing for a change only to an ignored package and the private root', async () => {

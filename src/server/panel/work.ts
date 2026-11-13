@@ -3,17 +3,31 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import type { Database } from '../db'
 import { plan, planItem, repository } from '../db/schema'
 import { ensureBranches, integrationBranch } from '../factory/branches'
+import { proofView, provenAfter, unprovenChecks } from '../factory/prove-checks'
 import { DOMAIN, validBranch } from '../factory/repo-config'
 import { loadKnowledgeConfig } from '../knowledge/store'
 import type { AppRepos, GithubApp, ReachableRepository } from '../github/app'
 import type { IssuesApi } from '../github/issues-api'
 import type { GithubApi } from '../github/pulls'
-import type { PlanItemView, PlanView, RepositoriesView, RepositoryView } from '../../shared/panel'
+import type {
+  DoctorReport,
+  PlanItemView,
+  PlanView,
+  RepositoriesView,
+  RepositorySaved,
+  RepositoryView,
+} from '../../shared/panel'
 
 import { ActionRefused } from './actions'
 
 /** The label that asks the factory to take an issue. */
 export const FACTORY_LABEL = 'factory'
+/** The label as the factory creates it where it is missing. */
+export const FACTORY_LABEL_SPEC = {
+  name: FACTORY_LABEL,
+  color: '5319e7',
+  description: 'The factory builds this issue',
+}
 
 export type WorkDeps = {
   db: Database
@@ -21,6 +35,8 @@ export type WorkDeps = {
   issues: IssuesApi
   /** What it takes to make sure a repository has its integration and pre-release branches. */
   api: Pick<GithubApi, 'defaultBranch' | 'branchHead' | 'createBranch'>
+  /** Examines a repository the factory knows: the doctor, which runs when one is enabled. */
+  diagnose: (fullName: string) => Promise<DoctorReport>
   /** Where GitHub lets the owner pick the repositories the App reaches. */
   installUrl?: string
   /** The agents the owner may pick for a repository. */
@@ -108,6 +124,7 @@ export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView
     deps.github.owner().catch(() => null),
   ])
   const byName = new Map(saved.map((r) => [r.fullName.toLowerCase(), r]))
+  const now = new Date()
   const view = (
     fullName: string,
     github: Pick<ReachableRepository, 'private' | 'defaultBranch'> | undefined,
@@ -127,6 +144,9 @@ export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView
       harness: row?.harness ?? null,
       reviewer: row?.reviewer ?? null,
       releaseMode: row?.releaseMode ?? null,
+      checksProvenSha: row?.checksProvenSha ?? null,
+      unprovenChecks: unprovenChecks(row?.checks ?? null, row?.checksProven ?? []),
+      checksProof: proofView(row?.checksProof ?? null, now),
     }
   }
   const repositories =
@@ -155,10 +175,6 @@ export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView
 }
 
 /**
- * Saves what the owner set for a repository. A repository the App does not reach cannot be created or
- * enabled, so the list is also the limit of what the factory can be pointed at.
- */
-/**
  * The knowledge repository is never a project of the factory. Its rules bind every agent and change only
  * through a pull request the owner merges; as a project, an issue there would have an agent rewrite them, and
  * the factory would merge that into its integration branch and, in auto mode, release it.
@@ -172,11 +188,32 @@ async function refuseKnowledgeRepository(db: Database, fullName: string) {
   }
 }
 
+/**
+ * The checks as a save leaves them, and which of them no proof ran. What the owner types is saved as it
+ * is: a check left as it was keeps its proof, and one typed or changed is named as not proven.
+ */
+function savedChecks(patch: RepositoryPatch, existing: typeof repository.$inferSelect | undefined) {
+  if (patch.checks === undefined) {
+    return {
+      values: {},
+      unprovenChecks: provenAfter(existing, existing?.checks ?? null).unprovenChecks,
+    }
+  }
+  const checks = patch.checks?.map((c) => ({ ...c, command: c.command.trim() })) ?? null
+  const { unprovenChecks, ...proven } = provenAfter(existing, checks)
+  return { values: { checks, ...proven }, unprovenChecks }
+}
+
+/**
+ * Saves what the owner set for a repository. A repository the App does not reach cannot be created or
+ * enabled, so the list is also the limit of what the factory can be pointed at. Enabling one runs the
+ * doctor on it and answers with the report: what it found is shown, and stops nothing.
+ */
 export async function saveRepository(
   deps: WorkDeps,
   fullName: string,
   patch: RepositoryPatch,
-): Promise<{ fullName: string }> {
+): Promise<RepositorySaved> {
   const problem = patchProblem(patch, deps.agents)
   if (problem) throw new ActionRefused(problem)
 
@@ -215,15 +252,10 @@ export async function saveRepository(
       )
     }
   }
+  const checks = savedChecks(patch, existing)
   const values = {
     ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
-    ...(patch.checks === undefined
-      ? {}
-      : {
-          checks: patch.checks
-            ? patch.checks.map((c) => ({ ...c, command: c.command.trim() }))
-            : null,
-        }),
+    ...checks.values,
     ...(patch.egress === undefined
       ? {}
       : { egress: [...new Set(patch.egress.map((d) => d.toLowerCase()))] }),
@@ -239,7 +271,8 @@ export async function saveRepository(
     .insert(repository)
     .values({ fullName: canonical!, ...values })
     .onConflictDoUpdate({ target: repository.fullName, set: values })
-  return { fullName: canonical! }
+  const saved = { fullName: canonical!, unprovenChecks: checks.unprovenChecks }
+  return patch.enabled ? { ...saved, doctor: await deps.diagnose(canonical!) } : saved
 }
 
 /** The repository's row when it is enabled, or the reason the owner has to fix first. */
@@ -257,11 +290,7 @@ async function enabledRepository(deps: WorkDeps, fullName: string) {
 const FOOTER = (what: string) => `\n\n---\n_${what} from the aifactory panel._`
 
 async function readyFactoryLabel(deps: WorkDeps, repo: string, token: string) {
-  await deps.issues.ensureLabel(repo, token, {
-    name: FACTORY_LABEL,
-    color: '5319e7',
-    description: 'The factory builds this issue',
-  })
+  await deps.issues.ensureLabel(repo, token, FACTORY_LABEL_SPEC)
 }
 
 /* ------------------------------------------------------------------ one job */

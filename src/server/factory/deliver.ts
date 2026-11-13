@@ -16,8 +16,8 @@ import type { GithubApp } from '../github/app'
 import { autoMergeOrMergeable, type GithubApi } from '../github/pulls'
 
 import { PRE_RELEASE_BRANCH, releaseBranchOf } from './branches'
-import { publishedPackagesChanged } from './changed-packages'
-import { addedChangesets, usesChangesets } from './changesets'
+import { changesetsWaiting, publishedPackagesChanged } from './changed-packages'
+import { usesChangesets } from './changesets'
 import { highestVersion, nextVersion, preReleaseNotes, preReleaseTag, type Bump } from './release'
 import { shipContained } from './ship'
 import { enterStage } from './stages'
@@ -421,7 +421,7 @@ export async function completeRelease(
 /**
  * Whether the release is left to changesets: true when the repository publishes with changesets and a
  * changeset waits, which is one the pre-release branch added since its merge base with the release branch
- * (`addedChangesets`). With none waiting, what the same comparison lists decides. A change only to packages changesets never publishes (private, ignored,
+ * and that names a package (`changesetsWaiting`); an empty one releases nothing. With none waiting, what the same comparison lists decides. A change only to packages changesets never publishes (private, ignored,
  * or no package at all) is the factory's own release, since no changeset can exist for them and reaching the
  * release branch is what makes them available. A change to a published package is refused, naming it: the
  * promotion would land and the package would not be published.
@@ -438,11 +438,9 @@ async function changesetsToShip(
     return false
   }
   const files = await deps.api.changedFiles(repo, token, target, PRE_RELEASE_BRANCH)
-  if (addedChangesets(files).length > 0) return true
-  const published = await publishedPackagesChanged(deps.api, repo, token, {
-    head: PRE_RELEASE_BRANCH,
-    files,
-  })
+  const compared = { head: PRE_RELEASE_BRANCH, files }
+  if ((await changesetsWaiting(deps.api, repo, token, compared)).length > 0) return true
+  const published = await publishedPackagesChanged(deps.api, repo, token, compared)
   if (published.length > 0) {
     throw new ReleaseRefused(
       `${PRE_RELEASE_BRANCH} has no changeset, and it changes ${published.join(', ')} since ${target}, so nothing of that would be published: this repository releases with changesets, and its release workflow publishes only what a .changeset/*.md file describes`,

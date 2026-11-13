@@ -6,7 +6,7 @@ import { claudeCredentialFromEnv } from '../factory/harness-claude'
 import { codexCredentialFromEnv } from '../factory/harness-codex'
 import { assistModel } from '../factory/models'
 import { e2bMaxSessionMs } from '../factory/e2b-sandbox'
-import { ROUTED_EVENTS } from '../ingest/decide'
+import { missingRoutedEvents } from '../ingest/decide'
 import { vercelCredentials } from '../factory/vercel-sandbox'
 
 /** Questions the report cannot answer from the environment: they ask the machine or another service. */
@@ -195,7 +195,7 @@ export async function eventsItem(github: AppEvents): Promise<SetupItem> {
   const base = { id: 'events', label: 'Webhook events' }
   try {
     const { events, settingsUrl } = await github.subscriptions()
-    const missing = ROUTED_EVENTS.filter((event) => !events.includes(event))
+    const missing = missingRoutedEvents(events)
     if (missing.length === 0) {
       return {
         ...base,

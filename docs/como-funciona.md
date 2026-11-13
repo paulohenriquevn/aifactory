@@ -309,7 +309,9 @@ não cita (calculada sem modelo; lockfiles ficam de fora). O revisor trata cada 
 motivo que a issue sustente, e a fábrica registra cada um como achado `minor`. Quando uma checagem da
 fábrica falhou num commit anterior da task e passa no commit em revisão, o prompt do revisor diz qual
 checagem, a linha do erro e os arquivos adicionados entre os dois commits: arquivo que a checagem exigiu
-(um changeset vazio, por exemplo) é legítimo, e esses arquivos não entram na lista de fora do plano. Uma task retomada
+(um changeset para um pacote publicado, por exemplo) é legítimo, e esses arquivos não entram na lista de fora do
+plano. A exceção é o changeset vazio, que não nomeia pacote nenhum: nenhuma checagem pede um, então ele continua
+na lista de fora do plano. Uma task retomada
 (resposta a uma pergunta, mudanças pedidas, checks obrigatórios que devolveram o trabalho) usa o último
 plano gravado. Não há aprovação humana do plano: quem confere é o revisor, contra o diff
 ([ADR 0009](adr/0009-plano-antes-do-codigo-e-testes-que-nao-enfraquecem.md)).
@@ -537,10 +539,12 @@ npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio r
 "Version Packages" que ele abre a partir de `changeset-release/main`. Nesse caso o `release()`:
 
 - um changeset só conta como esperando quando a API de comparação entre a branch de release e `develop` o
-  lista como adicionado desde a base comum das duas (`.changeset/*.md`, menos o README). Um changeset que um
-  release anterior consumiu na branch de release, e que `develop` ainda guarda porque ninguém fez o
-  back-merge, não conta (o theokit-plugins depois do Version Packages #250);
-- quando nenhum changeset foi adicionado, lê na mesma comparação os arquivos que
+  lista como adicionado desde a base comum das duas (`.changeset/*.md`, menos o README) e ele nomeia pelo
+  menos um pacote no front matter. Um changeset que um release anterior consumiu na branch de release, e que
+  `develop` ainda guarda porque ninguém fez o back-merge, não conta (o theokit-plugins depois do Version
+  Packages #250). Um changeset vazio também não conta: ele não versiona nada, e o workflow de release falha
+  com "this release would publish nothing" (o theokit em 2026-11-13, com doze deles);
+- quando nenhum changeset está esperando, lê na mesma comparação os arquivos que
   `develop` muda desde a branch de release e liga cada um aos pacotes em que está (todo `package.json` de
   `develop` acima dele, a raiz incluída). Se algum desses pacotes é publicado pelo changesets (tem nome, não
   é `private` e não está no `ignore` do `.changeset/config.json`), recusa e diz o nome do pacote, porque ele
@@ -601,8 +605,21 @@ fica aberto e a próxima passada tenta de novo. Esses são os dois únicos PRs q
 "Version Packages" e o back-merge.
 
 Nesses repositórios a verificação ganha um check a mais, `changeset`
-(`pnpm exec changeset status --since=origin/<branch de integração>`): mudar um pacote sem changeset reprova
-o trabalho, e o agente volta para escrever um.
+(`node /tmp/factory-changeset-check.mjs origin/<branch de integração>`). É um script que a fábrica grava no
+sandbox antes de cada rodada de checks (`factory/changeset-check.ts`) e que só precisa de node e git. Ele
+compara o commit com a base comum da branch de integração e usa a mesma regra do release para dizer o que é
+pacote publicado (tem nome, não é `"private": true` e não está no `ignore` do `.changeset/config.json`):
+
+- mudar um pacote publicado sem que um changeset adicionado no trabalho o nomeie reprova, e a mensagem diz
+  o pacote e os arquivos; o agente volta para escrever o changeset;
+- mudar só pacotes privados, ignorados ou arquivos fora de pacote passa sem changeset. A mudança num app
+  privado fica registrada no CHANGELOG do próprio app;
+- adicionar um changeset vazio reprova, e a mensagem diz o arquivo e manda apagá-lo;
+- se o script não consegue ler o intervalo ou o `.changeset/config.json`, sai com 2: não verificou nada, e
+  isso não é aprovação.
+
+O `changeset status` não servia para isso: ele conta pacote privado como mudança que pede changeset e aceita
+um changeset vazio como resposta.
 
 **A fábrica nunca mergeia em `main` por conta própria.** A branch de integração não pode ser a branch
 padrão: a fábrica se recusa (ao habilitar o repositório e ao começar uma execução), porque integrar ali é
@@ -1013,6 +1030,67 @@ ele abre. Nenhum comando.
    que integra em outra branch preenche "Branch the work starts from". Vazio volta a `workspace`. O nome é
    validado (sem `-` no começo, sem `..`), e a branch de integração não pode ser a branch padrão do
    repositório. Se `workspace` e `develop` não existem, a fábrica as cria ao habilitar.
+
+   **O doctor do repositório.** Habilitar um repositório roda o doctor nele, e
+   `GET /api/panel/repositories/<dono>/<nome>/doctor` roda de novo a qualquer momento. Ele examina o
+   repositório antes que uma task falhe e devolve um item por diagnóstico, cada um com o estado (`ok`,
+   `warn`, `blocked` ou `unknown`), a causa, o reparo, o link de onde o reparo é feito e se a fábrica
+   consegue fazê-lo sozinha (`canRepair`):
+
+   | Item              | O que acusa                                                                                             |
+   | ----------------- | ------------------------------------------------------------------------------------------------------- |
+   | `issues_disabled` | Issues desligadas no repositório (um fork nasce assim)                                                  |
+   | `app_access`      | a App não alcança o repositório, ou a instalação não aceitou uma permissão que a fábrica pede           |
+   | `app_events`      | a App não assina um evento que a fábrica lê                                                             |
+   | `branches`        | falta `workspace` ou `develop` (a fábrica cria)                                                         |
+   | `label`           | falta a label `factory` (a fábrica cria)                                                                |
+   | `auto_merge`      | a branch de integração exige checks e o repositório não permite auto-merge ou merge commits             |
+   | `ci_silent`       | um check exigido não reportou em nenhum dos últimos commits da branch nem dos últimos PRs para ela      |
+   | `checks_parity`   | um check exigido não tem check da fábrica com o mesmo nome                                              |
+   | `publish_mode`    | como o repositório publica: `changesets`, `tag` ou `none`; em `tag`, se o `package.json` bate com a tag |
+   | `recipe`          | a receita não pode ser usada, ou tem domínios esperando aprovação                                       |
+   | `sandbox`         | o provedor de sandbox recusou a última execução (sem crédito, chave recusada)                           |
+
+   O que o doctor não conseguiu ler vira `unknown`, com o que ele tentou e o que o GitHub respondeu, e
+   nunca `ok`. Um item `blocked` não impede habilitar: o relatório volta na resposta e fica em
+   `repository.doctor`, com a hora. `POST .../doctor/repair` com `{ "item": "branches" }` ou
+   `{ "item": "label" }` faz o reparo e devolve o relatório novo; qualquer outro item é recusado com o
+   motivo, porque a App não tem permissão para mudar ajustes do repositório nem para ligar um workflow.
+   Por essa mesma razão o `ci_silent` é lido dos check runs dos commits recentes, e não da API do Actions.
+   Com nenhum PR para olhar ele só avisa (`warn`), já que um workflow que roda só em PR também pareceria
+   mudo. Em `checks_parity`, um check da fábrica responde por um check exigido quando todas as palavras do
+   nome dele estão no nome exigido (`lint` responde por `CI / Lint (node 22)`). O `publish_mode` fica
+   também em `repository.publish_mode`. O painel ainda não mostra o relatório: por enquanto são as duas
+   rotas e a resposta do Enable.
+
+   **Checks provados.** `POST /api/panel/repositories/<dono>/<nome>/checks/prove` com
+   `{ "checks": [{ "name": "test", "command": "npm test" }] }` prova os checks propostos antes de salvar
+   qualquer um. A rota grava a proposta em `repository.checks_proof` com o estado `proving`, enfileira o
+   job `prove-checks` na mesma transação e responde na hora. O job sobe um sandbox isolado com o egress de
+   uma execução, menos os agentes (GitHub com o token no firewall, o registro do npm, os domínios do
+   repositório e os da receita que o dono aprovou), clona a ponta da branch de integração e roda os checks
+   em ordem, todos no mesmo sandbox, que é parado no fim mesmo quando um check estoura. Cada check termina
+   em um de três estados, com a duração e o fim da saída:
+
+   | Estado     | O que significa                                                    | É salvo? |
+   | ---------- | ------------------------------------------------------------------ | -------- |
+   | `passed`   | saiu com 0 dentro do limite                                        | sim      |
+   | `failed`   | saiu com erro na base; a saída volta para a proposta ser corrigida | não      |
+   | `too_slow` | ainda rodava no limite de um check (15 minutos por padrão)         | não      |
+
+   Os que passaram viram os checks do repositório, com o commit em que passaram em
+   `repository.checks_proven_sha` e o resultado de cada um em `repository.checks_proven`. Quando nenhum
+   passa, os checks salvos ficam como estavam. Depois de salvar, o doctor examina o repositório de novo,
+   para o `checks_parity` do relatório guardado falar dos checks novos. `GET` na mesma rota devolve a
+   última prova (`proving`, `done` ou `failed` com o motivo, quando o sandbox ou o clone falhou); uma prova
+   que continua `proving` depois de 100 minutos aparece como `failed`, porque o job que a rodava morreu.
+   Uma prova pedida enquanto outra roda a substitui, e o resultado da antiga é descartado.
+
+   O formulário de ajustes continua salvando o que o dono digita, sem provar nada. A resposta do
+   `PUT /api/panel/repositories/<dono>/<nome>` traz `unprovenChecks`, com os nomes dos checks salvos que
+   nenhuma prova rodou, e a listagem traz o mesmo campo, `checksProvenSha` e `checksProof` por repositório.
+   Um check deixado como estava mantém a prova; um digitado ou alterado (nome ou comando) a perde. O painel
+   ainda não mostra nada disso: por enquanto são as rotas, que a tela de onboarding vai chamar.
 
 5. **Planejar.** Em Plans, o dono escolhe o repositório e escreve o objetivo. Um agente lê o repositório
    num sandbox (sem escrever nada) e devolve até dez issues independentes, cada uma com critérios de

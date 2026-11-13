@@ -95,17 +95,57 @@ describe('diffFacts', () => {
     const check = { name: 'changeset', command: 'pnpm exec changeset status' }
     const failure = 'error Some packages have been changed but no changesets were found.'
 
+    const NAMED = '---\n"app": patch\n---\n\nAdds truncate.\n'
+
     /** A task whose first commit failed the check and whose second added a changeset and a file. */
-    function repaired() {
+    function repaired(changeset = NAMED) {
       const repo = divergedRepository({ behind: false })
       const headSha = commit(
         repo.dir,
-        { [CHANGESET]: '---\n---\n', 'src/extra.js': 'export {}\n', 'package.json': '{}\n' },
+        { [CHANGESET]: changeset, 'src/extra.js': 'export {}\n', 'package.json': '{}\n' },
         'add a changeset',
       )
       const backend = new FakeBackend(readsHistory(repo.dir, repo.dir))
       return { repo, headSha, backend }
     }
+
+    it('does not take an empty changeset as what a check required: it stays outside the plan', async () => {
+      const { repo, headSha, backend } = repaired('---\n---\n\nA private app changed.\n')
+
+      const facts = await diffFacts(backend, repo.dir, {
+        baseSha: repo.baseSha,
+        plan,
+        issue,
+        checkRuns: [
+          { ...check, sha: repo.taskSha, passed: false, output: failure },
+          { ...check, sha: headSha, passed: true, output: '' },
+        ],
+      })
+
+      expect(facts.unplanned).toEqual([CHANGESET, 'package.json'])
+      expect(facts.required.map((r) => r.files)).toEqual([['src/extra.js']])
+    })
+
+    it('does not take a changeset whose name it will not hand to a shell as required', async () => {
+      const odd = '.changeset/$(id).md'
+      const repo = divergedRepository({ behind: false })
+      const headSha = commit(repo.dir, { [odd]: NAMED }, 'add a changeset')
+      const backend = new FakeBackend(readsHistory(repo.dir, repo.dir))
+
+      const facts = await diffFacts(backend, repo.dir, {
+        baseSha: repo.baseSha,
+        plan,
+        issue,
+        checkRuns: [
+          { ...check, sha: repo.taskSha, passed: false, output: failure },
+          { ...check, sha: headSha, passed: true, output: '' },
+        ],
+      })
+
+      expect(facts.unplanned).toEqual([odd])
+      expect(facts.required.map((r) => r.files)).toEqual([[]])
+      expect(backend.commands.some((c) => c.includes('$(id)'))).toBe(false)
+    })
 
     it('does not list a file added between the failed check and the passing one', async () => {
       const { repo, headSha, backend } = repaired()

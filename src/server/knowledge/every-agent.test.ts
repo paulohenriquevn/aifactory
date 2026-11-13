@@ -25,6 +25,12 @@ function sources(dir = 'src/server'): { path: string; text: string }[] {
 }
 
 /**
+ * The files that start a sandbox no agent runs in: only commands the factory itself chose run there, so
+ * there is nobody to read a knowledge feed. A file listed here may not mention a harness.
+ */
+const NO_AGENT = ['src/server/factory/prove-checks.ts']
+
+/**
  * The knowledge base is part of what an agent is, not something each one may opt into: whatever agent the
  * factory runs, in a sandbox or in the panel, reads the same base. These tests fail when an agent is added
  * that would not.
@@ -49,6 +55,7 @@ describe('every agent of the factory reads the knowledge base', () => {
     const starters = sources().filter(
       (f) =>
         !f.path.endsWith('factory/sandbox.ts') &&
+        !NO_AGENT.includes(f.path) &&
         /\b(createIsolatedSandbox|restoreIsolatedSandbox)\(/.test(f.text),
     )
     expect(starters.length).toBeGreaterThan(0)
@@ -57,6 +64,17 @@ describe('every agent of the factory reads the knowledge base', () => {
         file: file.path,
         feed: true,
       })
+    }
+  })
+
+  it('in a sandbox: a file excused from the feed runs no agent there', () => {
+    const excused = sources().filter((f) => NO_AGENT.includes(f.path))
+    expect(excused.map((f) => f.path)).toEqual(NO_AGENT)
+    for (const file of excused) {
+      expect({
+        file: file.path,
+        agent: /harness|\.prepare\?\.\(|agent\.run\(/i.test(file.text),
+      }).toEqual({ file: file.path, agent: false })
     }
   })
 
