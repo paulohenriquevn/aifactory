@@ -144,4 +144,13 @@ describe('a refused Codex login', () => {
       }),
     ).toBe('environment')
   })
+
+  it('stays one when the next automatic run cannot renew the login either', () => {
+    expect(
+      retryableFailure({
+        error:
+          'the Codex login in /home/x/.codex-factory-1 could not be renewed (refresh failed): connect Codex again from the Setup page',
+      }),
+    ).toBe('environment')
+  })
 })

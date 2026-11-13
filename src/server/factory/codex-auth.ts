@@ -136,7 +136,7 @@ const provider = new AuthProvider(CODEX_PROVIDER.oauth, CODEX_STORE, {
  * never writes an old account over a login that just replaced it.
  */
 export async function freshCodexLogin(
-  deps: CodexAuthDeps & { force?: boolean } = {},
+  deps: CodexAuthDeps & { refused?: string } = {},
 ): Promise<CodexLogin> {
   const env = deps.env ?? process.env
   let stored = await storedOrMigrated(env)
@@ -145,11 +145,17 @@ export async function freshCodexLogin(
       `there is no Codex login in ${codexHomeOf(env)}: connect Codex from the Setup page`,
     )
   }
-  if (deps.force) {
-    // The provider refused a token its own `exp` called good: mark it expired so the renewal below runs.
-    const expired = { ...stored, expires: 0 }
-    await withFileLock(codexAuthFile(env), async () => writeCredential(expired, CODEX_STORE, env))
-    stored = expired
+  if (deps.refused !== undefined) {
+    // Under the lock, and only while the file still holds the token the provider refused: another run may
+    // have renewed it, or the owner signed in again, and that login must not be overwritten or spent twice.
+    const refused = deps.refused
+    stored = await withFileLock(codexAuthFile(env), async () => {
+      const current = readStoredOAuth(CODEX_STORE, env) ?? stored!
+      if (current.access !== refused) return current
+      const expired = { ...current, expires: 0 }
+      writeCredential(expired, CODEX_STORE, env)
+      return expired
+    })
   }
   try {
     await provider.ensureFresh(
@@ -173,13 +179,13 @@ export async function freshCodexLogin(
   // The ID token and the account are in the file, not in what the refresh returns.
   const current = readStoredOAuth(CODEX_STORE, env)
   if (!current) throw new CodexLoginError('the renewed Codex login was not found in its store')
-  if (deps.force) clearCodexRefusal(env)
+  if (deps.refused !== undefined) clearCodexRefusal(env)
   return loginOf(current, env)
 }
 
-/** Renews the login whatever its `exp` says, for when the provider refused the token it holds. */
-export const renewCodexLogin = (deps: CodexAuthDeps = {}): Promise<CodexLogin> =>
-  freshCodexLogin({ ...deps, force: true })
+/** Renews the login whatever its `exp` says, for when the provider refused the access token `refused`. */
+export const renewCodexLogin = (refused: string, deps: CodexAuthDeps = {}): Promise<CodexLogin> =>
+  freshCodexLogin({ ...deps, refused })
 
 const refusalFile = (env: Env) => join(codexHomeOf(env), 'refused.json')
 

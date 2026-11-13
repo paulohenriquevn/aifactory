@@ -1305,6 +1305,73 @@ describe('runTask review loop', () => {
   })
 })
 
+describe('runTask when the provider refuses the reviewer login', () => {
+  const refused = {
+    ok: false,
+    summary: 'codex failed: HTTP 401 token_expired',
+    unauthorized: true,
+  }
+  const codexReviewer = (
+    reauthorize: CodingHarness['reauthorize'],
+  ): CodingHarness & { runs: number } => {
+    const reviewer = {
+      name: 'codex',
+      egress: async () => [{ domain: 'chatgpt.com', headers: { authorization: 'Bearer old' } }],
+      runs: 0,
+      reauthorize,
+      run: async () => {
+        reviewer.runs += 1
+        return reviewer.runs === 1
+          ? refused
+          : { ok: true, summary: verdictJson('approve', [], 'Fine.'), costUsd: 0.01 }
+      },
+    }
+    return reviewer
+  }
+
+  it('renews the login once, runs the review again and does not leave the stage', async () => {
+    const id = await seedTask()
+    const reviewer = codexReviewer(async () => [
+      { domain: 'chatgpt.com', headers: { authorization: 'Bearer new' } },
+    ])
+    const sandbox = new FakeSandbox(changed())
+
+    const result = await runTask(deps(sandbox, { reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'done', pullRequestUrl: PR_URL })
+    expect(reviewer.runs).toBe(2)
+    expect(sandbox.egressUpdates).toHaveLength(1)
+    expect(sandbox.egressUpdates[0].find((r) => r.domain === 'chatgpt.com')?.headers).toEqual({
+      authorization: 'Bearer new',
+    })
+    expect(await stagesOf(id)).not.toContain('failed')
+    expect(await reviewsOf(id)).toMatchObject([{ verdict: 'approve' }])
+    expect(seen.drafts).toEqual([false])
+  })
+
+  it('fails as an environment failure that retries, naming the login, and hands nothing over', async () => {
+    const id = await seedTask()
+    const reviewer = codexReviewer(async () => {
+      throw new Error('refresh token rejected')
+    })
+    const sandbox = new FakeSandbox(changed())
+
+    const result = await runTask(deps(sandbox, { reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'review' })
+    expect(result.status === 'failed' && result.error).toContain(
+      'the codex login was refused and could not be renewed',
+    )
+    const failed = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
+    )[0]
+    expect(retryableFailure(failed.detail as Record<string, unknown>)).toBe('environment')
+    expect(await reviewsOf(id)).toEqual([])
+    expect(seen.pulls).toEqual([])
+    expect(sandbox.stopped).toBe(1)
+  })
+})
+
 describe('runTask planning before it builds', () => {
   const plan = {
     files: [{ path: 'src/truncate.js', why: 'the function' }],

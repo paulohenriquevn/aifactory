@@ -225,9 +225,11 @@ describe('codexAccount', () => {
 })
 
 describe('a login the provider refused', () => {
+  const refusedAccess = accessExpiring(REFRESH_MARGIN_MS + 66 * 3_600_000)
+
   it('is renewed on demand even when its exp is far away', async () => {
     const env = newHome()
-    writeCliLogin(env, accessExpiring(REFRESH_MARGIN_MS + 66 * 3_600_000))
+    writeCliLogin(env, refusedAccess)
     const renewed = accessExpiring(10 * 86_400_000)
     const fetch = answering({
       access_token: renewed,
@@ -235,7 +237,7 @@ describe('a login the provider refused', () => {
       expires_in: 864_000,
     })
 
-    const login = await renewCodexLogin({ env, fetch, now: () => NOW })
+    const login = await renewCodexLogin(refusedAccess, { env, fetch, now: () => NOW })
 
     expect(login.accessToken).toBe(renewed)
     expect(stored(env)).toMatchObject({ access: renewed, refresh: 'rotated' })
@@ -243,15 +245,25 @@ describe('a login the provider refused', () => {
 
   it('fails with an error that names the Codex login when the renewal fails', async () => {
     const env = newHome()
-    writeCliLogin(env, accessExpiring(REFRESH_MARGIN_MS + 66 * 3_600_000))
-    await expect(renewCodexLogin({ env, fetch: refusing, now: () => NOW })).rejects.toThrow(
-      /Codex login .* could not be renewed/,
-    )
+    writeCliLogin(env, refusedAccess)
+    await expect(
+      renewCodexLogin(refusedAccess, { env, fetch: refusing, now: () => NOW }),
+    ).rejects.toThrow(/Codex login .* could not be renewed/)
+  })
+
+  it('does not spend a login that another run already replaced', async () => {
+    const env = newHome()
+    const replacement = accessExpiring(REFRESH_MARGIN_MS + 5 * 86_400_000)
+    writeCliLogin(env, replacement)
+
+    const login = await renewCodexLogin(refusedAccess, { env, fetch: refusing, now: () => NOW })
+
+    expect(login.accessToken).toBe(replacement)
   })
 
   it('is not shown as connected until it is renewed or signed in again', async () => {
     const env = newHome()
-    writeCliLogin(env, accessExpiring(REFRESH_MARGIN_MS + 66 * 3_600_000))
+    writeCliLogin(env, refusedAccess)
     expect(codexAccount(env)).toMatchObject({ connected: true })
 
     markCodexRefused('HTTP 401 token_expired', env)
@@ -264,7 +276,7 @@ describe('a login the provider refused', () => {
       refresh_token: 'rotated',
       expires_in: 864_000,
     })
-    await renewCodexLogin({ env, fetch, now: () => NOW })
+    await renewCodexLogin(refusedAccess, { env, fetch, now: () => NOW })
     expect(codexAccount(env)).toMatchObject({ connected: true })
   })
 })
