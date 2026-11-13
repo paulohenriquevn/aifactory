@@ -19,7 +19,7 @@ export function ModelPicker({
         <button
           type="button"
           aria-label="Modelo"
-          className="flex items-center gap-1 rounded-full px-3 py-1.5 text-[14px] text-foreground/80 hover:bg-white/[0.08]"
+          className="flex items-center gap-1 rounded-full px-3 py-1.5 text-[14px] text-foreground/80 hover:bg-muted/60"
         >
           {current.name}
           <ChevronDown className="size-4" />

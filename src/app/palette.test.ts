@@ -50,4 +50,12 @@ describe('what the panel writes in colour', () => {
     )
     expect(offenders).toEqual([])
   })
+
+  it('has no hex colour class and no white/black opacity utility, so both modes follow the theme', () => {
+    const sources = [...files('src/app'), 'src/app/components/shell/active.ts']
+    const offenders = sources.filter((f) =>
+      /-\[#[0-9a-fA-F]{3,8}\]|\b(white|black)\/(\[|\d)/.test(readFileSync(f, 'utf8')),
+    )
+    expect(offenders).toEqual([])
+  })
 })
