@@ -249,6 +249,37 @@ export const en = {
     seconds: (n: string) => `${n}s`,
     proofFailed: (reason: string) => `The proof could not run: ${reason}`,
   },
+  onboarding: {
+    title: 'Get started',
+    stepsLabel: 'Steps to turn a repository on',
+    reopen: 'Review this step',
+    steps: {
+      connect: 'Connect GitHub',
+      choose: 'Choose a repository',
+      enable: 'Turn it on',
+    },
+    connect: {
+      about: 'The factory needs these to reach GitHub.',
+      ready: 'GitHub is connected.',
+      loading: 'Checking the connection…',
+    },
+    choose: {
+      about: 'Pick the repository the factory may work in.',
+      search: 'Search repositories',
+      none: 'No repository matches.',
+      empty: 'The App reaches no repository yet. Install it on GitHub and choose the repositories.',
+      pick: 'Turn on',
+      picking: 'Turning on…',
+      chosen: (name: string) => `${name} is turned on.`,
+      loading: 'Reading your repositories…',
+    },
+    enable: {
+      about: (name: string) => `The factory is checking ${name}. Fix what is blocked.`,
+      ready: 'Nothing blocks this repository. You can give it the first job.',
+      notRead: 'Some items could not be read, so they are not counted as fine.',
+      firstJob: 'Open the first job',
+    },
+  },
 }
 
 export type Copy = typeof en

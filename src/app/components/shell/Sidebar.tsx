@@ -10,6 +10,7 @@ import {
   PanelLeft,
   Pencil,
   Pin,
+  Rocket,
   PinOff,
   Search,
   Settings2,
@@ -17,7 +18,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useState, type ComponentType } from 'react'
-import { Link, NavLink, useNavigate, useParams } from 'react-router'
+import { Link, NavLink, useLocation, useNavigate, useParams } from 'react-router'
 
 import type { GuideId } from '../../../shared/guides'
 import type { ChatSummary } from '../../../shared/panel'
@@ -40,13 +41,15 @@ function Place({
   label,
   count,
 }: {
-  id: GuideId
+  id: GuideId | 'onboarding'
   to: string
   icon: Icon
   label: string
   count?: number
 }) {
-  const active = usePlace() === id
+  const place = usePlace()
+  const { pathname } = useLocation()
+  const active = id === 'onboarding' ? pathname === to : place === id
   return (
     <Link
       to={to}
@@ -175,6 +178,7 @@ export function Sidebar({
   plan,
   onSignOut,
   startSearching = false,
+  showOnboarding = false,
 }: {
   onToggle: () => void
   waiting: number
@@ -184,6 +188,8 @@ export function Sidebar({
   onSignOut: () => void
   /** Open with the search box showing, when the owner came from the folded menu's search. */
   startSearching?: boolean
+  /** True while no repository is enabled: the guided start is offered. */
+  showOnboarding?: boolean
 }) {
   const { chats } = useChats()
   const { t } = useCopy()
@@ -234,6 +240,9 @@ export function Sidebar({
           {t.menu.newChat}
         </Link>
         <div className="mt-3 space-y-0.5">
+          {showOnboarding ? (
+            <Place id="onboarding" to="/onboarding" icon={Rocket} label={t.onboarding.title} />
+          ) : null}
           <Place id="board" to="/work" icon={LayoutDashboard} label={t.places.board} />
           <Place id="plans" to="/plans" icon={ListChecks} label={t.places.plans} />
           <Place
