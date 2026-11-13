@@ -3,7 +3,7 @@
 # tunnel is not touched.
 #
 # A restart does not cut the runs in progress: systemd signals theokit only (KillMode=mixed), which stops
-# taking jobs, waits for the run it is on (up to 52 minutes, see src/server/factory/drain.ts) and exits.
+# taking jobs, waits for the run it is on (up to 92 minutes, see src/server/factory/drain.ts) and exits.
 # So a deploy while tasks work takes as long as the longest of them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -11,22 +11,38 @@ cd "$(dirname "$0")/.."
 working="select count(*) from task where stage in ('sandbox','build','push','verify','review','pr')"
 if busy=$(docker compose exec -T postgres psql -U factory -d factory -At -c "$working" 2>/dev/null); then
   if [ "$busy" != "0" ]; then
-    echo "$busy task(s) are working; the restart waits for them to finish (up to 52 minutes)." >&2
+    echo "$busy task(s) are working; the restart waits for them to finish (up to 92 minutes)." >&2
   fi
 else
   echo "could not ask the database whether tasks are working; going on" >&2
 fi
 
+# When a prompt, an agent or a model changed since evals/baseline.json, the quick cases run again on real
+# agents and must do no worse than the baseline (docs/adr/0008). Nothing changed, nothing runs. It reads the
+# factory's database, which .env.local does not name: the default is the one scripts/run-server.sh uses.
+if ! DATABASE_URL="${DATABASE_URL:-postgres://factory:factory@localhost:54329/factory}" pnpm evals:check; then
+  echo "the agents did worse than the baseline (see above); nothing was built or restarted" >&2
+  exit 1
+fi
+
 pnpm build
 # All at once, so each process drains its own run in parallel. The workers run tasks and the feeder hands them
-# out from the same build, so each one left alone keeps the code from before it. try-restart restarts only the
-# ones running: the feeder is started on purpose, never here.
+# out from the same build, so each one left alone keeps the code from before it.
+# Every enabled worker is restarted, a stopped one included: try-restart left a stopped worker stopped, and
+# the factory ran fewer tasks at once without anyone noticing. The enabled ones are what the boot target
+# wants (install-services.sh enables FACTORY_WORKERS of them). The feeder opens issues in real repositories,
+# so it is started on purpose, never here: try-restart restarts it only when it already runs.
+mapfile -t workers < <(systemctl --user list-dependencies --plain --no-legend default.target |
+  grep -oE 'aifactory-worker@[0-9]+\.service' | sort -u)
 systemctl --user restart aifactory.service &
-server=$!
-systemctl --user try-restart 'aifactory-worker@*.service' aifactory-feeder.service &
-others=$!
-wait "$server"
-wait "$others"
+pids=($!)
+if [ "${#workers[@]}" -gt 0 ]; then
+  systemctl --user restart "${workers[@]}" &
+  pids+=($!)
+fi
+systemctl --user try-restart aifactory-feeder.service &
+pids+=($!)
+for pid in "${pids[@]}"; do wait "$pid"; done
 for _ in $(seq 1 40); do
   curl -fs -o /dev/null http://127.0.0.1:3000/api/health && { echo "aifactory is up"; exit 0; }
   sleep 1

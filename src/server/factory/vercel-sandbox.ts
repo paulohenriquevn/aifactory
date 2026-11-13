@@ -2,6 +2,7 @@ import { SandboxBackend } from '@theokit/agents/sandbox'
 import { Sandbox, Snapshot, type NetworkPolicy } from '@vercel/sandbox'
 
 import type { IsolatedSandbox, IsolatedSandboxProvider, SandboxSpec } from './sandbox'
+import { assertIsolated } from './sandbox'
 
 /** The exit code the TheoKit backends report for a command that hit its timeout. */
 const TIMED_OUT = 124
@@ -72,10 +73,15 @@ export function vercelCredentials(env: NodeJS.ProcessEnv = process.env) {
 /** Vercel keeps a snapshot for at least a day; this is how long an unanswered question waits. */
 export const SNAPSHOT_TTL_MS = 7 * 24 * 3_600_000
 
-const wrap = (sandbox: Sandbox): IsolatedSandbox => ({
+const wrap = (sandbox: Sandbox, spec: SandboxSpec): IsolatedSandbox => ({
   backend: new VercelBackend(sandbox),
   stop: async () => void (await sandbox.stop()),
   snapshot: async () => (await sandbox.snapshot({ expiration: SNAPSHOT_TTL_MS })).snapshotId,
+  updateEgress: async (egress) => {
+    const next = { ...spec, egress }
+    assertIsolated(next)
+    await sandbox.updateNetworkPolicy(networkPolicyFor(next))
+  },
 })
 
 /** Needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`, or else `VERCEL_OIDC_TOKEN`. */
@@ -94,6 +100,7 @@ export function vercelSandboxProvider(): IsolatedSandboxProvider {
           timeout: spec.timeoutMs,
           networkPolicy: networkPolicyFor(spec),
         }),
+        spec,
       )
     },
     async restore(snapshotId, spec): Promise<IsolatedSandbox> {
@@ -105,6 +112,7 @@ export function vercelSandboxProvider(): IsolatedSandboxProvider {
           networkPolicy: networkPolicyFor(spec),
           source: { type: 'snapshot', snapshotId },
         }),
+        spec,
       )
     },
     async listSnapshots() {

@@ -6,6 +6,7 @@ describe('columnOf', () => {
   const expected: Record<Stage, Column> = {
     intake: 'queued',
     sandbox: 'working',
+    plan: 'working',
     build: 'working',
     push: 'working',
     verify: 'working',
@@ -16,6 +17,7 @@ describe('columnOf', () => {
     released: 'released',
     handoff: 'attention',
     failed: 'attention',
+    cancelled: 'attention',
   }
 
   it('puts every stage on the board where a person would look for it', () => {
@@ -32,6 +34,7 @@ describe('columnOf', () => {
       'retrying',
       'review',
       'released',
+      'resolved',
       'attention',
     ])
     const known = new Set(COLUMNS.map((c) => c.id))
@@ -46,8 +49,29 @@ describe('columnOf', () => {
       'Will retry itself',
       'Delivered',
       'Released',
+      'Already resolved',
       'Needs a person',
     ])
+  })
+})
+
+describe('a task that finished with no change', () => {
+  it('leaves Delivered, since no release will ever carry it', () => {
+    expect(columnOf('done', null, { resolved: true })).toBe('resolved')
+  })
+
+  it('stays in Delivered once its work is integrated, until a release carries it', () => {
+    expect(columnOf('done', null, { integrated: true })).toBe('review')
+    expect(columnOf('done', null, { resolved: true, integrated: true })).toBe('review')
+  })
+
+  it('keeps a pull request that is not integrated yet in Delivered', () => {
+    expect(columnOf('done', null, { resolved: false, integrated: false })).toBe('review')
+  })
+
+  it('only changes the column of a done task', () => {
+    expect(columnOf('released', null, { resolved: true })).toBe('released')
+    expect(columnOf('failed', null, { resolved: true })).toBe('attention')
   })
 })
 
@@ -58,6 +82,7 @@ describe('a failure that passes by itself', () => {
     expect(columnOf('failed', null)).toBe('attention')
     expect(columnOf('failed')).toBe('attention')
     expect(columnOf('build', 'quota')).toBe('working')
+    expect(columnOf('cancelled', 'quota')).toBe('attention')
   })
 
   it('is told by the usage limit flag or by an error of the environment', () => {
@@ -70,6 +95,15 @@ describe('a failure that passes by itself', () => {
     expect(retryableFailure({})).toBeNull()
     expect(retryableFailure(null)).toBeNull()
     expect(retryableFailure(undefined)).toBeNull()
+  })
+
+  it('waits, rather than going to a person, while an issue the task is blocked by is open', () => {
+    const detail = { error: 'blocked by o/a#1, still open; …', blockedBy: ['o/a#1'] }
+
+    expect(retryableFailure(detail)).toBe('blocked')
+    expect(columnOf('failed', 'blocked')).toBe('retrying')
+    expect(retryableFailure({ error: 'x', blockedBy: [] })).toBeNull()
+    expect(retryableFailure({ error: 'x', blockedBy: 'o/a#1' })).toBeNull()
   })
 
   it('leaves with a person an agent that used all its time, and still retries a command of the environment that timed out', () => {

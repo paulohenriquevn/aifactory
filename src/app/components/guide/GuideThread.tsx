@@ -42,7 +42,7 @@ function Chips({
             key={item.text}
             type="button"
             onClick={() => onPick(item)}
-            className="rounded-full border border-white/10 px-3 py-1.5 text-left text-[13px] text-foreground/85 transition-colors hover:bg-white/[0.07]"
+            className="rounded-full border border-border px-3 py-1.5 text-left text-[13px] text-foreground/85 transition-colors hover:bg-muted/60"
           >
             {item.text}
           </button>

@@ -81,3 +81,13 @@ describe('when a finished task whose pull request conflicts with its base runs a
     expect(rerunsAfterConflict(['Pull Request has merge conflicts'], 0)).toBe(false)
   })
 })
+
+describe('when a task blocked by an open issue runs again', () => {
+  it('checks again half an hour later, however many times it already has', () => {
+    for (const automaticRetries of [0, AUTOMATIC_RETRIES, 40]) {
+      expect(iso(retryAt({ retryable: 'blocked', failedAt, automaticRetries }))).toBe(
+        '2026-11-06T00:43:00.000Z',
+      )
+    }
+  })
+})

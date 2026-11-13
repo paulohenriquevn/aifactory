@@ -106,9 +106,14 @@ export function pullRequestBody(input: {
   agentSummary: string
   review: { reviewer: string; attempt: number; outcome: ReviewVerdict }
   handoff?: string
+  /** The plan the builder wrote before it changed anything, as markdown. */
+  plan?: string
 }): string {
   const { review } = input
   const remaining = review.outcome.findings
+  const plan = input.plan
+    ? ['<details><summary>Plan</summary>', '', input.plan, '', '</details>', '']
+    : []
   return [
     `Closes #${input.issueNumber}`,
     '',
@@ -120,6 +125,7 @@ export function pullRequestBody(input: {
     `Independent review by ${review.reviewer}, attempt ${review.attempt}: ${review.outcome.verdict}. ${review.outcome.summary}`,
     ...(remaining.length > 0 ? ['', renderFindings(remaining)] : []),
     '',
+    ...plan,
     '<details><summary>What the agent said</summary>',
     '',
     input.agentSummary.slice(0, 3_000),
@@ -168,4 +174,24 @@ export function gitConfig(author: { name: string; email: string }): string {
     throw new StageFailure('the commit author must be a single line')
   }
   return `[user]\n\tname = ${author.name}\n\temail = ${author.email}\n`
+}
+
+/** A run that continues on the branch the agent pushed, with what to change. */
+export type Continuation = {
+  feedback: string
+  /** The repository's required checks sent the work back, not a person. */
+  fromChecks?: boolean
+}
+
+/**
+ * How a queued run starts: on the branch the agent pushed, with feedback, when a person asked for changes
+ * or the factory sent the work back with its own note (the repository's checks failed); from the beginning
+ * otherwise.
+ */
+export function runContinuation(
+  decided: { kind: string; note: string } | undefined,
+  feedback: string | undefined,
+): Continuation | undefined {
+  if (decided?.kind === 'request_changes') return { feedback: decided.note }
+  return feedback ? { feedback, fromChecks: true } : undefined
 }

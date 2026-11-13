@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 
 import { columnOf, type TaskDetail } from '../../shared/panel'
 import { Pass, StageBadge } from './Badges'
+import { PlanSection } from './PlanSection'
 import { WatchPanel } from './WatchPanel'
 import { TaskActions } from './TaskActions'
 import { Transcript } from './Transcript'
@@ -33,6 +34,7 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
           <StageBadge
             stage={task.stage}
             integrated={task.integrated}
+            waitingForChecks={task.waitingForChecks}
             resolved={task.resolved}
             retryable={task.retryable}
           />
@@ -213,6 +215,8 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
           </ul>
         )}
       </section>
+
+      <PlanSection plans={detail.plans} />
 
       <section aria-label="Reviews">
         <h2 className="mb-2 text-sm font-semibold">Reviews</h2>

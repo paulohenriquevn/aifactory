@@ -18,6 +18,7 @@ import {
   stageEvent,
   task,
   watch,
+  releaseWait,
 } from '../db/schema'
 import type { GithubApi } from '../github/pulls'
 import { COLUMNS } from '../../shared/panel'
@@ -32,6 +33,7 @@ import {
   requestChanges,
   resolveElsewhere,
   retry,
+  sendBackAutomatically,
   type ActionDeps,
 } from './actions'
 import { health, inbox, listTasks, taskDetail } from './queries'
@@ -186,6 +188,18 @@ describe('listTasks', () => {
   })
 })
 
+describe('listTasks and an integration that waits for the repository checks', () => {
+  it('says which finished tasks wait for the required checks to merge', async () => {
+    const waiting = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' })
+    const refused = await seed('done', { headSha: 'def' })
+
+    const cards = new Map((await listTasks(getDb())).map((c) => [c.id, c]))
+
+    expect(cards.get(waiting)).toMatchObject({ waitingForChecks: true, integrated: false })
+    expect(cards.get(refused)).toMatchObject({ waitingForChecks: false })
+  })
+})
+
 describe('listTasks and the retries the factory makes on its own', () => {
   const environment = { stage: 'failed', detail: { error: 'git push: remote rejected' } }
   const automatic = { stage: 'intake', detail: { decision: 'retry', automatic: true } }
@@ -337,7 +351,30 @@ describe('inbox', () => {
 
     expect(await inbox(getDb())).toEqual([])
     const [card] = await listTasks(getDb())
-    expect(card).toMatchObject({ id: resolved, column: 'review', resolved: true })
+    expect(card).toMatchObject({ id: resolved, column: 'resolved', resolved: true })
+  })
+})
+
+describe('the Delivered column', () => {
+  it('leaves out a task that finished with no change: no pull request, nothing merged', async () => {
+    const unchanged = await seed('done', { headSha: 'abc', resolvedSha: 'abc' })
+
+    const cards = await listTasks(getDb())
+
+    expect(cards.filter((c) => c.column === 'review')).toEqual([])
+    expect(cards.find((c) => c.id === unchanged)?.column).toBe('resolved')
+  })
+
+  it('counts a task integrated and not released yet', async () => {
+    const integrated = await seed('done', {
+      headSha: 'abc',
+      pullRequestUrl: 'https://github.com/paulo/app/pull/7',
+      mergedSha: 'merged1',
+    })
+
+    const cards = await listTasks(getDb())
+
+    expect(cards.filter((c) => c.column === 'review').map((c) => c.id)).toEqual([integrated])
   })
 })
 
@@ -378,6 +415,45 @@ describe('actions', () => {
     await expect(approve(deps(), 999)).rejects.toThrow(/does not exist/)
   })
 
+  it("sends work whose required checks failed back to its agent, on its branch, in nobody's name", async () => {
+    const id = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' })
+
+    await sendBackAutomatically(deps(), id, 'CI failed: fix foo.test.ts')
+
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'intake', awaitingCiSha: null })
+    expect(await getDb().select().from(decision)).toEqual([])
+    // The branch stays: the agent works on what it pushed.
+    expect(deleted).toEqual([])
+    const [intake] = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, id))
+    expect(intake.detail).toEqual({
+      decision: 'request_changes',
+      note: 'CI failed: fix foo.test.ts',
+      automatic: true,
+    })
+    expect(queued).toEqual([
+      {
+        input: { taskId: id, feedback: 'CI failed: fix foo.test.ts' },
+        key: `task-${id}-auto${intake.id}`,
+      },
+    ])
+  })
+
+  it('sends back on its own only work that waits for the repository checks', async () => {
+    const id = await seed('done', { headSha: 'abc' })
+    await expect(sendBackAutomatically(deps(), id, 'note')).rejects.toThrow(ActionRefused)
+    expect(queued).toEqual([])
+  })
+
+  it('stops waiting for the repository checks when a person starts the task again', async () => {
+    const id = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' })
+
+    await retry(deps(), id)
+
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'intake', awaitingCiSha: null })
+  })
+
   it('sends a pull request back with a note, starts a run, and refuses a second click', async () => {
     const id = await seed('done', { headSha: 'abc' })
 
@@ -396,6 +472,15 @@ describe('actions', () => {
     ])
     await expect(requestChanges(deps(), id, 'again')).rejects.toThrow(ActionRefused)
     expect(queued).toHaveLength(1)
+  })
+
+  it('no longer counts a task as resolved once a person sends it back', async () => {
+    const id = await seed('done', { headSha: 'abc', resolvedSha: 'abc' })
+
+    await requestChanges(deps(), id, 'Cut at a word boundary.')
+
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'intake', resolvedSha: null })
   })
 
   it('refuses to send back work that is already integrated, and says to open a new job', async () => {
@@ -454,7 +539,7 @@ describe('actions', () => {
       { taskId: handed, kind: 'resolve', sha: 'head1' },
     ])
     const [card] = (await listTasks(getDb())).filter((c) => c.id === failed)
-    expect(card).toMatchObject({ column: 'review', resolved: true })
+    expect(card).toMatchObject({ column: 'resolved', resolved: true })
     expect(queued).toEqual([])
   })
 
@@ -761,6 +846,53 @@ describe('deliveries on the panel', () => {
       ['prerelease', 'pre/1-sha-2', 'factory'],
       ['release', 'v0.1.0', 'human'],
     ])
+  })
+
+  it('shows a release that waits for the release branch checks, then why it was refused, until one lands', async () => {
+    const id = await seed('done', { headSha: 'abc', mergedSha: 'merged-1' })
+    const [wait] = await getDb()
+      .insert(releaseWait)
+      .values({
+        taskId: id,
+        repository: 'paulo/app',
+        pullRequestNumber: 381,
+        pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+        sha: 'dev1234',
+        releaseBranch: 'main',
+        bump: 'minor',
+        actor: 'human',
+        changesets: false,
+        checks: ['CI'],
+      })
+      .returning({ id: releaseWait.id })
+
+    let [card] = await listTasks(getDb())
+    expect(card.releaseWait).toEqual({
+      status: 'waiting',
+      pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+      checks: ['CI'],
+      reason: null,
+    })
+
+    await getDb()
+      .update(releaseWait)
+      .set({ status: 'refused', detail: 'the required check of main failed' })
+      .where(eq(releaseWait.id, wait.id))
+    ;[card] = await listTasks(getDb())
+    expect(card.releaseWait).toMatchObject({
+      status: 'refused',
+      reason: 'the required check of main failed',
+    })
+
+    // Released another way since: the refusal is history, not something to act on.
+    await getDb().update(task).set({ stage: 'released' }).where(eq(task.id, id))
+    ;[card] = await listTasks(getDb())
+    expect(card.releaseWait).toBeNull()
+
+    await getDb().update(task).set({ stage: 'done' }).where(eq(task.id, id))
+    await getDb().update(releaseWait).set({ status: 'merged' }).where(eq(releaseWait.id, wait.id))
+    ;[card] = await listTasks(getDb())
+    expect(card.releaseWait).toBeNull()
   })
 
   it('does not count a released task as waiting for a person', async () => {

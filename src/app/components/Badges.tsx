@@ -8,6 +8,7 @@ type Variant = 'default' | 'primary' | 'accent' | 'success' | 'warning' | 'destr
 const TONE: Record<Stage, Variant> = {
   intake: 'default',
   sandbox: 'primary',
+  plan: 'primary',
   build: 'primary',
   push: 'primary',
   verify: 'primary',
@@ -18,17 +19,21 @@ const TONE: Record<Stage, Variant> = {
   released: 'accent',
   handoff: 'warning',
   failed: 'destructive',
+  cancelled: 'default',
 }
 
 export function StageBadge({
   stage,
   integrated,
+  waitingForChecks,
   resolved,
   retryable,
   wrap = false,
 }: {
   stage: Stage
   integrated?: boolean
+  /** GitHub merges the pull request once the repository's required checks pass. */
+  waitingForChecks?: boolean
   /** Delivered without a pull request: the code already did what the issue asks. */
   resolved?: boolean
   retryable?: Retryable
@@ -42,7 +47,7 @@ export function StageBadge({
       variant={variant}
       className={wrap ? 'max-w-full whitespace-normal leading-tight' : 'whitespace-nowrap'}
     >
-      {stageLabel(stage, { integrated, resolved, retryable })}
+      {stageLabel(stage, { integrated, waitingForChecks, resolved, retryable })}
     </Badge>
   )
 }

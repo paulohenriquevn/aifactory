@@ -7,6 +7,7 @@ import type {
   FindingView,
   HealthReport,
   InboxItem,
+  MetricsReport,
   TaskCard,
   TaskDetail,
   WatchView,
@@ -36,6 +37,7 @@ const base: TaskCard = {
   updatedAt: '2026-11-04T10:05:00Z',
   approved: false,
   integrated: false,
+  waitingForChecks: false,
   resolved: false,
   retryable: null,
   retryAt: null,
@@ -45,6 +47,7 @@ const base: TaskCard = {
   },
   release: null,
   mainRed: false,
+  releaseWait: null,
 }
 
 const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
@@ -89,6 +92,7 @@ const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
       at: '2026-11-04T10:04:00Z',
     },
   ],
+  plans: [],
   questions: [],
   decisions: [],
   deliveries: [],
@@ -329,6 +333,18 @@ describe('releasing from the panel', () => {
     }
   })
 
+  it('says GitHub merges a pull request that waits for the repository checks', () => {
+    render(
+      <TaskActions detail={detail({ task: { ...base, waitingForChecks: true } })} onDone={noop} />,
+    )
+    expect(
+      screen.getByText(/merges this pull request once the repository's required checks pass/),
+    ).toBeDefined()
+    cleanup()
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    expect(screen.queryByText(/required checks pass/)).toBeNull()
+  })
+
   it('does not offer to ask for changes on work that is already integrated', () => {
     const integrated = detail({ task: { ...base, integrated: true } })
     render(<TaskActions detail={integrated} onDone={noop} />)
@@ -364,6 +380,63 @@ describe('releasing from the panel', () => {
     expect(container.textContent).toBe('')
   })
 
+  it('says the release waits for the release branch checks, and offers no second release meanwhile', () => {
+    const releaseWait = {
+      status: 'waiting' as const,
+      pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+      checks: ['CI', 'SonarCloud Code Analysis'],
+      reason: null,
+    }
+    render(
+      <TaskActions
+        detail={detail({ task: { ...base, integrated: true, releaseWait } })}
+        onDone={noop}
+      />,
+    )
+    expect(
+      screen.getByText(/waits for the required checks of the release branch: CI, SonarCloud/),
+    ).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Release' })).toBeNull()
+  })
+
+  it('shows why the last release did not happen, and offers it again', () => {
+    const releaseWait = {
+      status: 'refused' as const,
+      pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+      checks: ['CI'],
+      reason: 'the required check of main failed on the release pull request: CI',
+    }
+    render(
+      <TaskActions
+        detail={detail({ task: { ...base, integrated: true, releaseWait } })}
+        onDone={noop}
+      />,
+    )
+    expect(
+      screen.getByText(
+        /The last release did not happen: the required check of main failed on the release pull request: CI/,
+      ),
+    ).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Release' })).toBeDefined()
+  })
+
+  it('says the release waits when the server answers that it does', async () => {
+    serve({
+      'POST /api/panel/tasks/5/release': {
+        awaitingChecks: ['CI'],
+        pullRequestUrl: 'https://github.com/paulo/app/pull/381',
+      },
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<TaskActions detail={detail()} onDone={noop} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toBe(
+        'The release waits for the checks of the release branch (CI): GitHub merges it once they pass.',
+      ),
+    )
+  })
+
   it('shows the refusal when GitHub or the checks do not allow it', async () => {
     serve({
       'POST /api/panel/tasks/5/release': () =>
@@ -379,6 +452,47 @@ describe('releasing from the panel', () => {
     render(<TaskActions detail={detail()} onDone={noop} />)
     fireEvent.click(screen.getByRole('button', { name: 'Release' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/is a draft/))
+  })
+
+  it('shows the latest plan the builder wrote, with its files and what it left out', async () => {
+    const plan = {
+      id: 1,
+      baseSha: 'base000111',
+      harness: 'codex',
+      files: [{ path: 'src/old.js', why: 'x' }],
+      order: [],
+      risks: [],
+      proof: [],
+      outOfScope: [],
+      at: '2026-11-04T10:01:00Z',
+    }
+    serve({
+      'GET /api/panel/tasks/5': detail({
+        plans: [
+          plan,
+          {
+            ...plan,
+            id: 2,
+            files: [{ path: 'src/truncate.js', why: 'the function' }],
+            order: ['test first'],
+            outOfScope: ['the CLI flag'],
+          },
+        ],
+      }),
+    })
+    renderTask()
+    const region = await waitFor(() => screen.getByRole('region', { name: 'Plan' }))
+    expect(region.textContent).toContain('src/truncate.js: the function')
+    expect(region.textContent).toContain('the CLI flag')
+    expect(region.textContent).toContain('the latest of 2')
+    expect(region.textContent).not.toContain('src/old.js')
+  })
+
+  it('says when a task has no plan', async () => {
+    serve({ 'GET /api/panel/tasks/5': detail() })
+    renderTask()
+    const region = await waitFor(() => screen.getByRole('region', { name: 'Plan' }))
+    expect(region.textContent).toContain('No plan was written')
   })
 
   it('shows the pre-release and the release on the task page, with who made each', async () => {
@@ -557,6 +671,91 @@ const found = (over: Partial<FindingView>): FindingView => ({
   firstSeenAt: '2026-11-04T10:00:00Z',
   lastSeenAt: '2026-11-04T10:50:00Z',
   ...over,
+})
+
+const metricsReport: MetricsReport = {
+  rows: [
+    {
+      metric: 'cost_per_delivery',
+      label: 'Cost per delivered run',
+      unit: 'usd',
+      worse: 'up',
+      repository: '*',
+      day: '2026-11-08',
+      value: 5,
+      samples: 3,
+      mean: 1,
+      sd: 0.1,
+      band: 'act',
+      rules: ['beyond_3_sigma'],
+    },
+    {
+      metric: 'first_pass_checks',
+      label: 'First-pass checks',
+      unit: 'share',
+      worse: 'down',
+      repository: 'paulo/app',
+      day: '2026-11-08',
+      value: 0.75,
+      samples: 4,
+      mean: null,
+      sd: null,
+      band: 'no_baseline',
+      rules: [],
+    },
+  ],
+  signals: [
+    {
+      metric: 'cost_per_delivery',
+      label: 'Cost per delivered run',
+      repository: '*',
+      day: '2026-11-08',
+      rule: 'beyond_3_sigma',
+      tier: 'act',
+      value: 5,
+      mean: 1,
+      sd: 0.1,
+      issueUrl: 'https://github.com/paulohenriquevn/aifactory/issues/40',
+      error: null,
+    },
+  ],
+}
+
+describe('health metrics', () => {
+  it('shows each indicator against its band and links the issue a signal opened', async () => {
+    serve({ 'GET /api/panel/health': report(), 'GET /api/panel/metrics': metricsReport })
+    render(
+      <MemoryRouter>
+        <HealthPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(screen.getByText('issue opened')).toBeDefined())
+    expect(screen.getAllByText('Cost per delivered run')).toHaveLength(2)
+    expect(screen.getAllByText('All repositories').length).toBeGreaterThan(0)
+    expect(screen.getByText('$1.00 ± $0.10')).toBeDefined()
+    expect(screen.getByText('75%')).toBeDefined()
+    expect(screen.getByText('no baseline yet')).toBeDefined()
+    expect(screen.getByRole('link', { name: 'issue' }).getAttribute('href')).toBe(
+      'https://github.com/paulohenriquevn/aifactory/issues/40',
+    )
+  })
+
+  it('says when there is nothing to measure yet', async () => {
+    serve({
+      'GET /api/panel/health': report(),
+      'GET /api/panel/metrics': { rows: [], signals: [] },
+    })
+    render(
+      <MemoryRouter>
+        <HealthPage />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByText('Not enough finished work to measure yet.')).toBeDefined(),
+    )
+  })
 })
 
 describe('health', () => {

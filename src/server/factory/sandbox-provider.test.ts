@@ -16,7 +16,17 @@ describe('sandboxProviderFromEnv', () => {
     expect(provider.listSnapshots).toBeUndefined()
   })
 
+  it('is E2B for e2b, planned for the free plan hour unless the owner says the plan allows more', () => {
+    const provider = sandboxProviderFromEnv({ FACTORY_SANDBOX: 'e2b', E2B_API_KEY: 'k' })
+    expect(provider.name).toBe('e2b')
+    expect(provider.maxSessionMs).toBe(60 * 60_000)
+    const pro = sandboxProviderFromEnv({ FACTORY_SANDBOX: 'e2b', E2B_MAX_SESSION_MS: '86400000' })
+    expect(pro.maxSessionMs).toBe(86_400_000)
+  })
+
   it('refuses a place it does not know, rather than running somewhere else', () => {
-    expect(() => sandboxProviderFromEnv({ FACTORY_SANDBOX: 'e2b' })).toThrow('use vercel or docker')
+    expect(() => sandboxProviderFromEnv({ FACTORY_SANDBOX: 'modal' })).toThrow(
+      'use vercel, docker or e2b',
+    )
   })
 })

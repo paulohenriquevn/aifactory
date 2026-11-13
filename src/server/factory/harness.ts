@@ -112,6 +112,10 @@ export function buildPrompt(input: {
   branch: string
   /** What a person asked to change in an earlier pull request from this branch. */
   feedback?: string
+  /** Who sent the work back: a person (the default) or the repository's required checks. */
+  feedbackFrom?: 'person' | 'checks'
+  /** True when the branch the feedback was about is gone: the work starts from the integration branch. */
+  startsOver?: boolean
   /** False when nobody is there to answer: the agent decides, and says what it assumed. */
   askQuestions?: boolean
   /** Where the knowledge base is in the sandbox, when the factory delivered one. */
@@ -141,7 +145,18 @@ ${checksRule(input.checks)}${
 ${input.knowledgeDir ? `${LEARNED_RULE}\n` : ''}- Finish with a short summary of what you changed.
 ${input.knowledgeDir ? `\n${knowledgeRules(input.knowledgeDir)}\n` : ''}${
     input.feedback
-      ? `\nA person reviewed your earlier pull request and asked for these changes:\n\n${input.feedback}\n\nThe branch already holds your earlier work. Build on it.\n`
+      ? `\n${sentBackBy(input)}\n\n${input.feedback}\n\n${input.startsOver ? 'The branch of that run no longer exists, so none of its work is here. Start from what the repository holds now.' : 'The branch already holds your earlier work. Build on it.'}\n`
       : ''
   }`
+}
+
+/** The line that says who sent the work back, above what they said. */
+function sentBackBy(input: { feedbackFrom?: 'person' | 'checks'; startsOver?: boolean }): string {
+  if (input.feedbackFrom === 'checks')
+    return input.startsOver
+      ? "The repository's required checks failed on what an earlier run of this issue delivered:"
+      : "The repository's required checks failed on your earlier pull request:"
+  return input.startsOver
+    ? 'A person read what an earlier run of this issue ended with and asked for these changes:'
+    : 'A person reviewed your earlier pull request and asked for these changes:'
 }

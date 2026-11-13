@@ -24,7 +24,7 @@ import { ACTIVE, useOnNewChat, usePlace } from './active'
 type Icon = ComponentType<{ className?: string }>
 
 const button =
-  'relative grid size-9 place-items-center rounded-lg text-foreground/90 transition-colors hover:bg-white/[0.08]'
+  'relative grid size-9 place-items-center rounded-lg text-foreground/90 transition-colors hover:bg-muted/60'
 
 /** A place of the factory, as an icon: its name is the tooltip and the label a screen reader reads. */
 function Place({
@@ -81,7 +81,7 @@ export function Rail({
   return (
     <aside
       aria-label="Menu recolhido"
-      className="flex h-full w-[52px] shrink-0 flex-col items-center border-r border-white/[0.08] bg-[#0a0a0b] py-2.5"
+      className="flex h-full w-[52px] shrink-0 flex-col items-center border-r border-border bg-card py-2.5"
     >
       <button
         type="button"
@@ -136,7 +136,7 @@ export function Rail({
 
       <nav
         aria-label="Principal"
-        className="mt-3 flex flex-col items-center gap-1 border-t border-white/[0.08] pt-3"
+        className="mt-3 flex flex-col items-center gap-1 border-t border-border pt-3"
       >
         <Place id="board" to="/work" icon={LayoutDashboard} label="Quadro" />
         <Place id="plans" to="/plans" icon={ListChecks} label="Planos" />
@@ -154,7 +154,7 @@ export function Rail({
               type="button"
               aria-label="Conta"
               title={name}
-              className="grid size-9 place-items-center rounded-full hover:bg-white/[0.08]"
+              className="grid size-9 place-items-center rounded-full hover:bg-muted/60"
             >
               <Avatar className="size-8 text-xs">
                 <Avatar.Fallback>{name.slice(0, 2).toUpperCase()}</Avatar.Fallback>

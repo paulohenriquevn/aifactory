@@ -38,10 +38,10 @@ export function GuidePanel() {
   return (
     <aside
       aria-label={guide.name}
-      className={`flex flex-col border-l border-white/[0.08] bg-[#0a0a0b] ${wide ? 'relative w-[400px] shrink-0' : 'fixed inset-y-0 right-0 z-40 w-[min(420px,100vw)] shadow-2xl'}`}
+      className={`flex flex-col border-l border-border bg-card ${wide ? 'relative w-[400px] shrink-0' : 'fixed inset-y-0 right-0 z-40 w-[min(420px,100vw)] shadow-2xl'}`}
     >
-      <header className="flex items-center gap-3 border-b border-white/[0.08] px-4 py-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/[0.08]">
+      <header className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted">
           <Sparkles className="size-[18px]" />
         </span>
         <div className="min-w-0 flex-1">
@@ -52,7 +52,7 @@ export function GuidePanel() {
           type="button"
           aria-label="Fechar o guia"
           onClick={() => setOpen(false)}
-          className="rounded-lg p-2 text-foreground/80 hover:bg-white/[0.08]"
+          className="rounded-lg p-2 text-foreground/80 hover:bg-muted/60"
         >
           <X className="size-[18px]" />
         </button>

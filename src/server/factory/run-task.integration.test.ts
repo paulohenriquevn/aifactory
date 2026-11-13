@@ -1,17 +1,20 @@
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { getStorageManager } from 'theokit/server/storage'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import {
   agentRun,
+  changePlan,
   decision,
   delivery,
   evidence,
   ingress,
+  publication,
   question,
+  releaseWait,
   repository,
   review,
   stageEvent,
@@ -20,6 +23,7 @@ import {
 } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type {
+  ChangedFile,
   CheckRun,
   GithubApi,
   IssueComment,
@@ -27,17 +31,35 @@ import type {
   PullRequestState,
   ReleaseInput,
 } from '../github/pulls'
+import { AutoMergeRefused } from '../github/pulls'
 
+const NOT_ALLOWED = 'Auto merge is not allowed for this repository'
+/** What GitHub answers when the required checks already passed, so there is nothing to wait for. */
+const CLEAN = 'Pull request Pull request is in clean status'
+/** What GitHub answers when the pull request is still a draft. */
+const DRAFT = 'Pull request Pull request is a draft'
+
+import { retryableFailure } from '../../shared/panel'
+import {
+  divergedRepository,
+  PLANNED_CHANGE,
+  readsHistory,
+  WEAKENED_TEST,
+} from '../../test/diverged-repository'
 import { FakeBranches } from '../../test/fake-branches'
 import { knowledgeRules } from '../knowledge/prompt'
 import type { KnowledgeSource } from '../knowledge/source'
 import type { NewNote } from '../knowledge/store'
 
+import { githubEgress } from './credential-renewal'
 import { FakeSandbox, type Reply } from './fake-sandbox'
 import { eventsOf } from './transcript-store'
 import { parseRecipe } from './recipe'
 import type { CodingHarness } from './harness'
+import type { Finding } from './review'
 import { mergeEgress, resumeTask, runTask, type RunTaskDeps } from './run-task'
+import { runContinuation } from './run-support'
+import { requestChanges } from '../panel/actions'
 import { release } from './deliver'
 import { pollAnswers } from './waiting'
 
@@ -94,12 +116,20 @@ const PR_URL = 'https://github.com/paulo/app/pull/12'
 const githubApi: GithubApi & {
   checkRuns: CheckRun[]
   pulls: string[]
+  /** The body of each pull request the factory opened. */
+  bodies: string[]
   /** The base each pull request asked for; undefined is the default branch. */
   bases: (string | undefined)[]
   drafts: boolean[]
   comments: string[]
+  /** Each comment with the issue it went to. */
+  commentsOn: { issue: number; body: string }[]
   /** The issues the factory closed. */
   closed: number[]
+  /** Issues GitHub refuses to close. */
+  closeFails: Set<number>
+  /** Merges that are not in the history of the commit a release promoted. */
+  outside: Set<string>
   replies: IssueComment[]
   releases: ReleaseInput[]
   releaseFails: boolean
@@ -117,18 +147,61 @@ const githubApi: GithubApi & {
   branches: FakeBranches
   /** Opening a pull request from this branch fails. */
   openFailsFor: string | undefined
+  /** What `.changeset` on the pre-release branch holds; undefined when the repository has none. */
+  changesets: string[] | undefined
+  /** The files `develop` changes since its merge base with the release branch, with their status. */
+  changed: ChangedFile[]
+  /** The files on `develop`, with what each holds. */
+  tree: Record<string, string>
+  /** The release branch each comparison was made from. */
+  compared: string[]
+  /** The status checks the integration branch requires. */
+  required: string[]
+  /** The status checks the release branch requires. */
+  releaseRequired: string[]
+  /** The pull requests auto-merge was turned on for, with the head it is pinned to. */
+  autoMerges: { number: number; sha: string }[]
+  /** GitHub refuses to turn auto-merge on. */
+  autoMergeRefused: boolean
+  /** What GitHub says when it refuses. */
+  autoMergeRefusal: string
+  /** What the pull request that is already open says of itself; undefined when the factory opens it. */
+  existing: { draft: boolean; title: string } | undefined
+  /** GitHub holds the pull request as a draft, and refuses to merge it, until it is marked ready. */
+  draftOnGithub: boolean
+  /** Each pull request marked ready for review, with the title it was given. */
+  readied: { number: number; title: string }[]
+  /** How many times auto-merge was asked for, refused or not. */
+  autoMergeAsks: number
 } = {
+  existing: undefined,
+  draftOnGithub: false,
+  readied: [],
+  autoMergeAsks: 0,
+  required: [],
+  releaseRequired: [],
+  autoMerges: [],
+  autoMergeRefused: false,
+  autoMergeRefusal: NOT_ALLOWED,
   openFailsFor: undefined,
+  changesets: undefined,
+  changed: [],
+  tree: {},
+  compared: [],
   branches: FakeBranches.prepared(),
   branchMerges: [],
   mergeFails: false,
   branchMergeFails: false,
   checkRuns: [],
   pulls: [],
+  bodies: [],
   bases: [],
   drafts: [],
   comments: [],
+  commentsOn: [],
   closed: [],
+  closeFails: new Set(),
+  outside: new Set(),
   replies: [],
   releases: [],
   releaseFails: false,
@@ -143,9 +216,14 @@ const githubApi: GithubApi & {
     if (pull.head === this.openFailsFor)
       throw new Error('GitHub answered 422 opening a pull request')
     this.pulls.push(pull.head)
+    this.bodies.push(pull.body)
     this.bases.push(pull.base)
     this.drafts.push(pull.draft ?? false)
-    return { number: 12, url: PR_URL }
+    return { number: 12, url: PR_URL, ...this.existing }
+  },
+  async markReadyForReview(_repo, _token, number, title) {
+    this.readied.push({ number, title })
+    this.draftOnGithub = false
   },
   async deleteBranch() {},
   async createRelease(_repo, _token, release) {
@@ -157,8 +235,27 @@ const githubApi: GithubApi & {
       url: `https://github.com/paulo/app/releases/tag/${release.tag}`,
     }
   },
-  async latestReleaseTag() {
-    return this.latest
+  async changedFiles(_repo, _token, base) {
+    this.compared.push(base)
+    return this.changed
+  },
+  async filePaths() {
+    return Object.keys(this.tree)
+  },
+  async readFile(_repo, _token, path) {
+    return this.tree[path]
+  },
+  async versionTags() {
+    return this.latest ? [this.latest] : []
+  },
+  async listDirectory(_repo, _token, path) {
+    return path === '.changeset' ? this.changesets : undefined
+  },
+  async releasesSince() {
+    return []
+  },
+  async contains(_repo, _token, _descendant, ancestor) {
+    return !this.outside.has(ancestor)
   },
   async commitChecks() {
     return { checkRuns: [], statuses: 'none' as const }
@@ -169,14 +266,37 @@ const githubApi: GithubApi & {
   async findPullRequest() {
     return this.pullRequest
   },
+  async openPullRequestsBetween() {
+    throw new Error('the pipeline never looks for a back-merge')
+  },
+  async requiredChecks(_repo, _token, branch) {
+    return branch === 'workspace' ? this.required : this.releaseRequired
+  },
+  async readPullRequest() {
+    throw new Error('a run never reads a pull request by number')
+  },
+  async enableAutoMerge(repo, _token, number, sha) {
+    this.autoMergeAsks += 1
+    if (this.draftOnGithub) throw new AutoMergeRefused(repo, number, DRAFT)
+    if (this.autoMergeRefused) throw new AutoMergeRefused(repo, number, this.autoMergeRefusal)
+    this.autoMerges.push({ number, sha })
+  },
+  async disableAutoMerge() {
+    throw new Error('a run never turns auto-merge off')
+  },
+  async checkReports() {
+    return []
+  },
   async mergePullRequest(_repo, _token, number, sha, merge) {
     if (this.mergeFails) throw new Error('GitHub answered 405 merging paulo/app#12: conflicts')
+    if (this.draftOnGithub) throw new Error('GitHub answered 405 merging paulo/app#12: draft')
     this.merges.push({ number, sha })
     this.mergeKinds.push(merge)
     return { sha: 'merge0001' }
   },
   defaultBranch: async () => githubApi.branches.defaultName,
   branchHead: async (repo, token, branch) => githubApi.branches.api.branchHead(repo, token, branch),
+  branchAhead: async () => undefined,
   createBranch: async (repo, token, branch, sha) =>
     githubApi.branches.api.createBranch(repo, token, branch, sha),
   async mergeBranch(_repo, _token, base, head) {
@@ -185,11 +305,14 @@ const githubApi: GithubApi & {
     this.branchMerges.push({ base, head })
     return { sha: 'develop0001', changed: true }
   },
-  async commentOnIssue(_repo, _token, _issue, body) {
+  async commentOnIssue(_repo, _token, issue, body) {
     this.comments.push(body)
+    this.commentsOn.push({ issue, body })
     return `comment-${this.comments.length}`
   },
   async closeIssue(_repo, _token, issue) {
+    if (this.closeFails.has(issue))
+      throw new Error(`GitHub answered 403 closing paulo/app#${issue}`)
     this.closed.push(issue)
   },
   async listIssueComments() {
@@ -201,10 +324,14 @@ let dirty = true
 beforeEach(() => {
   githubApi.checkRuns = []
   githubApi.pulls = []
+  githubApi.bodies = []
   githubApi.bases = []
   githubApi.drafts = []
   githubApi.comments = []
+  githubApi.commentsOn = []
   githubApi.closed = []
+  githubApi.closeFails = new Set()
+  githubApi.outside = new Set()
   githubApi.replies = []
   githubApi.releases = []
   githubApi.releaseFails = false
@@ -216,6 +343,19 @@ beforeEach(() => {
   githubApi.mergeFails = false
   githubApi.branchMergeFails = false
   githubApi.openFailsFor = undefined
+  githubApi.changesets = undefined
+  githubApi.changed = []
+  githubApi.tree = {}
+  githubApi.compared = []
+  githubApi.required = []
+  githubApi.releaseRequired = []
+  githubApi.autoMerges = []
+  githubApi.autoMergeRefused = false
+  githubApi.existing = undefined
+  githubApi.draftOnGithub = false
+  githubApi.readied = []
+  githubApi.autoMergeAsks = 0
+  githubApi.autoMergeRefusal = NOT_ALLOWED
   githubApi.branches = FakeBranches.prepared()
   dirty = true
 })
@@ -281,6 +421,8 @@ function deps(sandbox: FakeSandbox, overrides: Partial<RunTaskDeps> = {}): RunTa
     sandbox,
     harness: okHarness,
     reviewer: approving(),
+    // The tests of the plan turn it on; the rest measure what follows it.
+    planFirst: false,
     pushRetryDelayMs: 0,
     author: { name: 'aifactory[bot]', email: 'bot@users.noreply.github.com' },
     fetchIssue: async () => ({
@@ -330,6 +472,10 @@ const stagesOf = async (taskId: number) =>
       .where(eq(stageEvent.taskId, taskId))
       .orderBy(stageEvent.id)
   ).map((e) => e.stage)
+
+/** GitHub has the task's branch: an earlier run pushed it and nothing deleted it since. */
+const branchPushed = (issueNumber = 7) =>
+  githubApi.branches.heads.set(`factory/${issueNumber}`, 'f'.repeat(40))
 
 describe('runTask', () => {
   it('pushes factory/<issue> and records the stages in order', async () => {
@@ -615,6 +761,86 @@ describe('runTask', () => {
     }
 
     const result = await runTask(deps(sandbox, { github: noInstall }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'sandbox' })
+    expect(sandbox.specs).toHaveLength(0)
+  })
+
+  it('starts no sandbox while an issue the task is blocked by is open, and waits for it', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const read: string[] = []
+    const fetchIssue: RunTaskDeps['fetchIssue'] = async (repo, number) => {
+      read.push(`${repo}#${number}`)
+      if (number === 7) {
+        return {
+          number,
+          title: 'T',
+          body: 'Blocked by o/gateways#3, #5.',
+          labels: [],
+          state: 'open',
+        }
+      }
+      return { number, title: 'X', body: '', labels: [], state: number === 3 ? 'open' : 'closed' }
+    }
+
+    const result = await runTask(deps(sandbox, { fetchIssue }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'sandbox' })
+    expect(sandbox.specs).toHaveLength(0)
+    expect(read).toEqual(['paulo/app#7', 'o/gateways#3', 'paulo/app#5'])
+    const [last] = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, id))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
+    expect(last!.detail).toMatchObject({ blockedBy: ['o/gateways#3'] })
+    expect(retryableFailure(last!.detail as Record<string, unknown>)).toBe('blocked')
+  })
+
+  it('runs once every issue it is blocked by is closed', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const fetchIssue: RunTaskDeps['fetchIssue'] = async (_repo, number) =>
+      number === 7
+        ? { number, title: 'T', body: 'Blocked by #5.', labels: [], state: 'open' }
+        : { number, title: 'X', body: '', labels: [], state: 'closed' }
+
+    await runTask(deps(sandbox, { fetchIssue }), id)
+
+    expect(sandbox.specs).toHaveLength(1)
+  })
+
+  it('runs when an open blocker in the same repository is already integrated', async () => {
+    const id = await seedTask()
+    const blocker = await seedTask(5)
+    await getDb().update(task).set({ mergedSha: 'abc123' }).where(eq(task.id, blocker))
+    const sandbox = new FakeSandbox(changed())
+    const fetchIssue: RunTaskDeps['fetchIssue'] = async (_repo, number) =>
+      number === 7
+        ? { number, title: 'T', body: 'Blocked by #5.', labels: [], state: 'open' }
+        : { number, title: 'X', body: '', labels: [], state: 'open' }
+
+    await runTask(deps(sandbox, { fetchIssue }), id)
+
+    expect(sandbox.specs).toHaveLength(1)
+  })
+
+  it('still waits for an open blocker in another repository, even one that is integrated there', async () => {
+    const id = await seedTask()
+    const blocker = await seedTask(5)
+    await getDb()
+      .update(task)
+      .set({ repository: 'o/gateways', mergedSha: 'abc123' })
+      .where(eq(task.id, blocker))
+    const sandbox = new FakeSandbox(changed())
+    const fetchIssue: RunTaskDeps['fetchIssue'] = async (_repo, number) =>
+      number === 7
+        ? { number, title: 'T', body: 'Blocked by o/gateways#5.', labels: [], state: 'open' }
+        : { number, title: 'X', body: '', labels: [], state: 'open' }
+
+    const result = await runTask(deps(sandbox, { fetchIssue }), id)
 
     expect(result).toMatchObject({ status: 'failed', stage: 'sandbox' })
     expect(sandbox.specs).toHaveLength(0)
@@ -1087,6 +1313,38 @@ describe('runTask review loop', () => {
     expect(githubApi.drafts).toEqual([true])
   })
 
+  it('does not accept an approval when the change takes an assertion out of a test that was there', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (c.includes('diff -U0') && c.includes("':(glob)**/*.test.*'")) {
+          return {
+            stdout: [
+              'diff --git a/src/truncate.test.js b/src/truncate.test.js',
+              '--- a/src/truncate.test.js',
+              '+++ b/src/truncate.test.js',
+              '@@ -4 +3,0 @@',
+              "-  assert.equal(truncate('abcdef', 3), 'abc')",
+            ].join('\n'),
+          }
+        }
+        return undefined
+      }),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'handoff' })
+    const [stored] = await reviewsOf(id)
+    expect(stored.verdict).toBe('changes')
+    expect(stored.findings).toContainEqual(
+      expect.objectContaining({
+        file: 'src/truncate.test.js',
+        issue: expect.stringContaining('1 assertion fewer'),
+      }),
+    )
+  })
+
   it('throws away anything the reviewer wrote to the checkout', async () => {
     const id = await seedTask()
     const sandbox = new FakeSandbox(changed())
@@ -1187,9 +1445,309 @@ describe('runTask review loop', () => {
   })
 })
 
+describe('runTask planning before it builds', () => {
+  const plan = {
+    files: [{ path: 'src/truncate.js', why: 'the function' }],
+    order: ['write the test', 'make it pass'],
+    risks: [],
+    proof: ['npm test'],
+    outOfScope: ['the CLI flag'],
+  }
+
+  /**
+   * A builder that answers the planning turn from a script and leaves work on every later turn. `edits`
+   * says whether the planning turn left files changed, as an agent that ignores the rule would.
+   */
+  function planningBuilder(answers: string[], edits = false) {
+    const resumed: string[] = []
+    let turn = 0
+    const builder: CodingHarness & { resumed: string[] } = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      resumed,
+      run: async () => {
+        if (turn >= answers.length) {
+          dirty = true
+          return { ok: true, summary: 'did the work', costUsd: 0.1, sessionId: 'sess-1' }
+        }
+        dirty = edits
+        return { ok: true, summary: answers[turn++], costUsd: 0.05, sessionId: 'sess-1' }
+      },
+      resume: async (_backend, sessionId, input) => {
+        resumed.push(input.prompt)
+        if (turn < answers.length)
+          return { ok: true, summary: answers[turn++], costUsd: 0.01, sessionId }
+        dirty = true
+        return { ok: true, summary: 'implemented the plan', costUsd: 0.1, sessionId }
+      },
+    }
+    return builder
+  }
+
+  /** A sandbox whose diff touches the planned file and one more. */
+  const twoFiles = () =>
+    new FakeSandbox(
+      changed((c) =>
+        c.includes('diff --name-status')
+          ? { stdout: 'M\tsrc/truncate.js\nM\tsrc/other.js\n' }
+          : undefined,
+      ),
+    )
+
+  it('stores the plan and builds in the session that wrote it', async () => {
+    const id = await seedTask()
+    const builder = planningBuilder([`Read it.\n${JSON.stringify(plan)}`])
+
+    const result = await runTask(deps(twoFiles(), { harness: builder, planFirst: true }), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    const stages = await stagesOf(id)
+    expect(stages.indexOf('plan')).toBeGreaterThan(-1)
+    expect(stages.indexOf('plan')).toBeLessThan(stages.indexOf('build'))
+    const [stored] = await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))
+    expect(stored).toMatchObject({ baseSha: 'abc123def', harness: 'fake-agent', plan })
+    expect(builder.resumed).toHaveLength(1)
+    expect(builder.resumed[0]).toContain('Implement the plan')
+    expect(builder.resumed[0]).not.toContain('discarded')
+  })
+
+  it('gives the reviewer the plan and records a file changed outside it', async () => {
+    const id = await seedTask()
+    const reviewer = approving()
+
+    await runTask(
+      deps(twoFiles(), {
+        harness: planningBuilder([JSON.stringify(plan)]),
+        reviewer,
+        planFirst: true,
+      }),
+      id,
+    )
+
+    expect(reviewer.prompts[0]).toContain("# The builder's plan")
+    expect(reviewer.prompts[0]).toContain('- `src/other.js`')
+    expect(reviewer.prompts[0]).toContain('implemented the plan')
+    expect(reviewer.prompts[0]).not.toContain("# What the factory's checks required")
+    const [stored] = await reviewsOf(id)
+    expect(stored.findings).toContainEqual({
+      severity: 'minor',
+      file: 'src/other.js',
+      issue: 'changed outside the plan',
+    })
+    expect(githubApi.bodies[0]).toContain('<summary>Plan</summary>')
+    expect(githubApi.bodies[0]).toContain('`src/truncate.js`: the function')
+  })
+
+  it('tells the reviewer what a failed check required and does not record that file as outside the plan', async () => {
+    const id = await seedTask()
+    const reviewer = approving()
+    let runs = 0
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        // The check fails on the first commit, both times it runs there, and passes on the second.
+        if (c.endsWith('npm test'))
+          return ++runs <= 2 ? { exitCode: 1, stdout: 'error no changesets were found' } : undefined
+        if (c.includes('rev-list')) return { stdout: 'abc123def2\nabc123def\n' }
+        if (c.includes('diff --name-status'))
+          return { stdout: 'M\tsrc/truncate.js\nA\t.changeset/calm-owls.md\nM\tsrc/other.js\n' }
+        if (c.includes('diff --name-only --diff-filter=A'))
+          return { stdout: '.changeset/calm-owls.md\n' }
+        return undefined
+      }),
+    )
+
+    const result = await runTask(
+      deps(sandbox, {
+        harness: planningBuilder([JSON.stringify(plan)]),
+        reviewer,
+        planFirst: true,
+      }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done', sha: 'abc123def2' })
+    expect(reviewer.prompts[0]).toContain("# What the factory's checks required")
+    expect(reviewer.prompts[0]).toContain('The check `test` (`npm test`) failed on abc123d with:')
+    expect(reviewer.prompts[0]).toContain('> error no changesets were found')
+    expect(reviewer.prompts[0]).toContain('- `.changeset/calm-owls.md`')
+    const [stored] = await reviewsOf(id)
+    expect(stored.findings).toEqual([
+      { severity: 'minor', file: 'src/other.js', issue: 'changed outside the plan' },
+    ])
+  })
+
+  describe('on a branch the integration branch moved past', () => {
+    /** A sandbox whose history is a real repository, and whose clone of `workspace` is at `baseSha`. */
+    function onHistory(repo: { dir: string; baseSha: string }) {
+      let cloned = false
+      const history = readsHistory(repo.dir, '/vercel/work')
+      return new FakeSandbox(
+        changed((command) => {
+          if (!cloned && command.endsWith('rev-parse HEAD')) {
+            cloned = true
+            return { stdout: `${repo.baseSha}\n` }
+          }
+          return history(command)
+        }),
+      )
+    }
+
+    /** The findings of the first review of a task sent back, whose branch `workspace` moved past. */
+    async function sentBack() {
+      const id = await seedTask()
+      branchPushed()
+      await getDb()
+        .insert(changePlan)
+        .values({ taskId: id, baseSha: 'cut0001', harness: 'fake-agent', plan })
+      const builder = resumableBuilder()
+      const sandbox = onHistory(divergedRepository({ behind: true }))
+
+      await runTask(deps(sandbox, { harness: builder, reviewer: approving() }), id, undefined, {
+        feedback: 'Rename the helper to cut.',
+      })
+
+      const [first] = await reviewsOf(id)
+      return first.findings as Finding[]
+    }
+
+    it('does not charge the task with a file only the integration branch changed', async () => {
+      const findings = await sentBack()
+
+      expect(findings.filter((f) => f.issue === 'changed outside the plan')).toEqual([])
+    })
+
+    it('does not report as weakened or deleted a test the integration branch changed', async () => {
+      const findings = await sentBack()
+
+      expect(findings.filter((f) => f.file?.endsWith('.test.js'))).toEqual([])
+    })
+
+    it('does not block on a test command or a workflow the integration branch changed', async () => {
+      const findings = await sentBack()
+
+      expect(findings.filter((f) => f.severity !== 'minor')).toEqual([])
+    })
+
+    it('reports on a first run what the change itself did, as before', async () => {
+      const id = await seedTask()
+      const repo = divergedRepository({
+        behind: false,
+        branch: {
+          ...PLANNED_CHANGE,
+          'src/extra.js': 'export {}\n',
+          'src/shared.test.js': WEAKENED_TEST,
+        },
+      })
+      const builder = planningBuilder([JSON.stringify(plan)])
+
+      await runTask(
+        deps(onHistory(repo), { harness: builder, reviewer: approving(), planFirst: true }),
+        id,
+      )
+
+      const [first] = await reviewsOf(id)
+      expect(first.findings).toEqual([
+        {
+          severity: 'major',
+          file: 'src/shared.test.js',
+          issue: 'the change weakens a test that was there before it: it leaves 1 assertion fewer',
+        },
+        { severity: 'minor', file: 'src/extra.js', issue: 'changed outside the plan' },
+        { severity: 'minor', file: 'src/shared.test.js', issue: 'changed outside the plan' },
+      ])
+    })
+  })
+
+  it('throws away what the planning turn changed, and tells the builder', async () => {
+    const id = await seedTask()
+    const sandbox = twoFiles()
+    const builder = planningBuilder([JSON.stringify(plan)], true)
+
+    await runTask(deps(sandbox, { harness: builder, planFirst: true }), id)
+
+    const commands = sandbox.backend.commands
+    const reset = commands.findIndex((c) => c.includes('reset --hard abc123def'))
+    expect(reset).toBeGreaterThan(-1)
+    expect(commands[reset + 1]).toContain('clean -fd')
+    expect(commands.findIndex((c) => c.includes('commit -F'))).toBeGreaterThan(reset)
+    expect(builder.resumed[0]).toContain('discarded')
+  })
+
+  it('asks once more for a plan it could not read, and fails at the plan when there is still none', async () => {
+    const id = await seedTask()
+    const builder = planningBuilder(['I will look around.', 'Still thinking.'])
+
+    const result = await runTask(deps(twoFiles(), { harness: builder, planFirst: true }), id)
+
+    expect(result).toMatchObject({ status: 'failed', stage: 'plan' })
+    expect(result.status === 'failed' && result.error).toContain('the agent wrote no plan')
+    expect(builder.resumed).toHaveLength(1)
+    expect(builder.resumed[0]).toContain('one JSON object')
+    expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toEqual([])
+  })
+
+  it('takes the plan from the second answer when the first had none', async () => {
+    const id = await seedTask()
+    const builder = planningBuilder(['I will look around.', JSON.stringify(plan)])
+
+    const result = await runTask(deps(twoFiles(), { harness: builder, planFirst: true }), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(builder.resumed[1]).toContain('Implement the plan')
+  })
+
+  it('plans nothing with a builder that cannot resume a session', async () => {
+    const id = await seedTask()
+
+    const result = await runTask(deps(twoFiles(), { planFirst: true }), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(await stagesOf(id)).not.toContain('plan')
+    expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toEqual([])
+  })
+
+  it('keeps the plan the task has when a person sends the work back', async () => {
+    const id = await seedTask()
+    branchPushed()
+    await getDb().insert(changePlan).values({ taskId: id, baseSha: 'old', harness: 'codex', plan })
+    const builder = planningBuilder([])
+    const reviewer = approving()
+
+    const result = await runTask(
+      deps(twoFiles(), { harness: builder, reviewer, planFirst: true }),
+      id,
+      undefined,
+      { feedback: 'Rename the helper to cut.' },
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(await stagesOf(id)).not.toContain('plan')
+    expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toHaveLength(1)
+    expect(reviewer.prompts[0]).toContain('- `src/other.js`')
+  })
+
+  it('writes a new plan, as a first run does, when the branch a person sent back no longer exists', async () => {
+    const id = await seedTask()
+    await getDb().insert(changePlan).values({ taskId: id, baseSha: 'old', harness: 'codex', plan })
+    const builder = planningBuilder([JSON.stringify(plan)])
+
+    const result = await runTask(
+      deps(twoFiles(), { harness: builder, reviewer: approving(), planFirst: true }),
+      id,
+      undefined,
+      { feedback: 'Rename the helper to cut.' },
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(await stagesOf(id)).toContain('plan')
+    expect(await getDb().select().from(changePlan).where(eq(changePlan.taskId, id))).toHaveLength(2)
+  })
+})
+
 describe('runTask continuing from a branch a person sent back', () => {
   it('starts from the branch the agent pushed and gives the agent the note', async () => {
     const id = await seedTask()
+    branchPushed()
     const sandbox = new FakeSandbox(changed())
     const prompts: string[] = []
     const builder: CodingHarness = {
@@ -1215,8 +1773,109 @@ describe('runTask continuing from a branch a person sent back', () => {
     expect(commands.some((c) => c.includes('checkout -b factory/7'))).toBe(false)
   })
 
+  /** A builder that changes a file and keeps the prompts it was given. */
+  function noting() {
+    const prompts: string[] = []
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async (_b, input) => {
+        prompts.push(input.prompt)
+        dirty = true
+        return { ok: true, summary: 'adjusted' }
+      },
+    }
+    return { builder, prompts }
+  }
+
+  /** Asks for changes as the panel does, and runs what that queued as the `run-task` job does. */
+  async function sendBackAndRun(id: number, note: string, overrides: Partial<RunTaskDeps>) {
+    const queued: { taskId: number; decisionId?: number; feedback?: string }[] = []
+    const sandbox = new FakeSandbox(changed())
+    await requestChanges(
+      {
+        db: getDb(),
+        github,
+        api: githubApi,
+        enqueueResume: async () => {},
+        deleteSnapshot: async () => {},
+        inTransaction: (work) =>
+          getDb().transaction((tx) => work(tx as never, async (input) => void queued.push(input))),
+      },
+      id,
+      note,
+    )
+    const [decided] = await getDb()
+      .select()
+      .from(decision)
+      .where(eq(decision.id, queued[0].decisionId!))
+    const result = await runTask(
+      deps(sandbox, overrides),
+      id,
+      undefined,
+      runContinuation(decided, queued[0].feedback),
+    )
+    return { result, commands: sandbox.backend.commands }
+  }
+
+  /** A task that ended resolved with no change: no pull request, and no branch on GitHub. */
+  async function resolvedWithNoBranch() {
+    const id = await seedTask()
+    await getDb()
+      .update(task)
+      .set({ stage: 'done', headSha: 'b'.repeat(40), resolvedSha: 'b'.repeat(40) })
+      .where(eq(task.id, id))
+    return id
+  }
+
+  it('starts from the integration branch with the note when a person sends back a resolved task that has no branch', async () => {
+    const id = await resolvedWithNoBranch()
+    const { builder, prompts } = noting()
+
+    const { result, commands } = await sendBackAndRun(id, 'Cut at a word boundary.', {
+      harness: builder,
+    })
+
+    expect(result).toMatchObject({ status: 'done', branch: 'factory/7' })
+    expect(prompts[0]).toContain('Cut at a word boundary.')
+    expect(commands.some((c) => c.includes('checkout -b factory/7'))).toBe(true)
+    expect(commands.some((c) => c.includes('fetch origin factory/7'))).toBe(false)
+    expect(await stagesOf(id)).not.toContain('failed')
+  })
+
+  it('does not tell the agent its earlier work is on a branch that no longer exists', async () => {
+    const id = await resolvedWithNoBranch()
+    const { builder, prompts } = noting()
+
+    await sendBackAndRun(id, 'Cut at a word boundary.', { harness: builder })
+
+    expect(prompts[0]).not.toContain('The branch already holds your earlier work')
+    expect(prompts[0]).toContain('The branch of that run no longer exists')
+  })
+
+  it('starts from the branch, as before, when a person sends back a task whose branch GitHub has', async () => {
+    const id = await seedTask()
+    branchPushed()
+    await getDb()
+      .update(task)
+      .set({ stage: 'done', headSha: 'oldsha1', pullRequestUrl: PR_URL })
+      .where(eq(task.id, id))
+    const { builder, prompts } = noting()
+
+    const { result, commands } = await sendBackAndRun(id, 'Rename the helper to cut.', {
+      harness: builder,
+    })
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(prompts[0]).toContain('Rename the helper to cut.')
+    expect(prompts[0]).toContain('The branch already holds your earlier work')
+    expect(commands.some((c) => c.includes('checkout -B factory/7 FETCH_HEAD'))).toBe(true)
+    expect(commands.some((c) => c.includes('checkout -b factory/7'))).toBe(false)
+  })
+
   it('returns to done, and tells the person why, when the agent finds nothing to change', async () => {
     const id = await seedTask()
+    branchPushed()
     await getDb()
       .update(task)
       .set({ stage: 'intake', headSha: 'oldsha1', pullRequestUrl: PR_URL })
@@ -1246,6 +1905,47 @@ describe('runTask continuing from a branch a person sent back', () => {
     const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
     expect(done.detail).toMatchObject({ unchanged: true })
     expect(sandbox.stopped).toBe(1)
+  })
+
+  it('hands to a person work whose required checks failed when the agent finds nothing to change', async () => {
+    const id = await seedTask()
+    branchPushed()
+    await getDb()
+      .update(task)
+      .set({ stage: 'intake', headSha: 'oldsha1', pullRequestUrl: PR_URL })
+      .where(eq(task.id, id))
+    const builder: CodingHarness = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      run: async () => {
+        dirty = false
+        return { ok: true, summary: 'The failing check is broken on workspace too.' }
+      },
+    }
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder }),
+      id,
+      undefined,
+      {
+        feedback: 'CI failed',
+        fromChecks: true,
+      },
+    )
+
+    expect(result).toMatchObject({ status: 'handoff', pullRequestUrl: PR_URL })
+    expect(githubApi.comments).toEqual([
+      expect.stringMatching(/required checks failed[\s\S]*broken on workspace too/),
+    ])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row.stage).toBe('handoff')
+    const handoff = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'handoff'))
+    )[0]
+    expect(handoff.detail).toMatchObject({
+      reason: expect.stringMatching(/required checks failed and the agent changed nothing/),
+      unchanged: true,
+    })
   })
 
   it('does not mention a review when nobody sent anything back', async () => {
@@ -1611,6 +2311,161 @@ describe('the factory always makes a pre-release', () => {
     expect(done.detail).toMatchObject({ integrationError: expect.stringContaining('conflicts') })
   })
 
+  it('leaves the merge to GitHub when the integration branch requires checks, pinned to the verified commit', async () => {
+    githubApi.required = ['CI', 'Lint']
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(result).not.toHaveProperty('preRelease')
+    expect(githubApi.autoMerges).toEqual([{ number: 12, sha: 'abc123def' }])
+    expect(githubApi.merges).toEqual([])
+    expect(githubApi.branchMerges).toEqual([])
+    // The pre-release follows the merge, which the repository's CI decides.
+    expect(githubApi.releases).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'done', mergedSha: null, awaitingCiSha: 'abc123def' })
+    const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
+    expect(done.detail).toMatchObject({
+      awaitingChecks: ['CI', 'Lint'],
+      pullRequestUrl: PR_URL,
+      agentSummary: 'added truncate',
+    })
+    expect((done.detail as Record<string, unknown>).integrationError).toBeUndefined()
+  })
+
+  it('fails the task saying what to configure when GitHub will not turn auto-merge on', async () => {
+    githubApi.required = ['CI']
+    githubApi.autoMergeRefused = true
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(githubApi.merges).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'failed', awaitingCiSha: null })
+    const failed = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
+    )[0]
+    expect(String((failed.detail as Record<string, unknown>).error)).toMatch(
+      /Allow auto-merge.*Allow merge commits/,
+    )
+  })
+
+  it('merges at once, pinned to the verified commit, when GitHub refuses auto-merge because the checks already passed', async () => {
+    githubApi.required = ['CI']
+    githubApi.autoMergeRefused = true
+    githubApi.autoMergeRefusal = CLEAN
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done', preRelease: 'pre/7-develop' })
+    expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+    expect(githubApi.mergeKinds).toEqual([
+      { method: 'squash', title: expect.stringMatching(/ \(#7\)$/) },
+    ])
+    expect(githubApi.branchMerges).toEqual([{ base: 'develop', head: 'merge0001' }])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'done', mergedSha: 'merge0001', awaitingCiSha: null })
+    const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
+    expect(done.detail).toMatchObject({ mergedSha: 'merge0001', developSha: 'develop0001' })
+    expect((done.detail as Record<string, unknown>).awaitingChecks).toBeUndefined()
+  })
+
+  it('still fails the task with what to configure when the refusal is not about a clean pull request', async () => {
+    githubApi.required = ['CI']
+    githubApi.autoMergeRefused = true
+    githubApi.autoMergeRefusal = 'Pull request Pull request is in unstable status'
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(githubApi.merges).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'failed', mergedSha: null })
+    const failed = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
+    )[0]
+    expect(String((failed.detail as Record<string, unknown>).error)).toMatch(
+      /unstable status.*Allow auto-merge/,
+    )
+  })
+
+  describe('when the pull request is the draft a handoff left', () => {
+    const handedOver = () => {
+      githubApi.existing = { draft: true, title: '[needs a person] Truncate, by hand (#7)' }
+      githubApi.draftOnGithub = true
+    }
+    const ready = [{ number: 12, title: 'Truncate, by hand (#7)' }]
+
+    it('marks it ready, restores its title, and then turns auto-merge on', async () => {
+      githubApi.required = ['CI']
+      handedOver()
+      const id = await seedTask()
+
+      const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+      expect(result).toMatchObject({ status: 'done' })
+      expect(githubApi.readied).toEqual(ready)
+      expect(githubApi.autoMerges).toEqual([{ number: 12, sha: 'abc123def' }])
+      // Ready came first: GitHub was never asked while the pull request was a draft.
+      expect(githubApi.autoMergeAsks).toBe(1)
+      const [row] = await getDb().select().from(task).where(eq(task.id, id))
+      expect(row).toMatchObject({ stage: 'done', awaitingCiSha: 'abc123def' })
+    })
+
+    it('marks it ready, restores its title, and then merges it when no check is required', async () => {
+      handedOver()
+      const id = await seedTask()
+
+      const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+      expect(result).toMatchObject({ status: 'done', preRelease: 'pre/7-develop' })
+      expect(githubApi.readied).toEqual(ready)
+      expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+      const [row] = await getDb().select().from(task).where(eq(task.id, id))
+      expect(row).toMatchObject({ stage: 'done', mergedSha: 'merge0001' })
+    })
+  })
+
+  it('makes no extra call for a pull request that is not a draft', async () => {
+    githubApi.required = ['CI']
+    githubApi.existing = { draft: false, title: '[needs a person] left by a person' }
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(githubApi.readied).toEqual([])
+    expect(githubApi.autoMergeAsks).toBe(1)
+  })
+
+  it('makes no extra call for a pull request the run opened itself, merged with no check required', async () => {
+    const id = await seedTask()
+
+    await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(githubApi.readied).toEqual([])
+    expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+  })
+
+  it('marks the pull request ready and asks again when GitHub still refuses auto-merge on a draft', async () => {
+    githubApi.required = ['CI']
+    githubApi.draftOnGithub = true
+    const id = await seedTask()
+
+    const result = await runTask(deps(new FakeSandbox(changed())), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(githubApi.readied).toEqual([{ number: 12, title: expect.stringMatching(/ \(#7\)$/) }])
+    expect(githubApi.readied[0].title).not.toContain('[needs a person]')
+    expect(githubApi.autoMergeAsks).toBe(2)
+    expect(githubApi.autoMerges).toEqual([{ number: 12, sha: 'abc123def' }])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'done', awaitingCiSha: 'abc123def' })
+  })
+
   it('keeps the work integrated and says why when develop cannot be advanced', async () => {
     githubApi.branchMergeFails = true
     const id = await seedTask()
@@ -1788,6 +2643,10 @@ describe('what the factory does with a release', () => {
   })
 })
 
+/** A file a comparison lists as new since the merge base, and one it lists as changed. */
+const added = (path: string): ChangedFile => ({ path, status: 'added' })
+const modified = (path: string): ChangedFile => ({ path, status: 'modified' })
+
 describe('release', () => {
   const dependencies = () => ({ db: getDb(), github, api: githubApi })
   const reset = async () => {
@@ -1842,6 +2701,247 @@ describe('release', () => {
         repository: 'paulo/app',
       },
     ])
+  })
+
+  /** A task integrated before the one released: done, with its merge on the integration branch. */
+  async function integrated(issueNumber: number, mergedSha: string) {
+    const id = await seedTask(issueNumber)
+    await getDb().update(task).set({ stage: 'done', mergedSha }).where(eq(task.id, id))
+    return id
+  }
+  const stageOf = async (id: number) =>
+    (await getDb().select().from(task).where(eq(task.id, id)))[0].stage
+  const releasedDetail = async (id: number) =>
+    (await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, id))).find(
+      (e) => e.stage === 'released',
+    )?.detail
+
+  it('releases every integrated task the promotion contains, and leaves out one it does not', async () => {
+    const asked = await delivered()
+    const contained = await integrated(8, 'inside01')
+    const later = await integrated(9, 'outside01')
+    githubApi.outside.add('outside01')
+    githubApi.latest = 'v1.2.3'
+
+    await release(dependencies(), asked, { bump: 'minor', actor: 'human' })
+
+    expect(await stageOf(asked)).toBe('released')
+    expect(await stageOf(contained)).toBe('released')
+    expect(await stageOf(later)).toBe('done')
+    expect((await deliveries(contained)).map((d) => [d.kind, d.tag, d.sha, d.actor])).toEqual([
+      ['release', 'v1.3.0', 'merge0001', 'human'],
+    ])
+    expect(await deliveries(later)).toEqual([])
+    expect(await releasedDetail(contained)).toMatchObject({ tag: 'v1.3.0', mergeSha: 'merge0001' })
+  })
+
+  /** A task finished with no change: done, resolved at a commit of the integration branch, nothing merged. */
+  async function resolvedAt(issueNumber: number, resolvedSha: string) {
+    const id = await seedTask(issueNumber)
+    await getDb().update(task).set({ stage: 'done', resolvedSha }).where(eq(task.id, id))
+    return id
+  }
+
+  it('releases a task resolved with no change once a release puts its resolving commit on the release branch', async () => {
+    const asked = await delivered()
+    const resolved = await resolvedAt(8, 'resolved01')
+    githubApi.latest = 'v1.2.3'
+
+    await release(dependencies(), asked, { bump: 'minor', actor: 'human' })
+
+    expect(await stageOf(resolved)).toBe('released')
+    expect(await releasedDetail(resolved)).toEqual({
+      actor: 'human',
+      releaseBranch: 'main',
+      resolvedSha: 'resolved01',
+      mergeSha: 'merge0001',
+    })
+    // Its issue was closed when it was resolved, and no tag carries it.
+    expect(githubApi.closed).not.toContain(8)
+    expect(await deliveries(resolved)).toEqual([])
+  })
+
+  it('leaves a task resolved with no change alone while the release branch does not contain its commit', async () => {
+    const asked = await delivered()
+    const resolved = await resolvedAt(8, 'outside01')
+    githubApi.outside.add('outside01')
+    githubApi.latest = 'v1.2.3'
+
+    await release(dependencies(), asked, { bump: 'minor', actor: 'human' })
+
+    expect(await stageOf(resolved)).toBe('done')
+    expect(await releasedDetail(resolved)).toBeUndefined()
+  })
+
+  it('comments the version and its release on every released issue, the asked one included, and closes them', async () => {
+    const asked = await delivered()
+    await integrated(8, 'inside01')
+    await integrated(9, 'outside01')
+    githubApi.outside.add('outside01')
+    githubApi.latest = 'v1.2.3'
+
+    await release(dependencies(), asked, { bump: 'minor', actor: 'human' })
+
+    expect(githubApi.closed.sort()).toEqual([7, 8])
+    const announced = githubApi.commentsOn.filter((c) => c.body.includes('Available in'))
+    expect(announced.map((c) => c.issue).sort()).toEqual([7, 8])
+    for (const c of announced) {
+      expect(c.body).toContain(
+        'Available in `v1.3.0` (https://github.com/paulo/app/releases/tag/v1.3.0).',
+      )
+      expect(c.body).toContain('Released by human: the promotion `merge00` to `main`')
+    }
+  })
+
+  it('keeps the release when an issue cannot be closed, and records why on that task', async () => {
+    const asked = await delivered()
+    const contained = await integrated(8, 'inside01')
+    githubApi.closeFails.add(8)
+
+    const result = await release(dependencies(), asked, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: 'v0.1.0', mergeSha: 'merge0001' })
+    expect(result.issueErrors).toEqual([expect.stringMatching(/#8: .*403 closing paulo\/app#8/)])
+    expect(await stageOf(asked)).toBe('released')
+    expect(await stageOf(contained)).toBe('released')
+    expect(githubApi.closed).toEqual([7])
+    expect(await releasedDetail(contained)).toMatchObject({
+      issueError: expect.stringContaining('403 closing paulo/app#8'),
+    })
+  })
+
+  it('hands a repository that publishes with changesets to its own workflow: no tag of the factory, a publication waits', async () => {
+    const id = await delivered()
+    githubApi.changesets = ['config.json', 'README.md', 'brave-fox.md']
+    githubApi.changed = [added('.changeset/brave-fox.md')]
+    githubApi.latest = 'v1.2.3'
+
+    const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+    expect(result).toMatchObject({
+      tag: undefined,
+      mergeSha: 'merge0001',
+      publishing: 'changesets',
+    })
+    expect(githubApi.merges).toHaveLength(2)
+    expect(githubApi.releases.filter((r) => !r.prerelease)).toEqual([])
+    expect(await getDb().select().from(publication)).toMatchObject([
+      {
+        taskId: id,
+        repository: 'paulo/app',
+        releaseBranch: 'main',
+        promotedSha: 'merge0001',
+        actor: 'human',
+        status: 'waiting',
+      },
+    ])
+    expect((await deliveries(id)).filter((d) => d.kind === 'release')).toEqual([])
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row.stage).toBe('released')
+    const released = (
+      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'released'))
+    )[0]
+    expect(released.detail).toMatchObject({ publishing: 'changesets', mergeSha: 'merge0001' })
+    expect(await getDb().select().from(watch).where(eq(watch.taskId, id))).toMatchObject([
+      { sha: 'merge0001', tag: null, status: 'watching' },
+    ])
+  })
+
+  /** A changesets repository like theokit: a private root, one published package and one ignored app. */
+  function changesetsMonorepo(changed: string[]) {
+    githubApi.changesets = ['config.json', 'README.md']
+    githubApi.changed = changed.map(modified)
+    githubApi.tree = {
+      'package.json': '{"name":"theokit-monorepo","private":true}',
+      '.changeset/config.json': '{"ignore":["theoclaw"]}',
+      'packages/ui/package.json': '{"name":"@theokit/ui","version":"1.13.0"}',
+      'packages/ui/src/index.ts': '',
+      'apps/theoclaw/package.json': '{"name":"theoclaw","version":"0.1.0"}',
+      'apps/theoclaw/src/a.ts': '',
+    }
+  }
+
+  it('releases as its own when develop has no changeset and changes only packages changesets never publishes', async () => {
+    const id = await delivered()
+    const contained = await integrated(8, 'inside01')
+    changesetsMonorepo(['apps/theoclaw/src/a.ts', 'pnpm-lock.yaml', '.github/workflows/ci.yml'])
+    githubApi.latest = 'v1.2.0'
+
+    const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: 'v1.3.0', mergeSha: 'merge0001' })
+    expect(result.publishing).toBeUndefined()
+    expect(githubApi.compared).toEqual(['main'])
+    expect(githubApi.merges).toHaveLength(2)
+    expect(githubApi.releases.at(-1)).toMatchObject({ tag: 'v1.3.0', prerelease: false })
+    expect(await getDb().select().from(publication)).toEqual([])
+    expect(await stageOf(id)).toBe('released')
+    expect(await stageOf(contained)).toBe('released')
+    expect(githubApi.closed.sort()).toEqual([7, 8])
+  })
+
+  it('refuses a release with no changeset when a package changesets publishes changed, and names it', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['apps/theoclaw/src/a.ts', 'packages/ui/src/index.ts'])
+
+    await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+      /develop has no changeset, and it changes @theokit\/ui since main/,
+    )
+    expect(githubApi.merges).toHaveLength(1)
+    expect(await stageOf(id)).toBe('done')
+    expect(await getDb().select().from(publication)).toEqual([])
+  })
+
+  it('takes the changesets path when develop added a changeset since its merge base with the release branch', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['packages/ui/src/index.ts'])
+    githubApi.changesets = ['config.json', 'brave-fox.md']
+    githubApi.changed.push(added('.changeset/brave-fox.md'))
+
+    const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ publishing: 'changesets', tag: undefined })
+    expect(githubApi.compared).toEqual(['main'])
+    expect(githubApi.releases.filter((r) => !r.prerelease)).toEqual([])
+    expect(await getDb().select().from(publication)).toHaveLength(1)
+  })
+
+  it('does not count changesets the release branch already consumed: develop still holds them, none was added since the merge base', async () => {
+    const id = await delivered()
+    // theokit-plugins after Version Packages #250: main deleted the changesets, develop kept them.
+    changesetsMonorepo(['.github/workflows/ci.yml', 'CHANGELOG.md'])
+    githubApi.changesets = ['config.json', 'README.md', 'wake-word-detector.md', 'brave-fox.md']
+    githubApi.latest = 'v0.3.0'
+
+    const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ tag: 'v0.3.1', mergeSha: 'merge0001' })
+    expect(result.publishing).toBeUndefined()
+    expect(githubApi.compared).toEqual(['main'])
+    expect(await getDb().select().from(publication)).toEqual([])
+  })
+
+  it('still refuses when develop only holds consumed changesets and changes a package changesets publishes', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['packages/ui/src/index.ts'])
+    githubApi.changesets = ['config.json', 'brave-fox.md']
+
+    await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+      /develop has no changeset, and it changes @theokit\/ui since main/,
+    )
+    expect(await getDb().select().from(publication)).toEqual([])
+  })
+
+  it('waits for the release branch checks as its own release, when only unpublished packages changed', async () => {
+    const id = await delivered()
+    changesetsMonorepo(['apps/theoclaw/src/a.ts'])
+    githubApi.releaseRequired = ['CI']
+
+    const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+    expect(result).toMatchObject({ awaitingChecks: ['CI'] })
+    expect(result.publishing).toBeUndefined()
+    expect(await getDb().select().from(releaseWait)).toMatchObject([{ changesets: false }])
   })
 
   it('promotes into the release branch the owner named, not the default branch', async () => {
@@ -1969,6 +3069,122 @@ describe('release', () => {
       await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'released'))
     )[0]
     expect(released.detail).toMatchObject({ mergeSha: 'merge0001' })
+  })
+
+  describe('into a release branch that requires status checks', () => {
+    const waits = () => getDb().select().from(releaseWait).orderBy(releaseWait.id)
+
+    it('does not merge before the checks report: it turns auto-merge on, pinned to the head it saw', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI', 'SonarCloud Code Analysis']
+
+      const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+      expect(result).toMatchObject({
+        tag: undefined,
+        mergeSha: undefined,
+        awaitingChecks: ['CI', 'SonarCloud Code Analysis'],
+        pullRequestUrl: PR_URL,
+      })
+      // Only the integration merged; the promotion waits for GitHub.
+      expect(githubApi.merges).toEqual([{ number: 12, sha: 'abc123def' }])
+      expect(githubApi.autoMerges).toEqual([{ number: 12, sha: 'abc123def' }])
+      expect(githubApi.releases.filter((r) => !r.prerelease)).toEqual([])
+      expect(await waits()).toMatchObject([
+        {
+          taskId: id,
+          repository: 'paulo/app',
+          pullRequestNumber: 12,
+          pullRequestUrl: PR_URL,
+          sha: 'abc123def',
+          releaseBranch: 'main',
+          bump: 'minor',
+          actor: 'human',
+          changesets: false,
+          checks: ['CI', 'SonarCloud Code Analysis'],
+          status: 'waiting',
+        },
+      ])
+      // Nothing is released yet, so nothing is recorded as released or watched.
+      expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+      expect(await getDb().select().from(watch)).toEqual([])
+      expect(await getDb().select().from(decision).where(eq(decision.taskId, id))).toEqual([])
+    })
+
+    it('records no publication for a changesets repository until the promotion lands', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI']
+      githubApi.changesets = ['config.json', 'brave-fox.md']
+      githubApi.changed = [added('.changeset/brave-fox.md')]
+
+      const result = await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+      expect(result).toMatchObject({ publishing: 'changesets', awaitingChecks: ['CI'] })
+      expect(await getDb().select().from(publication)).toEqual([])
+      expect(await waits()).toMatchObject([{ changesets: true, status: 'waiting' }])
+    })
+
+    it('refuses a second release while one waits for the checks of the release pull request', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI']
+      await release(dependencies(), id, { bump: 'patch', actor: 'human' })
+
+      await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+        /already waits for the checks of https:\/\/github.com\/paulo\/app\/pull\/12/,
+      )
+      expect(githubApi.autoMerges).toHaveLength(1)
+      expect(await waits()).toHaveLength(1)
+    })
+
+    it('refuses, and records why, when GitHub will not turn auto-merge on', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI']
+      githubApi.autoMergeRefused = true
+
+      await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+        /GitHub would not turn auto-merge on.*Auto merge is not allowed/,
+      )
+      expect(githubApi.merges).toHaveLength(1)
+      expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('done')
+      const [refused] = await waits()
+      expect(refused).toMatchObject({ status: 'refused' })
+      expect(refused.detail).toContain('Auto merge is not allowed')
+      expect(refused.endedAt).not.toBeNull()
+    })
+
+    it('merges the promotion at once, pinned to the head it saw, when GitHub refuses auto-merge because the checks already passed', async () => {
+      const id = await delivered()
+      githubApi.latest = 'v1.2.3'
+      githubApi.releaseRequired = ['CI']
+      githubApi.autoMergeRefused = true
+      githubApi.autoMergeRefusal = CLEAN
+
+      const result = await release(dependencies(), id, { bump: 'minor', actor: 'human' })
+
+      expect(result).toMatchObject({ tag: 'v1.3.0', mergeSha: 'merge0001' })
+      expect(result).not.toHaveProperty('awaitingChecks')
+      expect(githubApi.merges).toEqual([
+        { number: 12, sha: 'abc123def' },
+        { number: 12, sha: 'abc123def' },
+      ])
+      expect(githubApi.mergeKinds.at(-1)).toEqual({ method: 'merge' })
+      expect((await getDb().select().from(task).where(eq(task.id, id)))[0].stage).toBe('released')
+      // Nothing waited, so no wait stays behind to block the next release.
+      expect(await waits()).toEqual([])
+    })
+
+    it('still refuses the release when the refusal is not about a clean pull request', async () => {
+      const id = await delivered()
+      githubApi.releaseRequired = ['CI']
+      githubApi.autoMergeRefused = true
+      githubApi.autoMergeRefusal = 'Pull request Pull request is in unstable status'
+
+      await expect(release(dependencies(), id, { bump: 'patch', actor: 'human' })).rejects.toThrow(
+        /GitHub would not turn auto-merge on.*unstable status/,
+      )
+      expect(githubApi.merges).toHaveLength(1)
+      expect(await waits()).toMatchObject([{ status: 'refused' }])
+    })
   })
 })
 
@@ -2104,6 +3320,39 @@ describe('what the owner set for the repository', () => {
     expect(commands).toContain('pnpm test')
     expect(commands).toContain('pnpm typecheck')
     expect(sandbox.backend.commands.filter((c) => c.endsWith('&& npm test'))).toEqual([])
+  })
+
+  it('adds the changeset check, against the integration branch, when the clone uses changesets', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((command) =>
+        command.includes('.changeset/config.json') ? { stdout: 'yes\n' } : undefined,
+      ),
+    )
+
+    const result = await runTask(deps(sandbox), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
+    expect(stored.map((e) => e.name).sort()).toEqual(['changeset', 'test'])
+    expect(sandbox.backend.commands.join('\n')).toContain(
+      'pnpm exec changeset status --since=origin/workspace',
+    )
+  })
+
+  it('runs no changeset check when the clone has no changesets config', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((command) =>
+        command.includes('.changeset/config.json') ? { stdout: 'no\n' } : undefined,
+      ),
+    )
+
+    await runTask(deps(sandbox), id)
+
+    const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
+    expect(stored.map((e) => e.name)).toEqual(['test'])
+    expect(sandbox.backend.commands.join('\n')).not.toContain('changeset status')
   })
 
   it('opens the sandbox to the extra domains the owner listed, with no credential on them', async () => {
@@ -2603,5 +3852,152 @@ describe("a project's recipe", () => {
     expect(sandbox.specs).toEqual([])
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
     expect(row.stage).toBe('failed')
+  })
+})
+
+describe('runTask agent time', () => {
+  const MIN = 60_000
+  const timeouts = { sandboxMs: 60 * MIN, agentMs: 45 * MIN }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('cuts the first build so the checks and the review still fit in the sandbox', async () => {
+    const id = await seedTask()
+    const given: number[] = []
+    const builder: CodingHarness = {
+      ...okHarness,
+      run: async (_backend, input) => {
+        given.push(input.timeoutMs ?? 0)
+        return { ok: true, summary: 'added truncate', costUsd: 0.12 }
+      },
+    }
+
+    await runTask(deps(new FakeSandbox(changed()), { harness: builder, timeouts }), id)
+
+    // 60 minutes of sandbox, 25 kept for the checks and the review: at most 35 for the agent, not 45.
+    expect(given).toHaveLength(1)
+    expect(given[0]).toBeLessThanOrEqual(35 * MIN)
+    expect(given[0]).toBeGreaterThan(34 * MIN)
+  })
+
+  it('fails a rework that has no time left with a message saying so, instead of starting it', async () => {
+    const id = await seedTask()
+    const start = Date.now()
+    const builder = resumableBuilder()
+    const first = builder.run
+    builder.run = async (backend, input) => {
+      // The first build took 38 of the sandbox's 60 minutes.
+      vi.spyOn(Date, 'now').mockReturnValue(start + 31.5 * MIN)
+      return first(backend, input)
+    }
+    const reviewer = reviewerSaying(verdictJson('changes', [finding], 'max=0 slips through'))
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer, timeouts }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'failed' })
+    expect(builder.resumed).toHaveLength(0)
+    const [failed] = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, id))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
+    expect((failed.detail as { error: string }).error).toMatch(
+      /no time left for another agent pass: 31 of the sandbox's 60 minutes/,
+    )
+  })
+
+  it('refuses as before when the provider has a session cap but cannot save a sandbox', async () => {
+    const id = await seedTask()
+    const start = Date.now()
+    const sandbox = new FakeSandbox(changed())
+    const create = sandbox.create.bind(sandbox)
+    Object.assign(sandbox, { maxSessionMs: 60 * MIN })
+    sandbox.create = async (spec) => ({ ...(await create(spec)), snapshot: undefined })
+    const builder = resumableBuilder()
+    const first = builder.run
+    builder.run = async (backend, input) => {
+      vi.spyOn(Date, 'now').mockReturnValue(start + 36.5 * MIN)
+      return first(backend, input)
+    }
+    const reviewer = reviewerSaying(verdictJson('changes', [finding], 'max=0 slips through'))
+
+    const result = await runTask(
+      deps(sandbox, {
+        harness: builder,
+        reviewer,
+        timeouts: { sandboxMs: 90 * MIN, agentMs: 45 * MIN },
+      }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'failed' })
+    expect(builder.resumed).toHaveLength(0)
+    expect(sandbox.restored).toEqual([])
+    const [failed] = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, id))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
+    expect((failed.detail as { error: string }).error).toMatch(/36 of the sandbox's 60 minutes/)
+  })
+
+  it("moves the disk to a new session when the provider's hour has no room for a rework", async () => {
+    const id = await seedTask()
+    const start = Date.now()
+    const sandbox = new FakeSandbox(changed())
+    Object.assign(sandbox, { maxSessionMs: 60 * MIN })
+    const builder = resumableBuilder()
+    const first = builder.run
+    builder.run = async (backend, input) => {
+      // The first build took 36 of the session's 60 minutes; the run's 90 still leave room.
+      vi.spyOn(Date, 'now').mockReturnValue(start + 36 * MIN)
+      return first(backend, input)
+    }
+    const given: number[] = []
+    const resume = builder.resume!
+    builder.resume = async (backend, sessionId, input) => {
+      given.push(input.timeoutMs ?? 0)
+      return resume(backend, sessionId, input)
+    }
+    const reviewer = reviewerSaying(
+      verdictJson('changes', [finding], 'max=0 slips through'),
+      verdictJson('approve'),
+    )
+
+    const result = await runTask(
+      deps(sandbox, {
+        harness: builder,
+        reviewer,
+        timeouts: { sandboxMs: 90 * MIN, agentMs: 45 * MIN },
+      }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(builder.resumed).toHaveLength(1)
+    expect(sandbox.snapshots).toEqual(['snap-1'])
+    expect(sandbox.restored).toEqual(['snap-1'])
+    expect(sandbox.deleted).toEqual(['snap-1'])
+    // The new session has the same egress policy as the first one, with the token the run holds now.
+    expect(sandbox.specs[1]!.egress).toEqual(sandbox.specs[0]!.egress)
+    expect(sandbox.specs[1]!.egress).toContainEqual(githubEgress(TOKEN))
+    // The run's own budget still bounds the rework: 90 - 36 - (15 + 10) = 29 minutes. The run's clock
+    // started a few milliseconds after `start`.
+    expect(given[0]).toBeLessThanOrEqual(29 * MIN + 1_000)
+    expect(given[0]).toBeGreaterThan(28 * MIN)
+    const events = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(eq(stageEvent.taskId, id))
+      .orderBy(stageEvent.id)
+    const renewed = events.find((e) => (e.detail as { renewed?: boolean } | null)?.renewed)
+    expect(renewed).toMatchObject({ stage: 'sandbox', detail: { provider: 'fake', renewed: true } })
   })
 })

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { Stage, TimelineEvent } from '../../shared/panel'
 
-import { ago, describeEvent, money, runsAgain, shortSha, stageLabel } from './format'
+import { ago, describeEvent, metricValue, money, runsAgain, shortSha, stageLabel } from './format'
 
 describe('money', () => {
   it('writes cents, and a sum too small to be one as zero', () => {
@@ -11,6 +11,16 @@ describe('money', () => {
     expect(money(0.005)).toBe('$0.01')
     expect(money(0.0049)).toBe('$0.00')
     expect(money(0)).toBe('$0.00')
+  })
+})
+
+describe('metricValue', () => {
+  it('writes each indicator in its unit', () => {
+    expect(metricValue(0.756, 'share')).toBe('76%')
+    expect(metricValue(0.531, 'usd')).toBe('$0.53')
+    expect(metricValue(1.25, 'count')).toBe('1.3')
+    expect(metricValue(42.4, 'minutes')).toBe('42 min')
+    expect(metricValue(3.6, 'hours')).toBe('4 h')
   })
 })
 
@@ -64,6 +74,7 @@ describe('stageLabel', () => {
     const all: Stage[] = [
       'intake',
       'sandbox',
+      'plan',
       'build',
       'push',
       'verify',
@@ -74,10 +85,12 @@ describe('stageLabel', () => {
       'released',
       'handoff',
       'failed',
+      'cancelled',
     ]
     expect(all.map((s) => stageLabel(s))).toEqual([
       'queued',
       'starting sandbox',
+      'planning',
       'building',
       'pushing',
       'running checks',
@@ -88,6 +101,7 @@ describe('stageLabel', () => {
       'released',
       'handed to a person',
       'failed',
+      'cancelled',
     ])
   })
 
@@ -115,11 +129,26 @@ describe('describeEvent', () => {
       'a person request changes: rename it',
     )
     expect(line('intake', null)).toBe('')
+    expect(
+      line('intake', { decision: 'request_changes', note: 'CI failed', automatic: true }),
+    ).toBe('the factory request changes: CI failed')
     expect(line('intake', {})).toBe('')
+  })
+
+  it('says which checks an integration waits for, and that GitHub merged it once they passed', () => {
+    expect(line('done', { pullRequestUrl: 'u', awaitingChecks: ['CI', 'Lint'] })).toBe(
+      'u\nwaiting for the repository checks: CI, Lint',
+    )
+    expect(
+      line('done', { pullRequestUrl: 'u', integratedBy: 'auto-merge', mergedSha: 'merge0001' }),
+    ).toBe('u\nmerged by auto-merge at merge00')
   })
 
   it('names the sandbox, the branch and the review', () => {
     expect(line('sandbox', { provider: 'vercel-sandbox' })).toBe('vercel-sandbox')
+    expect(line('sandbox', { provider: 'e2b', renewed: true, sessionMinutes: 36 })).toBe(
+      'e2b, new session: the last one had run 36 minutes, the disk moved over',
+    )
     expect(line('push', { branch: 'factory/7' })).toBe('factory/7')
     expect(line('review', { reviewer: 'codex', sha: 'abcdef123456' })).toBe('codex, abcdef1')
     expect(line('review', { reviewer: 'codex' })).toBe('codex')
@@ -131,6 +160,13 @@ describe('describeEvent', () => {
     )
     expect(line('build', { harness: 'codex', rework: true })).toBe('codex, rework')
     expect(line('build', { harness: 'claude-code' })).toBe('claude-code')
+    expect(line('build', { harness: 'codex', attempt: 1, planned: true })).toBe(
+      'codex, attempt 1, following its plan',
+    )
+  })
+
+  it('names the agent that writes the plan', () => {
+    expect(line('plan', { harness: 'claude-code' })).toBe('claude-code')
   })
 
   it('says which commit and attempt were checked, leaving out what is missing', () => {
@@ -172,6 +208,18 @@ describe('describeEvent', () => {
     )
   })
 
+  it('says a task resolved with no change reached the release branch, with the commit it was resolved at', () => {
+    expect(
+      line('released', { actor: 'factory', releaseBranch: 'main', resolvedSha: 'abc1234def' }),
+    ).toBe('already resolved at abc1234, now on main')
+  })
+
+  it('says a changesets release waits for the repository to publish it', () => {
+    expect(line('released', { actor: 'human', publishing: 'changesets' })).toBe(
+      "promoted by human; the repository's release workflow publishes it",
+    )
+  })
+
   it('has nothing to say for stages that carry nothing', () => {
     expect(line('pr', {})).toBe('')
   })
@@ -183,7 +231,13 @@ describe('stageLabel with what is known of the task', () => {
     expect(stageLabel('done', { integrated: false })).toBe('pull request open')
     expect(stageLabel('failed', { retryable: 'quota' })).toBe('waiting for the limit')
     expect(stageLabel('failed', { retryable: 'environment' })).toBe('will retry')
+    expect(stageLabel('failed', { retryable: 'blocked' })).toBe('waiting for another issue')
     expect(stageLabel('failed', { retryable: null })).toBe('failed')
     expect(stageLabel('build', { integrated: true, retryable: 'quota' })).toBe('building')
+  })
+
+  it('says a finished task waits for the repository checks, rather than that it is not integrated', () => {
+    expect(stageLabel('done', { waitingForChecks: true })).toBe('waiting for CI')
+    expect(stageLabel('handoff', { waitingForChecks: true })).toBe('handed to a person')
   })
 })

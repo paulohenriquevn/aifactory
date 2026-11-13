@@ -22,12 +22,14 @@ const card = (id: number, over: Partial<TaskCard> = {}): TaskCard => ({
   updatedAt: '2026-11-04T10:05:00Z',
   approved: false,
   integrated: false,
+  waitingForChecks: false,
   resolved: false,
   retryable: null,
   retryAt: null,
   preRelease: null,
   release: null,
   mainRed: false,
+  releaseWait: null,
   ...over,
 })
 
@@ -36,6 +38,7 @@ const detailOf = (id: number): TaskDetail => ({
   timeline: [],
   evidence: [],
   reviews: [],
+  plans: [],
   questions: [],
   decisions: [],
   deliveries: [],

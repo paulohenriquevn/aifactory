@@ -28,7 +28,10 @@ export type ActionDeps = {
   inTransaction: <T>(
     work: (
       tx: Database,
-      enqueueRun: (input: { taskId: number; decisionId?: number }, key: string) => Promise<void>,
+      enqueueRun: (
+        input: { taskId: number; decisionId?: number; feedback?: string },
+        key: string,
+      ) => Promise<void>,
     ) => Promise<T>,
   ) => Promise<T>
 }
@@ -41,35 +44,45 @@ const STUCK_STAGES = ['intake', 'sandbox', 'build', 'push', 'verify', 'review', 
 /**
  * Moves a task from one of `from` to `intake` and records why, in one transaction with the decision
  * and the queued run. The stage is checked and changed by the same statement, so a double click
- * cannot queue two runs.
+ * cannot queue two runs. A task that runs again is not resolved any more: what the new run finds decides.
  */
 async function requeue(
   deps: ActionDeps,
   taskId: number,
   from: string[],
-  kind: 'request_changes' | 'retry' | 'automatic_retry',
+  kind: 'request_changes' | 'retry' | 'automatic_retry' | 'automatic_changes',
   note: string,
   sha: string | null,
 ): Promise<number | null> {
   return deps.inTransaction(async (tx, enqueueRun) => {
+    // A new run ends any wait for the repository's checks: its pull request is not the one that merges.
     const moved = await tx
       .update(task)
-      .set({ stage: 'intake' })
+      .set({ stage: 'intake', awaitingCiSha: null, resolvedSha: null })
       .where(and(eq(task.id, taskId), inArray(task.stage, from as never)))
       .returning({ id: task.id })
     if (moved.length === 0) {
       throw new ActionRefused(
-        `this task cannot be ${kind === 'request_changes' ? 'sent back' : 'retried'} now`,
+        `this task cannot be ${kind.endsWith('changes') ? 'sent back' : 'retried'} now`,
       )
     }
-    if (kind === 'automatic_retry') {
+    if (kind === 'automatic_retry' || kind === 'automatic_changes') {
       // Nobody decided this one, so no decision is recorded in anybody's name: the intake says it was the
-      // factory's own, and the count of these is what stops it after a few.
+      // factory's own, and the count of these is what stops it after a few. Changes carry their note to
+      // the run as feedback, on the branch the agent already pushed.
+      const changes = kind === 'automatic_changes'
       const [event] = await tx
         .insert(stageEvent)
-        .values({ taskId, stage: 'intake', detail: { decision: 'retry', note, automatic: true } })
+        .values({
+          taskId,
+          stage: 'intake',
+          detail: { decision: changes ? 'request_changes' : 'retry', note, automatic: true },
+        })
         .returning({ id: stageEvent.id })
-      await enqueueRun({ taskId }, `task-${taskId}-auto${event.id}`)
+      await enqueueRun(
+        changes ? { taskId, feedback: note } : { taskId },
+        `task-${taskId}-auto${event.id}`,
+      )
       return null
     }
     const [made] = await tx
@@ -108,7 +121,9 @@ export async function approve(deps: ActionDeps, taskId: number) {
 
 /**
  * Sends a pull request back with a note. A new run starts from the branch the agent already pushed,
- * with the note in its prompt, and goes through the checks and the review again.
+ * with the note in its prompt, and goes through the checks and the review again. A task with no branch
+ * on GitHub (resolved with no change, or its branch deleted by a retry) starts from the integration
+ * branch instead, as a first run does, with the same note.
  */
 export async function requestChanges(deps: ActionDeps, taskId: number, note: string) {
   const text = note.trim()
@@ -220,6 +235,22 @@ export async function retryAutomatically(deps: ActionDeps, taskId: number) {
   const { token } = await deps.github.installationToken(row.repository)
   await deps.api.deleteBranch(row.repository, token, `factory/${row.issueNumber}`)
   await requeue(deps, taskId, [row.stage], 'automatic_retry', '', row.headSha)
+}
+
+/**
+ * Sends work back to its agent because the repository's required checks failed on it, with no person
+ * asking. Like a request for changes, the run continues on the branch the agent pushed with the note as
+ * feedback; like an automatic retry, nothing is decided in anybody's name. Only a task whose pull request
+ * waits for those checks qualifies.
+ */
+export async function sendBackAutomatically(deps: ActionDeps, taskId: number, note: string) {
+  const row = await load(deps.db, taskId)
+  if (row.stage !== 'done' || !row.awaitingCiSha) {
+    throw new ActionRefused(
+      'only work that waits for the repository checks is sent back on its own',
+    )
+  }
+  await requeue(deps, taskId, ['done'], 'automatic_changes', note.slice(0, NOTE_MAX), row.headSha)
 }
 
 /**

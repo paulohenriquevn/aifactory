@@ -2,7 +2,7 @@ import { createPublicKey, createVerify, generateKeyPairSync } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
 
-import { JOB_SHUTDOWN_WAIT_MS } from '../factory/drain'
+import { CREDENTIAL_RENEWAL_MS } from '../factory/credential-renewal'
 
 import { createGithubApp, TOKEN_LIFE_LEFT_MS, type FetchLike } from './app'
 
@@ -139,16 +139,16 @@ describe('GitHub App installation tokens', () => {
     expect(github.minted()).toBe(2)
   })
 
-  it('never hands out a token that would expire before a run that takes it now could finish', async () => {
-    // A run takes one token at its start and uses it to the end, the firewall's git header included. A cached
-    // token with ten minutes left expired in the middle of a run, and GitHub answered 401 "Bad credentials".
+  it('never hands out a token that would expire before the run that takes it renews it', async () => {
+    // A cached token with ten minutes left expired in the middle of a run, and GitHub answered 401 "Bad
+    // credentials". A run now renews its token every CREDENTIAL_RENEWAL_MS, so one handed out must outlive that.
     const github = fakeGithub({ expiresInMs: 10 * 60_000 })
     const auth = app(github.fetch)
     const first = await auth.installationToken('o/r')
     const second = await auth.installationToken('o/r')
 
     expect(second.token).not.toBe(first.token)
-    expect(TOKEN_LIFE_LEFT_MS).toBeGreaterThan(JOB_SHUTDOWN_WAIT_MS)
+    expect(TOKEN_LIFE_LEFT_MS).toBeGreaterThan(CREDENTIAL_RENEWAL_MS)
   })
 
   it('says so when the app is not installed on the repository', async () => {
@@ -428,5 +428,41 @@ describe('where the App is installed and who owns it', () => {
       return Response.json({ owner: { login: 'paulo' } })
     }
     expect(await app(fetch).owner()).toBe('paulo')
+  })
+
+  it('reads the events the App subscribes to, and where its owner changes them', async () => {
+    const fetch: FetchLike = async (url) => {
+      expect(url).toBe('https://api.github.com/app')
+      return Response.json({
+        slug: 'my-app',
+        owner: { login: 'paulo', type: 'User' },
+        events: ['issues', 'issue_comment'],
+      })
+    }
+    expect(await app(fetch).subscriptions()).toEqual({
+      events: ['issues', 'issue_comment'],
+      settingsUrl: 'https://github.com/settings/apps/my-app/permissions',
+    })
+  })
+
+  it('points at the organization settings when an organization owns the App', async () => {
+    const fetch: FetchLike = async () =>
+      Response.json({ slug: 'my-app', owner: { login: 'acme', type: 'Organization' }, events: [] })
+    expect(await app(fetch).subscriptions()).toEqual({
+      events: [],
+      settingsUrl: 'https://github.com/organizations/acme/settings/apps/my-app/permissions',
+    })
+  })
+
+  it('says what GitHub answered when it cannot read the subscribed events', async () => {
+    const failing: FetchLike = async () => Response.json({}, { status: 401 })
+    await expect(app(failing).subscriptions()).rejects.toThrow(
+      'GitHub answered 401 reading the App',
+    )
+  })
+
+  it('refuses an answer about the App that does not list its events', async () => {
+    const odd: FetchLike = async () => Response.json({ slug: 'my-app', owner: { login: 'p' } })
+    await expect(app(odd).subscriptions()).rejects.toThrow('GitHub described the App without')
   })
 })

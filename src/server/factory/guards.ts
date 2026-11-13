@@ -1,4 +1,5 @@
 import type { Finding } from './review'
+import { TEST_FILE, testWeakening } from './test-weakening'
 
 export type Change = { status: string; path: string }
 
@@ -10,8 +11,6 @@ export function parseNameStatus(output: string): Change[] {
     .filter((parts) => parts.length >= 2 && parts[0] !== '')
     .map((parts) => ({ status: parts[0][0], path: parts[parts.length - 1] }))
 }
-
-const TEST_FILE = /(^|\/)(__tests__|tests?|spec)\/|\.(test|spec)\.[a-z]+$/i
 
 /** The `test` script of a package.json, or nothing when there is no file, no script or no JSON. */
 export function testScriptOf(packageJson: string | undefined): string | undefined {
@@ -33,6 +32,8 @@ export function diffGuards(input: {
   changes: Change[]
   baseTestScript?: string
   headTestScript?: string
+  /** `git diff -U0` of the test files, with the issue it is for: what the change took from the tests. */
+  tests?: { patch: string; issue: { labels: string[]; title: string; body: string } }
 }): Finding[] {
   const findings: Finding[] = []
   for (const { path } of input.changes.filter((c) => c.path.startsWith('.github/'))) {
@@ -48,5 +49,6 @@ export function diffGuards(input: {
   for (const { path } of input.changes.filter((c) => c.status === 'D' && TEST_FILE.test(c.path))) {
     findings.push({ severity: 'major', file: path, issue: 'a test file was deleted' })
   }
+  if (input.tests) findings.push(...testWeakening(input.tests))
   return findings
 }

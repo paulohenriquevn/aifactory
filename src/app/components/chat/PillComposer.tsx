@@ -50,7 +50,7 @@ export function PillComposer({
         e.preventDefault()
         if (canSend) onSubmit(value)
       }}
-      className="flex items-end gap-1 rounded-[28px] border border-white/10 bg-[#161617] px-2.5 py-2"
+      className="flex items-end gap-1 rounded-[28px] border border-border bg-card px-2.5 py-2"
     >
       {starts.length > 0 ? (
         <DropdownMenu>
@@ -58,7 +58,7 @@ export function PillComposer({
             <button
               type="button"
               aria-label="Mais ações"
-              className="mb-0.5 shrink-0 rounded-full p-2 text-foreground/80 hover:bg-white/[0.08]"
+              className="mb-0.5 shrink-0 rounded-full p-2 text-foreground/80 hover:bg-muted/60"
             >
               <Plus className="size-5" />
             </button>

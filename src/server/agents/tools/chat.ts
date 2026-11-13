@@ -20,7 +20,7 @@ export const factoryStatusTool = tool('factory_status')
 
 export const listTasksTool = tool('list_tasks')
   .describe(
-    'List tasks, the most recently active first. Filter by stage (failed, done, build, waiting, handoff, released...), by the board column as the screen writes it (Queued, Working, Waiting for you, Will retry itself, Delivered, Released, Needs a person), or by part of the repository name.',
+    'List tasks, the most recently active first. Filter by stage (failed, done, build, waiting, handoff, released...), by the board column as the screen writes it (Queued, Working, Waiting for you, Will retry itself, Delivered, Released, Already resolved, Needs a person), or by part of the repository name.',
   )
   .input(
     z.object({

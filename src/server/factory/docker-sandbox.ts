@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
@@ -14,6 +14,7 @@ import type {
   SandboxSpec,
   StreamingOptions,
 } from './sandbox'
+import { assertIsolated } from './sandbox'
 
 /** The exit code the TheoKit backends report for a command that hit its timeout. */
 const TIMED_OUT = 124
@@ -359,10 +360,19 @@ async function buildImageIfMissing(docker: Docker): Promise<void> {
 function writeRules(spec: SandboxSpec): string {
   const dir = mkdtempSync(join(tmpdir(), 'factory-rules-'))
   chmodSync(dir, 0o755)
-  const file = join(dir, 'rules.json')
-  writeFileSync(file, JSON.stringify(egressRules(spec)))
-  chmodSync(file, 0o644)
+  replaceRules(dir, spec)
   return dir
+}
+
+/**
+ * Writes the rules beside the file and renames them over it. The proxy reads the file again whenever it
+ * changes, so it must never see one half written.
+ */
+function replaceRules(dir: string, spec: SandboxSpec): void {
+  const next = join(dir, '.rules.json.next')
+  writeFileSync(next, JSON.stringify(egressRules(spec)))
+  chmodSync(next, 0o644)
+  renameSync(next, join(dir, 'rules.json'))
 }
 
 /** The proxy: the one thing on the sandbox's network that reaches the internet, under the spec's rules. */
@@ -579,6 +589,11 @@ export function dockerSandboxProvider(deps: DockerProviderDeps = {}): IsolatedSa
           stop: async () => {
             clearTimeout(timer)
             await stop()
+          },
+          updateEgress: async (egress) => {
+            const next = { ...spec, egress }
+            assertIsolated(next)
+            replaceRules(rulesDir, next)
           },
         }
       } catch (error) {

@@ -45,6 +45,8 @@ export class FakeSandbox implements IsolatedSandboxProvider {
   snapshots: string[] = []
   restored: string[] = []
   deleted: string[] = []
+  /** Every set of egress rules a running sandbox was given after it started. */
+  egressUpdates: SandboxSpec['egress'][] = []
   readonly backend: FakeBackend
 
   constructor(
@@ -60,6 +62,9 @@ export class FakeSandbox implements IsolatedSandboxProvider {
       backend: this.backend,
       stop: async () => {
         this.stopped += 1
+      },
+      updateEgress: async (egress) => {
+        this.egressUpdates.push(egress)
       },
       snapshot: async () => {
         const id = `snap-${this.snapshots.length + 1}`

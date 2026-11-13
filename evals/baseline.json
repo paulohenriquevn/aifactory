@@ -1,0 +1,91 @@
+{
+  "commit": "6385b0a9362abadae7a6455a691a903c9f19cb86",
+  "ranAt": "2026-11-11T21:24:55.924Z",
+  "setup": {
+    "paulohenriquevn/aifactory-playground builder": "claude-code",
+    "paulohenriquevn/aifactory-playground builderModel": "default",
+    "paulohenriquevn/aifactory-playground builderEffort": "default",
+    "paulohenriquevn/aifactory-playground reviewer": "claude-code",
+    "paulohenriquevn/aifactory-playground reviewerModel": "sonnet",
+    "paulohenriquevn/aifactory-playground reviewerEffort": "medium",
+    "usetheokit/theokit builder": "claude-code",
+    "usetheokit/theokit builderModel": "default",
+    "usetheokit/theokit builderEffort": "default",
+    "usetheokit/theokit reviewer": "claude-code",
+    "usetheokit/theokit reviewerModel": "sonnet",
+    "usetheokit/theokit reviewerEffort": "medium",
+    "usetheokit/theokit-gateways builder": "claude-code",
+    "usetheokit/theokit-gateways builderModel": "default",
+    "usetheokit/theokit-gateways builderEffort": "default",
+    "usetheokit/theokit-gateways reviewer": "claude-code",
+    "usetheokit/theokit-gateways reviewerModel": "sonnet",
+    "usetheokit/theokit-gateways reviewerEffort": "medium",
+    "usetheokit/theokit-plugins builder": "claude-code",
+    "usetheokit/theokit-plugins builderModel": "default",
+    "usetheokit/theokit-plugins builderEffort": "default",
+    "usetheokit/theokit-plugins reviewer": "claude-code",
+    "usetheokit/theokit-plugins reviewerModel": "sonnet",
+    "usetheokit/theokit-plugins reviewerEffort": "medium",
+    "usetheokit/theokit-sdk builder": "claude-code",
+    "usetheokit/theokit-sdk builderModel": "default",
+    "usetheokit/theokit-sdk builderEffort": "default",
+    "usetheokit/theokit-sdk reviewer": "claude-code",
+    "usetheokit/theokit-sdk reviewerModel": "sonnet",
+    "usetheokit/theokit-sdk reviewerEffort": "medium"
+  },
+  "results": [
+    {
+      "id": "usetheokit/theokit-plugins#235",
+      "passed": true,
+      "reason": "approved",
+      "costUsd": 0.5675711,
+      "durationMs": 400887,
+      "attempts": 1,
+      "reviewRounds": 1
+    },
+    {
+      "id": "paulohenriquevn/aifactory-playground#61",
+      "passed": true,
+      "reason": "approved",
+      "costUsd": 0.09013779999999999,
+      "durationMs": 22534,
+      "attempts": 1,
+      "reviewRounds": 1
+    },
+    {
+      "id": "usetheokit/theokit-gateways#348",
+      "passed": true,
+      "reason": "approved",
+      "costUsd": 0.646665,
+      "durationMs": 1494788,
+      "attempts": 2,
+      "reviewRounds": 2
+    },
+    {
+      "id": "usetheokit/theokit-sdk#975",
+      "passed": true,
+      "reason": "approved",
+      "costUsd": 0.3316021,
+      "durationMs": 651801,
+      "attempts": 1,
+      "reviewRounds": 1
+    },
+    {
+      "id": "usetheokit/theokit#1685",
+      "passed": true,
+      "reason": "approved",
+      "costUsd": 0.09616939999999999,
+      "durationMs": 169680,
+      "attempts": 1,
+      "reviewRounds": 1
+    }
+  ],
+  "spentUsd": 1.98419688,
+  "summary": {
+    "cases": 5,
+    "passed": 5,
+    "passRate": 1,
+    "meanCostUsd": 0.34642908,
+    "meanDurationMs": 547938
+  }
+}

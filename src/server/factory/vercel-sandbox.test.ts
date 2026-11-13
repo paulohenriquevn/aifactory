@@ -50,4 +50,43 @@ describe('vercelSandboxProvider', () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ persistent: false }))
     create.mockRestore()
   })
+
+  it('renews the credentials of a running sandbox through its network policy', async () => {
+    const updateNetworkPolicy = vi.fn(async () => ({}))
+    const create = vi
+      .spyOn(Sandbox, 'create')
+      .mockResolvedValue({ stop: async () => {}, updateNetworkPolicy } as unknown as Awaited<
+        ReturnType<typeof Sandbox.create>
+      >)
+    const sandbox = await vercelSandboxProvider().create({
+      timeoutMs: 1,
+      egress: [{ domain: 'github.com', headers: { authorization: 'Basic FIRST' } }],
+    })
+
+    await sandbox.updateEgress!([
+      { domain: 'github.com', headers: { authorization: 'Basic RENEWED' } },
+    ])
+
+    expect(updateNetworkPolicy).toHaveBeenCalledWith({
+      allow: { 'github.com': [{ transform: [{ headers: { authorization: 'Basic RENEWED' } }] }] },
+    })
+    create.mockRestore()
+  })
+
+  it('refuses new egress rules that would leave a running sandbox without a policy', async () => {
+    const updateNetworkPolicy = vi.fn(async () => ({}))
+    const create = vi
+      .spyOn(Sandbox, 'create')
+      .mockResolvedValue({ stop: async () => {}, updateNetworkPolicy } as unknown as Awaited<
+        ReturnType<typeof Sandbox.create>
+      >)
+    const sandbox = await vercelSandboxProvider().create({
+      timeoutMs: 1,
+      egress: [{ domain: 'github.com' }],
+    })
+
+    await expect(sandbox.updateEgress!([])).rejects.toThrow(/refusing to run without isolation/)
+    expect(updateNetworkPolicy).not.toHaveBeenCalled()
+    create.mockRestore()
+  })
 })

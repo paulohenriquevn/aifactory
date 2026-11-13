@@ -1,10 +1,12 @@
-import type { AppHooks, AppRepos } from '../github/app'
+import type { AppEvents, AppHooks, AppRepos } from '../github/app'
 import type { KnowledgeStatus } from '../../shared/knowledge'
 import type { SetupItem, SetupReport } from '../../shared/panel'
 
 import { claudeCredentialFromEnv } from '../factory/harness-claude'
 import { codexCredentialFromEnv } from '../factory/harness-codex'
 import { assistModel } from '../factory/models'
+import { e2bMaxSessionMs } from '../factory/e2b-sandbox'
+import { ROUTED_EVENTS } from '../ingest/decide'
 import { vercelCredentials } from '../factory/vercel-sandbox'
 
 /** Questions the report cannot answer from the environment: they ask the machine or another service. */
@@ -19,7 +21,7 @@ export type SetupInput = {
   env: NodeJS.ProcessEnv
   probes?: Probes
   /** The App, when its credentials are there to build it. */
-  github: (AppHooks & AppRepos) | undefined
+  github: (AppHooks & AppRepos & AppEvents) | undefined
   enabledRepositories: number
   /** The knowledge base, when the database could say. */
   knowledge?: KnowledgeStatus
@@ -153,6 +155,22 @@ export async function sandboxItem(env: NodeJS.ProcessEnv, probes: Probes): Promi
         : 'Docker sandboxes on this machine.',
     }
   }
+  if (env.FACTORY_SANDBOX?.trim() === 'e2b') {
+    return env.E2B_API_KEY
+      ? {
+          id: 'sandbox',
+          label: 'Sandbox',
+          status: 'ok',
+          detail: `E2B sandboxes, ${Math.round(e2bMaxSessionMs(env) / 60_000)} minutes each at most.`,
+        }
+      : {
+          id: 'sandbox',
+          label: 'Sandbox',
+          status: 'missing',
+          detail:
+            'FACTORY_SANDBOX is e2b, but E2B_API_KEY is not set. No agent runs without a sandbox.',
+        }
+  }
   return vercelCredentials(env)
     ? {
         id: 'sandbox',
@@ -167,6 +185,33 @@ export async function sandboxItem(env: NodeJS.ProcessEnv, probes: Probes): Promi
         detail:
           'VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID are not all set. No agent runs without a sandbox.',
       }
+}
+
+/**
+ * The events the App is subscribed to, against the ones the factory reads. An event that is not
+ * subscribed is never delivered, and nothing else says so: the webhook just stays quiet about it.
+ */
+export async function eventsItem(github: AppEvents): Promise<SetupItem> {
+  const base = { id: 'events', label: 'Webhook events' }
+  try {
+    const { events, settingsUrl } = await github.subscriptions()
+    const missing = ROUTED_EVENTS.filter((event) => !events.includes(event))
+    if (missing.length === 0) {
+      return {
+        ...base,
+        status: 'ok',
+        detail: 'The App subscribes to every event the factory reads.',
+      }
+    }
+    return {
+      ...base,
+      status: 'warn',
+      detail: `The App does not subscribe to ${missing.join(', ')}, so GitHub never tells the factory about them. Turn them on under "Subscribe to events".`,
+      link: { label: 'Open the App settings', href: settingsUrl },
+    }
+  } catch (error) {
+    return { ...base, status: 'warn', detail: message(error) }
+  }
 }
 
 const CREDITS_PAGE = { label: 'Add credit', href: 'https://openrouter.ai/settings/credits' }
@@ -296,6 +341,7 @@ export async function setupReport({
     } catch (error) {
       items.push({ id: 'webhook', label: 'Webhook', status: 'warn', detail: message(error) })
     }
+    items.push(await eventsItem(github))
   }
 
   items.push(

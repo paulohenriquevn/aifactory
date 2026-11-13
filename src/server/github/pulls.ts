@@ -37,7 +37,33 @@ export type PullRequestState = {
   draft: boolean
   state: 'open' | 'closed'
   merged: boolean
+  /** When it was merged, for a merged one. */
+  mergedAt?: Date
 }
+
+/** An open pull request, with the branch and repository it comes from and the branch it goes into. */
+export type OpenPullRequest = {
+  number: number
+  url: string
+  headSha: string
+  headRef: string
+  /** `owner/name` of the repository the head branch lives in; undefined when that fork was deleted. */
+  headRepo: string | undefined
+  baseRef: string
+  draft: boolean
+}
+
+/**
+ * A file a comparison lists: where it is on the head, how the head changed it since the merge base
+ * (`added`, `modified`, `removed`, `renamed`...), and the name it had before a rename.
+ */
+export type ChangedFile = { path: string; status: string; previousPath?: string }
+
+/** A branch as its comparison with another reads: its head, how far ahead it is, and when the head was committed. */
+export type BranchAhead = { sha: string; aheadBy: number; committedAt: Date }
+
+/** A full release a repository published, as its own release workflow names it. */
+export type PublishedRelease = { tag: string; url: string; publishedAt: Date }
 
 export type CommitChecks = {
   checkRuns: { name: string; status: string; conclusion: string | null }[]
@@ -45,7 +71,100 @@ export type CommitChecks = {
   statuses: 'success' | 'failure' | 'error' | 'pending' | 'none'
 }
 
-export type PullRequest = { number: number; url: string }
+/**
+ * A pull request the factory asked for. `draft` and `title` are what it holds on GitHub, known only for
+ * one that was already open: one the call opened is as it was asked for.
+ */
+export type PullRequest = { number: number; url: string; draft?: boolean; title?: string }
+
+/** A pull request read by its number, as the wait for the repository's checks needs it. */
+export type PullRequestDetail = {
+  number: number
+  url: string
+  state: 'open' | 'closed'
+  merged: boolean
+  /** The commit the merge made on the base, and when, for a merged one. */
+  mergeCommitSha?: string
+  mergedAt?: Date
+  headSha: string
+  /** Whether GitHub will merge it on its own once the required checks pass. */
+  autoMerge: boolean
+  /** GitHub's word for whether it can merge: `dirty` is a conflict with the base. */
+  mergeableState: string
+}
+
+/**
+ * One check on a commit, a check run or a commit status, reduced to what decides a merge. A skipped or
+ * neutral run passes, as GitHub counts it for a required check. `detail` is what the check said about itself.
+ */
+export type CheckReport = {
+  name: string
+  state: 'success' | 'failure' | 'pending'
+  detail: string
+  url: string
+}
+
+/** GitHub would not turn auto-merge on, so the pull request would never merge on its own. */
+export class AutoMergeRefused extends Error {
+  /**
+   * GitHub refused because the pull request is already in clean status: its required checks passed before
+   * auto-merge was asked for, so there is nothing to wait for and it can be merged right away.
+   */
+  readonly pullRequestIsClean: boolean
+  /** GitHub refused because the pull request is a draft: marked ready for review, it can be asked again. */
+  readonly pullRequestIsDraft: boolean
+
+  constructor(repo: string, number: number, why: string) {
+    super(
+      `GitHub would not turn auto-merge on for ${repo}#${number}: ${why}. The integration branch requires status checks, so the factory waits for them through auto-merge: enable "Allow auto-merge" and "Allow merge commits" in the repository settings, and let the GitHub App write pull requests.`,
+    )
+    this.name = 'AutoMergeRefused'
+    this.pullRequestIsClean = why.includes('clean status')
+    this.pullRequestIsDraft = why.toLowerCase().includes('draft')
+  }
+}
+
+/**
+ * Turns auto-merge on, pinned to `sha`, and says what follows. `waiting`: GitHub merges once the required
+ * checks pass. `mergeable`: GitHub refused because the pull request is already clean, so the caller merges
+ * it itself, pinned to the same commit. When GitHub refused because the pull request is a draft and the
+ * caller gave a way to mark it ready, it is marked and asked once more. Any other refusal is thrown as it
+ * came.
+ */
+export async function autoMergeOrMergeable(
+  api: Pick<GithubApi, 'enableAutoMerge'>,
+  pull: { repo: string; token: string; number: number; sha: string },
+  markReady?: () => Promise<void>,
+): Promise<'waiting' | 'mergeable'> {
+  try {
+    await api.enableAutoMerge(pull.repo, pull.token, pull.number, pull.sha)
+    return 'waiting'
+  } catch (error) {
+    if (!(error instanceof AutoMergeRefused)) throw error
+    if (error.pullRequestIsClean) return 'mergeable'
+    if (!error.pullRequestIsDraft || !markReady) throw error
+    await markReady()
+    // Without a way to mark it ready this time, so a second refusal is thrown.
+    return autoMergeOrMergeable(api, pull)
+  }
+}
+
+/** What a handoff puts before the title of the draft pull request it leaves for a person. */
+export const NEEDS_A_PERSON = '[needs a person] '
+
+/**
+ * The title a pull request gets when it is marked ready for review before approved work is integrated,
+ * or nothing when it is not a draft and so needs no call at all. A draft is what a handoff left: its
+ * title comes back without the handoff prefix, and `fallback` stands in for a title GitHub did not give.
+ */
+export function titleToRestore(
+  pull: { draft?: boolean; title?: string },
+  fallback: string,
+): string | undefined {
+  if (!pull.draft) return undefined
+  const title = pull.title ?? fallback
+  return title.startsWith(NEEDS_A_PERSON) ? title.slice(NEEDS_A_PERSON.length) : title
+}
 
 export type GithubApi = {
   createCheckRun(repo: string, token: string, check: CheckRun): Promise<void>
@@ -63,10 +182,40 @@ export type GithubApi = {
    * the existing release comes back, so a repeated call delivers once.
    */
   createRelease(repo: string, token: string, release: ReleaseInput): Promise<CreatedRelease>
-  /** The tag of the latest full release (not a pre-release), if there is one. */
-  latestReleaseTag(repo: string, token: string): Promise<string | undefined>
+  /**
+   * Every tag whose name starts with `v`, where the factory's own versions are. Not the latest release: in
+   * a repository that publishes with changesets that is a package's tag (`@theokit/ui@1.13.0`).
+   */
+  versionTags(repo: string, token: string): Promise<string[]>
+  /**
+   * The files `head` changes since its merge base with `base`, each with its status. A change too large for
+   * GitHub to list whole is an error, never a partial list.
+   */
+  changedFiles(repo: string, token: string, base: string, head: string): Promise<ChangedFile[]>
+  /** The path of every file on a branch. */
+  filePaths(repo: string, token: string, ref: string): Promise<string[]>
+  /** What a file holds on a branch, or undefined when it is not there. */
+  readFile(repo: string, token: string, path: string, ref: string): Promise<string | undefined>
+  /** The names in a directory at a ref, or undefined when there is no such directory there. */
+  listDirectory(
+    repo: string,
+    token: string,
+    path: string,
+    ref: string,
+  ): Promise<string[] | undefined>
+  /** The full releases (no pre-releases, no drafts) published at or after `since`, newest first. */
+  releasesSince(repo: string, token: string, since: Date): Promise<PublishedRelease[]>
+  /** Whether `ancestor` is in the history of `descendant`. */
+  contains(repo: string, token: string, descendant: string, ancestor: string): Promise<boolean>
   /** The pull request opened from `head`, open or not, if there is one. */
   findPullRequest(repo: string, token: string, head: string): Promise<PullRequestState | undefined>
+  /** The open pull requests from the branch `head` of the repository's owner into `base`. */
+  openPullRequestsBetween(
+    repo: string,
+    token: string,
+    head: string,
+    base: string,
+  ): Promise<OpenPullRequest[]>
   /** Merges a pull request only if its head is still `sha`. Returns the merge commit. */
   mergePullRequest(
     repo: string,
@@ -75,6 +224,22 @@ export type GithubApi = {
     sha: string,
     merge: PullRequestMerge,
   ): Promise<{ sha: string }>
+  /**
+   * The status checks a branch requires before anything merges into it, from its branch protection and
+   * its rulesets, each named once. Empty when it requires none.
+   */
+  requiredChecks(repo: string, token: string, branch: string): Promise<string[]>
+  readPullRequest(repo: string, token: string, number: number): Promise<PullRequestDetail>
+  /**
+   * Has GitHub merge the pull request (a merge commit) once the base's required checks pass, and only if
+   * its head is still `sha`. Throws `AutoMergeRefused` when GitHub will not.
+   */
+  enableAutoMerge(repo: string, token: string, number: number, sha: string): Promise<void>
+  /** Takes a draft pull request out of draft and gives it `title`. Throws when GitHub will not. */
+  markReadyForReview(repo: string, token: string, number: number, title: string): Promise<void>
+  disableAutoMerge(repo: string, token: string, number: number): Promise<void>
+  /** Every check run and commit status on a commit, with what each said. */
+  checkReports(repo: string, token: string, sha: string): Promise<CheckReport[]>
   /** The check runs and commit statuses a commit has so far. */
   commitChecks(repo: string, token: string, sha: string): Promise<CommitChecks>
   /**
@@ -90,6 +255,16 @@ export type GithubApi = {
   defaultBranch(repo: string, token: string): Promise<string>
   /** The commit a branch points at, or undefined when the branch does not exist. */
   branchHead(repo: string, token: string, branch: string): Promise<string | undefined>
+  /**
+   * How far the branch `head` is ahead of `base`, with its head and when that was committed; undefined when
+   * `head` does not exist.
+   */
+  branchAhead(
+    repo: string,
+    token: string,
+    base: string,
+    head: string,
+  ): Promise<BranchAhead | undefined>
   /** Creates a branch at a commit. */
   createBranch(repo: string, token: string, branch: string, sha: string): Promise<void>
   /**
@@ -144,6 +319,24 @@ const MERGE_RETRY_MS = 3_000
 const mergeMayPassLater = (status: number, message: string) =>
   status >= 500 || (status === 405 && /base branch was modified/i.test(message))
 
+/** Conclusions GitHub counts as passing for a required check. */
+const PASSING = new Set(['success', 'neutral', 'skipped'])
+
+const runState = (status: string, conclusion: string | null): CheckReport['state'] => {
+  if (status !== 'completed' || conclusion === null) return 'pending'
+  return PASSING.has(conclusion) ? 'success' : 'failure'
+}
+
+const statusState = (state: string): CheckReport['state'] => {
+  if (state === 'success') return 'success'
+  return state === 'pending' ? 'pending' : 'failure'
+}
+
+type GraphqlAnswer<T> = { data?: T; errors?: { message: string }[] }
+
+/** The most files GitHub's compare lists for one comparison. */
+const MAX_COMPARE_FILES = 3000
+
 export function createGithubApi(
   fetchImpl: FetchLike = (url, init) => fetch(url, init),
   wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
@@ -156,6 +349,7 @@ export function createGithubApi(
         'x-github-api-version': '2022-11-28',
         authorization: `Bearer ${token}`,
         ...(init.body ? { 'content-type': 'application/json' } : {}),
+        ...(init.headers as Record<string, string> | undefined),
       },
     })
 
@@ -165,6 +359,45 @@ export function createGithubApi(
       throw new Error(`GitHub answered ${response.status} ${action}: ${detail}`)
     }
     return response
+  }
+
+  /** Runs a GraphQL mutation on a pull request, by its node id. Returns the answer and what went wrong. */
+  async function onPullRequest<T>(
+    repo: string,
+    token: string,
+    number: number,
+    query: string,
+    variables: Record<string, unknown> = {},
+  ): Promise<{ data?: T; why?: string }> {
+    const pull = (await (
+      await ensure(await call(repo, token, `/pulls/${number}`), `reading ${repo}#${number}`, [200])
+    ).json()) as { node_id: string }
+    const response = await fetchImpl('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ query, variables: { id: pull.node_id, ...variables } }),
+    })
+    const result = (await response.json().catch(() => ({}))) as GraphqlAnswer<T>
+    if (result.errors?.length) return { why: result.errors.map((e) => e.message).join('; ') }
+    if (!response.ok || !result.data) return { why: `HTTP ${response.status}` }
+    return { data: result.data }
+  }
+
+  async function branchHead(repo: string, token: string, branch: string) {
+    const response = await call(
+      repo,
+      token,
+      `/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`,
+    )
+    if (response.status === 404) return undefined
+    const body = (await (
+      await ensure(response, `reading the branch ${branch} of ${repo}`, [200])
+    ).json()) as { object: { sha: string } }
+    return body.object.sha
   }
 
   return {
@@ -197,8 +430,11 @@ export function createGithubApi(
           `listing pull requests of ${repo}`,
           [200],
         )
-      ).json()) as { number: number; html_url: string }[]
-      if (open[0]) return { number: open[0].number, url: open[0].html_url }
+      ).json()) as { number: number; html_url: string; draft?: boolean; title?: string }[]
+      if (open[0]) {
+        const { number, html_url: url, draft, title } = open[0]
+        return { number, url, draft, title }
+      }
 
       const base =
         pull.base ??
@@ -260,14 +496,67 @@ export function createGithubApi(
       return { id: made.id, tag: made.tag_name, url: made.html_url }
     },
 
-    async latestReleaseTag(repo, token) {
-      const response = await call(repo, token, '/releases/latest')
-      if (response.status === 404) return undefined
-      return (
-        (await (await ensure(response, `reading the latest release of ${repo}`, [200])).json()) as {
-          tag_name: string
+    async versionTags(repo, token) {
+      const refs = (await (
+        await ensure(
+          await call(repo, token, '/git/matching-refs/tags/v'),
+          `listing the version tags of ${repo}`,
+          [200],
+        )
+      ).json()) as { ref: string }[]
+      return refs.map((r) => r.ref.slice('refs/tags/'.length))
+    },
+
+    async changedFiles(repo, token, base, head) {
+      const files: ChangedFile[] = []
+      for (let page = 1; ; page += 1) {
+        const body = (await (
+          await ensure(
+            await call(repo, token, `/compare/${base}...${head}?per_page=100&page=${page}`),
+            `comparing ${base} with ${head} on ${repo}`,
+            [200],
+          )
+        ).json()) as { files?: { filename: string; status: string; previous_filename?: string }[] }
+        const listed = body.files ?? []
+        if (listed.length === 0) return files
+        files.push(
+          ...listed.map((f) => ({
+            path: f.filename,
+            status: f.status,
+            ...(f.previous_filename ? { previousPath: f.previous_filename } : {}),
+          })),
+        )
+        if (files.length >= MAX_COMPARE_FILES) {
+          throw new Error(
+            `${base}...${head} on ${repo} changes ${MAX_COMPARE_FILES} files or more, the most GitHub lists, so what it changes cannot be told`,
+          )
         }
-      ).tag_name
+      }
+    },
+
+    async filePaths(repo, token, ref) {
+      const body = (await (
+        await ensure(
+          await call(repo, token, `/git/trees/${encodeURIComponent(ref)}?recursive=1`),
+          `listing the files of ${ref} on ${repo}`,
+          [200],
+        )
+      ).json()) as { truncated: boolean; tree: { path: string; type: string }[] }
+      if (body.truncated) {
+        throw new Error(`GitHub truncated the listing of ${ref} on ${repo}: it has too many files`)
+      }
+      return body.tree.filter((entry) => entry.type === 'blob').map((entry) => entry.path)
+    },
+
+    async readFile(repo, token, path, ref) {
+      const response = await call(
+        repo,
+        token,
+        `/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`,
+        { headers: { accept: 'application/vnd.github.raw+json' } },
+      )
+      if (response.status === 404) return undefined
+      return (await ensure(response, `reading ${path} at ${ref} on ${repo}`, [200])).text()
     },
 
     async findPullRequest(repo, token, head) {
@@ -295,8 +584,83 @@ export function createGithubApi(
             draft: pr.draft,
             state: pr.state,
             merged: pr.merged_at !== null,
+            mergedAt: pr.merged_at ? new Date(pr.merged_at) : undefined,
           }
         : undefined
+    },
+
+    async openPullRequestsBetween(repo, token, head, base) {
+      const owner = repo.split('/')[0]
+      const query = `state=open&head=${owner}:${encodeURIComponent(head)}&base=${encodeURIComponent(base)}&per_page=100`
+      const found = (await (
+        await ensure(
+          await call(repo, token, `/pulls?${query}`),
+          `listing the pull requests of ${repo} from ${head} into ${base}`,
+          [200],
+        )
+      ).json()) as {
+        number: number
+        html_url: string
+        draft: boolean
+        head: { sha: string; ref: string; repo: { full_name: string } | null }
+        base: { ref: string }
+      }[]
+      return found.map((pr) => ({
+        number: pr.number,
+        url: pr.html_url,
+        headSha: pr.head.sha,
+        headRef: pr.head.ref,
+        headRepo: pr.head.repo?.full_name,
+        baseRef: pr.base.ref,
+        draft: pr.draft,
+      }))
+    },
+
+    async listDirectory(repo, token, path, ref) {
+      const response = await call(
+        repo,
+        token,
+        `/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`,
+      )
+      if (response.status === 404) return undefined
+      const body = (await (
+        await ensure(response, `listing ${path} at ${ref} on ${repo}`, [200])
+      ).json()) as { name: string }[] | { type: string }
+      if (!Array.isArray(body)) {
+        throw new Error(`${path} at ${ref} on ${repo} is not a directory`)
+      }
+      return body.map((entry) => entry.name)
+    },
+
+    async releasesSince(repo, token, since) {
+      const releases = (await (
+        await ensure(
+          await call(repo, token, '/releases?per_page=100'),
+          `listing the releases of ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        tag_name: string
+        html_url: string
+        prerelease: boolean
+        draft: boolean
+        published_at: string | null
+      }[]
+      return releases
+        .filter((r) => !r.prerelease && !r.draft && r.published_at !== null)
+        .map((r) => ({ tag: r.tag_name, url: r.html_url, publishedAt: new Date(r.published_at!) }))
+        .filter((r) => r.publishedAt.getTime() >= since.getTime())
+    },
+
+    async contains(repo, token, descendant, ancestor) {
+      const body = (await (
+        await ensure(
+          await call(repo, token, `/compare/${ancestor}...${descendant}`),
+          `comparing ${ancestor.slice(0, 7)} with ${descendant.slice(0, 7)} on ${repo}`,
+          [200],
+        )
+      ).json()) as { status: string }
+      return body.status === 'ahead' || body.status === 'identical'
     },
 
     async defaultBranch(repo, token) {
@@ -306,17 +670,30 @@ export function createGithubApi(
       return body.default_branch
     },
 
-    async branchHead(repo, token, branch) {
-      const response = await call(
-        repo,
-        token,
-        `/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`,
-      )
-      if (response.status === 404) return undefined
-      const body = (await (
-        await ensure(response, `reading the branch ${branch} of ${repo}`, [200])
-      ).json()) as { object: { sha: string } }
-      return body.object.sha
+    branchHead,
+
+    async branchAhead(repo, token, base, head) {
+      const sha = await branchHead(repo, token, head)
+      if (sha === undefined) return undefined
+      const compared = (await (
+        await ensure(
+          await call(repo, token, `/compare/${base}...${sha}`),
+          `comparing ${head} with ${base} on ${repo}`,
+          [200],
+        )
+      ).json()) as { ahead_by: number }
+      const commit = (await (
+        await ensure(
+          await call(repo, token, `/commits/${sha}`),
+          `reading the commit ${sha.slice(0, 7)} of ${repo}`,
+          [200],
+        )
+      ).json()) as { commit: { committer: { date: string } } }
+      return {
+        sha,
+        aheadBy: compared.ahead_by,
+        committedAt: new Date(commit.commit.committer.date),
+      }
     },
 
     async createBranch(repo, token, branch, sha) {
@@ -401,36 +778,175 @@ export function createGithubApi(
     },
 
     async revertPullRequest(repo, token, number, revert) {
-      const pull = (await (
+      const answer = await onPullRequest<{
+        revertPullRequest?: { revertPullRequest?: { number: number; url: string } }
+      }>(
+        repo,
+        token,
+        number,
+        'mutation($id: ID!, $title: String, $body: String) { revertPullRequest(input: { pullRequestId: $id, title: $title, body: $body }) { revertPullRequest { number url } } }',
+        { title: revert.title, body: revert.body },
+      )
+      const made = answer.data?.revertPullRequest?.revertPullRequest
+      if (!made) {
+        throw new Error(
+          `GitHub would not open a revert of ${repo}#${number}: ${answer.why ?? 'no pull request came back'}`,
+        )
+      }
+      return { number: made.number, url: made.url }
+    },
+
+    async requiredChecks(repo, token, branch) {
+      const path = branch.split('/').map(encodeURIComponent).join('/')
+      const protection = (await (
+        await ensure(
+          await call(repo, token, `/branches/${path}`),
+          `reading the branch ${branch} of ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        protection?: {
+          required_status_checks?: { contexts?: string[]; checks?: { context: string }[] }
+        }
+      }
+      const rules = await call(repo, token, `/rules/branches/${path}`)
+      const ruleset =
+        rules.status === 404
+          ? []
+          : ((await (
+              await ensure(rules, `reading the rules of the branch ${branch} of ${repo}`, [200])
+            ).json()) as {
+              type: string
+              parameters?: { required_status_checks?: { context: string }[] }
+            }[])
+      const required = protection.protection?.required_status_checks
+      return [
+        ...new Set([
+          ...(required?.contexts ?? []),
+          ...(required?.checks ?? []).map((c) => c.context),
+          ...ruleset
+            .filter((rule) => rule.type === 'required_status_checks')
+            .flatMap((rule) => rule.parameters?.required_status_checks ?? [])
+            .map((c) => c.context),
+        ]),
+      ]
+    },
+
+    async readPullRequest(repo, token, number) {
+      const pr = (await (
         await ensure(
           await call(repo, token, `/pulls/${number}`),
           `reading ${repo}#${number}`,
           [200],
         )
-      ).json()) as { node_id: string }
-      const response = await fetchImpl('https://api.github.com/graphql', {
-        method: 'POST',
-        headers: {
-          accept: 'application/vnd.github+json',
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          query:
-            'mutation($id: ID!, $title: String, $body: String) { revertPullRequest(input: { pullRequestId: $id, title: $title, body: $body }) { revertPullRequest { number url } } }',
-          variables: { id: pull.node_id, title: revert.title, body: revert.body },
-        }),
-      })
-      const result = (await response.json()) as {
-        data?: { revertPullRequest?: { revertPullRequest?: { number: number; url: string } } }
-        errors?: { message: string }[]
+      ).json()) as {
+        number: number
+        html_url: string
+        state: 'open' | 'closed'
+        merged: boolean
+        merge_commit_sha: string | null
+        merged_at?: string | null
+        head: { sha: string }
+        auto_merge: object | null
+        mergeable_state: string
       }
-      const made = result.data?.revertPullRequest?.revertPullRequest
-      if (!response.ok || result.errors?.length || !made) {
-        const why = result.errors?.map((e) => e.message).join('; ') ?? `HTTP ${response.status}`
-        throw new Error(`GitHub would not open a revert of ${repo}#${number}: ${why}`)
+      return {
+        number: pr.number,
+        url: pr.html_url,
+        state: pr.state,
+        merged: pr.merged,
+        // An open pull request's merge_commit_sha is GitHub's test merge, not anything on the base.
+        mergeCommitSha: pr.merged ? (pr.merge_commit_sha ?? undefined) : undefined,
+        mergedAt: pr.merged_at ? new Date(pr.merged_at) : undefined,
+        headSha: pr.head.sha,
+        autoMerge: pr.auto_merge !== null,
+        mergeableState: pr.mergeable_state,
       }
-      return { number: made.number, url: made.url }
+    },
+
+    async enableAutoMerge(repo, token, number, sha) {
+      const answer = await onPullRequest(
+        repo,
+        token,
+        number,
+        'mutation($id: ID!, $sha: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $sha }) { pullRequest { number } } }',
+        { sha },
+      )
+      if (answer.why) throw new AutoMergeRefused(repo, number, answer.why)
+    },
+
+    // GraphQL only: the REST API cannot take a pull request out of draft.
+    async markReadyForReview(repo, token, number, title) {
+      const answer = await onPullRequest(
+        repo,
+        token,
+        number,
+        'mutation($id: ID!, $title: String!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { number } } updatePullRequest(input: { pullRequestId: $id, title: $title }) { pullRequest { number } } }',
+        { title },
+      )
+      if (answer.why) {
+        throw new Error(
+          `GitHub would not mark ${repo}#${number} ready for review: ${answer.why}. A draft pull request cannot be merged: mark it ready for review by hand, or let the GitHub App write pull requests.`,
+        )
+      }
+    },
+
+    async disableAutoMerge(repo, token, number) {
+      const answer = await onPullRequest(
+        repo,
+        token,
+        number,
+        'mutation($id: ID!) { disablePullRequestAutoMerge(input: { pullRequestId: $id }) { pullRequest { number } } }',
+      )
+      if (answer.why) {
+        throw new Error(`GitHub could not turn auto-merge off on ${repo}#${number}: ${answer.why}`)
+      }
+    },
+
+    async checkReports(repo, token, sha) {
+      const runs = (await (
+        await ensure(
+          await call(repo, token, `/commits/${sha}/check-runs?per_page=100`),
+          `reading the check runs of ${sha.slice(0, 7)} on ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        check_runs: {
+          name: string
+          status: string
+          conclusion: string | null
+          html_url: string | null
+          output?: { summary?: string | null; text?: string | null }
+        }[]
+      }
+      const combined = (await (
+        await ensure(
+          await call(repo, token, `/commits/${sha}/status`),
+          `reading the statuses of ${sha.slice(0, 7)} on ${repo}`,
+          [200],
+        )
+      ).json()) as {
+        statuses?: {
+          context: string
+          state: string
+          description: string | null
+          target_url: string | null
+        }[]
+      }
+      return [
+        ...runs.check_runs.map((r) => ({
+          name: r.name,
+          state: runState(r.status, r.conclusion),
+          detail: [r.output?.summary, r.output?.text].filter(Boolean).join('\n'),
+          url: r.html_url ?? '',
+        })),
+        ...(combined.statuses ?? []).map((s) => ({
+          name: s.context,
+          state: statusState(s.state),
+          detail: s.description ?? '',
+          url: s.target_url ?? '',
+        })),
+      ]
     },
 
     async deleteBranch(repo, token, branch) {

@@ -1,11 +1,12 @@
 import { and, eq, isNotNull, isNull } from 'drizzle-orm'
 
 import { question as questionTable, task } from '../db/schema'
-import { fetchIssue as defaultFetchIssue } from '../github/issues'
+import { fetchIssue as defaultFetchIssue, type Issue } from '../github/issues'
+import { BlockedByOpenIssues, declaredBlockers, openBlockers } from './blockers'
 import { withRecipe } from './recipe'
 import { createGithubApi } from '../github/pulls'
 
-import { Asked, QuotaStop, quotaDetail } from './run-support'
+import { Asked, QuotaStop, quotaDetail, type Continuation } from './run-support'
 import { loadRepoConfig } from './repo-config'
 import { Run, type RunState } from './run'
 import type { Parked, RunResult, RunTaskDeps } from './run-types'
@@ -30,9 +31,10 @@ export function runTask(
   signal?: AbortSignal,
   /**
    * Set when a person sent the pull request back: the run starts from the branch the agent already
-   * pushed, with what the person asked for in its prompt.
+   * pushed, with what the person asked for in its prompt. When GitHub does not have that branch, it
+   * starts from the integration branch as a first run does, with the same words in its prompt.
    */
-  continuation?: { feedback: string },
+  continuation?: Continuation,
 ): Promise<RunResult> {
   return execute(deps, taskId, signal, undefined, continuation)
 }
@@ -68,7 +70,7 @@ async function execute(
   taskId: number,
   signal: AbortSignal | undefined,
   resuming?: Parked,
-  continuation?: { feedback: string },
+  continuation?: Continuation,
 ): Promise<RunResult> {
   const { db } = deps
   const [row] = await db.select().from(task).where(eq(task.id, taskId))
@@ -81,11 +83,9 @@ async function execute(
     // One token, limited to this task's repository. It is used here and in the firewall rule,
     // and nothing below hands it to the sandbox.
     const { token } = await deps.github.installationToken(row.repository)
-    const issue = await (deps.fetchIssue ?? defaultFetchIssue)(
-      row.repository,
-      row.issueNumber,
-      token,
-    )
+    const readIssue = deps.fetchIssue ?? defaultFetchIssue
+    const issue = await readIssue(row.repository, row.issueNumber, token)
+    await refuseWhileBlocked(deps, row.repository, issue, readIssue)
 
     const run = await Run.open({
       deps,
@@ -114,6 +114,52 @@ async function execute(
   }
 }
 
+/**
+ * Throws `BlockedByOpenIssues` when the issue declares a blocker that is still open, before any sandbox
+ * exists: the work it waits for has not shipped, and an agent started now finds nothing to build on. Each
+ * blocker is read with a token for its own repository. One whose state is unknown counts as open.
+ *
+ * A blocker in the task's own repository stops blocking once the factory has integrated its fix: the run
+ * starts from the integration branch, where that code already is. Its issue stays open until the release,
+ * which can take hours, and a chain of dependent issues would otherwise wait a release per link.
+ */
+async function refuseWhileBlocked(
+  deps: RunTaskDeps,
+  repository: string,
+  issue: Issue,
+  readIssue: NonNullable<RunTaskDeps['fetchIssue']>,
+): Promise<void> {
+  const blockers = declaredBlockers(issue.body, repository)
+  if (blockers.length === 0) return
+  const open = await openBlockers(blockers, async (ref) => {
+    if (ref.repository === repository && (await integrated(deps, ref.repository, ref.number)))
+      return false
+    const { token } = await deps.github.installationToken(ref.repository)
+    return (await readIssue(ref.repository, ref.number, token)).state !== 'closed'
+  })
+  if (open.length > 0) throw new BlockedByOpenIssues(open)
+}
+
+/** Whether a task for this issue has been merged into the repository's integration branch. */
+async function integrated(
+  deps: RunTaskDeps,
+  repository: string,
+  issueNumber: number,
+): Promise<boolean> {
+  const [merged] = await deps.db
+    .select({ id: task.id })
+    .from(task)
+    .where(
+      and(
+        eq(task.repository, repository),
+        eq(task.issueNumber, issueNumber),
+        isNotNull(task.mergedSha),
+      ),
+    )
+    .limit(1)
+  return merged !== undefined
+}
+
 /** Records how a run ended when it did not finish: parked on a question, or failed at a stage. */
 async function fail(
   deps: RunTaskDeps,
@@ -132,6 +178,7 @@ async function fail(
     failedAt: state.current,
     error: message,
     ...(error instanceof QuotaStop ? quotaDetail(error, new Date()) : {}),
+    ...(error instanceof BlockedByOpenIssues ? { blockedBy: error.blockedBy } : {}),
   })
   return { status: 'failed', stage: state.current, error: message }
 }

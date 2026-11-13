@@ -63,3 +63,6 @@ reports/
 
 # the mirror of the knowledge repository the factory keeps on this host
 .state/
+
+# runs of the evaluation suite (ADR 0008); the baseline is in evals/
+.evals/

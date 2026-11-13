@@ -29,7 +29,7 @@ import { ACTIVE, useOnNewChat, usePlace } from './active'
 type Icon = ComponentType<{ className?: string }>
 
 const row =
-  'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[14px] text-foreground/90 transition-colors hover:bg-white/[0.06]'
+  'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[14px] text-foreground/90 transition-colors hover:bg-muted/60'
 
 /** One place in the factory, in the menu: an icon, a name, and a count when something is waiting. */
 function Place({
@@ -55,7 +55,7 @@ function Place({
       <Icon className={`size-[18px] shrink-0 ${active ? '' : 'opacity-90'}`} />
       <span className="truncate">{label}</span>
       {count ? (
-        <span className="ml-auto rounded-full bg-white/10 px-2 text-xs text-foreground/80">
+        <span className="ml-auto rounded-full bg-muted px-2 text-xs text-foreground/80">
           {count}
         </span>
       ) : null}
@@ -92,13 +92,13 @@ function ChatRow({ chat }: { chat: ChatSummary }) {
           if (e.key === 'Enter') void rename()
           if (e.key === 'Escape') setEditing(false)
         }}
-        className="w-full rounded-lg bg-white/10 px-3 py-2 text-[14px] text-foreground outline-none"
+        className="w-full rounded-lg bg-muted px-3 py-2 text-[14px] text-foreground outline-none"
       />
     )
   }
 
   return (
-    <div className={`group relative rounded-lg ${active ? ACTIVE : 'hover:bg-white/[0.06]'}`}>
+    <div className={`group relative rounded-lg ${active ? ACTIVE : 'hover:bg-muted/60'}`}>
       <NavLink
         to={`/chat/${chat.id}`}
         className="block truncate px-3 py-2 pr-9 text-[14px] text-foreground/90"
@@ -110,7 +110,7 @@ function ChatRow({ chat }: { chat: ChatSummary }) {
           <button
             type="button"
             aria-label={`Opções de ${title}`}
-            className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded-md p-1 text-foreground/70 hover:bg-white/10 group-hover:block data-[state=open]:block"
+            className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded-md p-1 text-foreground/70 hover:bg-muted/60 group-hover:block data-[state=open]:block"
           >
             <MoreHorizontal className="size-4" />
           </button>
@@ -193,7 +193,7 @@ export function Sidebar({
   return (
     <aside
       aria-label="Menu"
-      className="flex h-full w-[338px] max-w-[40vw] shrink-0 flex-col border-r border-white/[0.08] bg-[#0a0a0b]"
+      className="flex h-full w-[338px] max-w-[40vw] shrink-0 flex-col border-r border-border bg-card"
     >
       <div className="flex items-center justify-between px-4 pb-2 pt-3">
         <span className="text-[17px] font-semibold tracking-tight">aifactory</span>
@@ -202,7 +202,7 @@ export function Sidebar({
             type="button"
             aria-label="Buscar conversas"
             onClick={() => setSearching((on) => !on)}
-            className="rounded-lg p-2 text-foreground/80 hover:bg-white/[0.08]"
+            className="rounded-lg p-2 text-foreground/80 hover:bg-muted/60"
           >
             <Search className="size-[18px]" />
           </button>
@@ -210,7 +210,7 @@ export function Sidebar({
             type="button"
             aria-label="Recolher o menu"
             onClick={onToggle}
-            className="rounded-lg p-2 text-foreground/80 hover:bg-white/[0.08]"
+            className="rounded-lg p-2 text-foreground/80 hover:bg-muted/60"
           >
             <PanelLeft className="size-[18px]" />
           </button>
@@ -249,7 +249,7 @@ export function Sidebar({
             placeholder="Buscar nas conversas"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-full rounded-lg bg-white/[0.08] px-3 py-2 text-[14px] outline-none placeholder:text-foreground/40"
+            className="w-full rounded-lg bg-muted px-3 py-2 text-[14px] outline-none placeholder:text-foreground/40"
           />
         </div>
       ) : null}
@@ -270,7 +270,7 @@ export function Sidebar({
         </Section>
       </ScrollArea>
 
-      <div className="border-t border-white/[0.08] p-2">
+      <div className="border-t border-border p-2">
         <DropdownMenu>
           <DropdownMenu.Trigger asChild>
             <button type="button" aria-label="Conta" className={`${row} gap-3 py-2`}>

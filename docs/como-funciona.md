@@ -39,7 +39,8 @@ issue com a label "factory"
    check run "success" + pull request com "Closes #<n>"
         |
         v
-   merge do PR em workspace, preso ao SHA verificado (a fábrica, sem pedir a ninguém)
+   merge do PR em workspace, preso ao SHA verificado (a fábrica, sem pedir a ninguém;
+   se workspace exige checks, o auto-merge do GitHub, depois do CI do repositório)
         |
         v
    develop avança até o commit integrado + pré-release no GitHub
@@ -57,20 +58,50 @@ agente, como "todos os testes passam", nunca vira evidência.
 
 Cada estágio fica gravado em `stage_event`, na mesma transação que atualiza `task.stage`.
 
-| Estágio    | O que acontece                                                                                                    |
-| ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| `intake`   | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                         |
-| `sandbox`  | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.           |
-| `build`    | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                              |
-| `push`     | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).           |
-| `verify`   | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.           |
-| `review`   | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.            |
-| `waiting`  | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.           |
-| `pr`       | Se o portão abriu, cria o check run `aifactory/verify`, abre o PR contra `workspace`, mergeia e avança `develop`. |
-| `done`     | Guarda o SHA, a URL do PR, a pré-release, o número de tentativas e o custo total (construtor e revisor).          |
-| `released` | `develop` foi promovida para `main` e a release publicada, por um humano ou pelo veredito de um agente.           |
-| `handoff`  | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.             |
-| `failed`   | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                       |
+| Estágio     | O que acontece                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------- |
+| `intake`    | O webhook criou a task. Uma issue tem no máximo uma task, mesmo que a label saia e volte.                         |
+| `sandbox`   | Pede um token do GitHub App só para este repositório, lê a issue, cria o sandbox e clona o repositório.           |
+| `plan`      | Numa task nova, o agente lê o código e escreve um plano, sem mudar nada. O plano é gravado em `change_plan`.      |
+| `build`     | O agente roda no sandbox, na branch `factory/<n>`, com o texto da issue como tarefa.                              |
+| `push`      | Confere que houve mudança, faz o commit com a identidade do App e envia a branch (até três tentativas).           |
+| `verify`    | Roda os checks exigidos (`npm test` por padrão) no commit enviado e grava cada resultado em `evidence`.           |
+| `review`    | Um revisor independente lê o diff e dá um veredito, gravado em `review`. A fábrica soma fatos do diff.            |
+| `waiting`   | O agente perguntou algo. A pergunta foi para a issue, o sandbox foi salvo e a task espera uma resposta.           |
+| `pr`        | Se o portão abriu, cria o check run `aifactory/verify`, abre o PR contra `workspace`, mergeia e avança `develop`. |
+| `done`      | Guarda o SHA, a URL do PR, a pré-release, o número de tentativas e o custo total (construtor e revisor).          |
+| `released`  | `develop` foi promovida para `main` e a release publicada, por um humano ou pelo veredito de um agente.           |
+| `handoff`   | Sem aprovação e sem tentativas: abriu um PR em rascunho e comentou na issue. Uma pessoa assume daqui.             |
+| `failed`    | Qualquer falha. O detalhe traz `failedAt` (o estágio) e `error` (o motivo).                                       |
+| `cancelled` | Uma run interrompida porque a issue deixou de pedir o trabalho. Nenhum caminho entra nele ainda.                  |
+
+### O que cada entrega do webhook significa
+
+`decideIngress` (`src/server/ingest/decide.ts`) lê o evento e o payload, validado com Zod, e devolve uma
+de três coisas. A entrega fica em `ingress` com o resultado, um código e o motivo.
+
+| Resultado em `ingress.outcome` | Quando                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------ |
+| `task_created`, `task_exists`  | `issues` com a label `factory` posta, ou aberta já com ela.                          |
+| `routed`                       | Um dos eventos da tabela abaixo. Não cria task nem job.                              |
+| `ignored`                      | Todo o resto, com o código de sempre (`event_not_issues`, `action_not_relevant`...). |
+
+| Evento e ação                         | Código                                                    | O que a intenção leva                             |
+| ------------------------------------- | --------------------------------------------------------- | ------------------------------------------------- |
+| `issue_comment.created`               | `issue_comment_created` ou `pull_request_comment_created` | número da issue ou do PR, id do comentário, autor |
+| `pull_request_review.submitted`       | `pull_request_review_submitted`                           | número do PR, id do review, head SHA, autor       |
+| `pull_request_review_comment.created` | `pull_request_review_comment_created`                     | número do PR, id do comentário, head SHA, autor   |
+| `check_suite.completed`               | `check_suite_completed`                                   | head SHA, conclusão                               |
+| `check_run.completed`                 | `check_run_completed`                                     | head SHA, nome do check, conclusão                |
+| `issues.unlabeled` (label `factory`)  | `issue_unlabeled`                                         | número da issue, quem tirou a label               |
+| `issues.closed`, `issues.reopened`    | `issue_closed`, `issue_reopened`                          | número da issue, quem fechou ou reabriu           |
+
+Toda intenção leva o repositório. O autor de um comentário ou review vem com o login e a associação que
+o GitHub informa (`OWNER`, `MEMBER`, `NONE`...). Um payload que não bate com o schema do seu evento fica
+como `payload_invalid`. Por enquanto a fábrica só registra a intenção: nada lê uma entrega `routed`, a
+resposta a uma pergunta continua vindo da sondagem e a integração depois do CI continua vindo do cron.
+A App só recebe os eventos que assina, e a página Setup tem uma linha que lê as assinaturas (`GET /app`)
+e diz quais faltam.
 
 Depois de um retrabalho, a task volta a `build` e repete `push`, `verify` e `review`: o histórico mostra cada tentativa.
 
@@ -94,8 +125,7 @@ passada, a que espera há mais tempo primeiro:
 - PR que o GitHub recusou por conflito com a base (`Pull Request has merge conflicts`): outra task mexeu
   nos mesmos arquivos e entrou antes. A task fica `done` sem commit integrado, e a mesma passada a
   recomeça sobre a base nova, como faria o "Retry", com o mesmo limite de 3 vezes e até 3 tasks por
-  passada. Merge recusado por outro motivo (branch protegida, check obrigatório) continua esperando uma
-  pessoa.
+  passada. Merge recusado por outro motivo continua esperando uma pessoa.
 
 O reinício automático não grava uma decisão em nome de ninguém: o evento `intake` leva
 `automatic: true`, e um "Retry" de uma pessoa zera a contagem. O cartão diz quando a task roda de novo, e
@@ -128,6 +158,29 @@ O que muda em relação à Vercel, sem esconder:
 A imagem (`ops/sandbox`) é construída na primeira vez, e o teste `docker-sandbox.e2e.test.ts` roda
 containers de verdade: a lista de domínios, a injeção do cabeçalho (conferida por um servidor local que
 ecoa o que recebeu), o HTTPS pelo proxy e a limpeza.
+
+### No E2B
+
+`FACTORY_SANDBOX=e2b` roda cada sandbox no E2B, com `E2B_API_KEY` no `.env.local`. A imagem é a mesma
+do Docker (`ops/sandbox/Dockerfile`), publicada como template `aifactory-sandbox:<versão>` por
+`node --env-file=.env.local scripts/build-e2b-template.mts`. Quem muda o Dockerfile roda o script de novo
+e sobe a versão em `E2B_TEMPLATE` (`src/server/factory/e2b-template.ts`).
+
+O E2B aplica a lista de domínios (`allowOut`, com todo o resto negado) e anexa os cabeçalhos de cada regra
+no proxy de saída dele, fora do sandbox. A renovação do token do GitHub troca as regras com o sandbox
+rodando (`updateNetwork`). O E2B não aplica as linhas `ENV` do Dockerfile, então o adapter passa as
+variáveis na criação, entre elas `NODE_EXTRA_CA_CERTS`, sem a qual o Node recusa o certificado do proxy.
+
+O plano gratuito para um sandbox depois de uma hora, e a execução se planeja para isso: cada passe do
+agente cabe na sessão em que começa, e o primeiro fica com 35 minutos (60 menos 15 dos checks e 10 da
+revisão). Quando um retrabalho não cabe no que sobra da sessão, mas cabe nos 90 minutos da execução, o
+`Run` salva o disco num snapshot, restaura numa sessão nova com as mesmas regras de rede e o mesmo token
+renovado, apaga o snapshot e continua. O histórico da task mostra a sessão nova no estágio `sandbox`. O
+limite de 90 minutos, as tentativas e o custo continuam valendo para a execução inteira, e um provedor que
+não sabe salvar o disco recusa o passe como antes. `E2B_MAX_SESSION_MS` aumenta o limite num plano que
+permita mais. Um sandbox restaurado de um snapshot apaga
+o snapshot quando para, porque o E2B recusa apagar um snapshot em uso. O teste
+`e2b-sandbox.e2e.test.ts` roda contra o E2B de verdade (`npm run test:e2e`).
 
 ## Isolamento e segredos
 
@@ -205,12 +258,37 @@ firewall dos dois agentes, e dois agentes não podem assinar o mesmo domínio de
 `changes`, ou uma aprovação que lista um achado `blocker` ou `major`, vale como `invalid`: sem
 aprovação. Quando o revisor se contradiz, a fábrica não escolhe a leitura mais gentil.
 
-**Fatos do diff.** Duas coisas que um agente pode entortar e um revisor pode deixar passar são
+**Fatos do diff.** Algumas coisas que um agente pode entortar e um revisor pode deixar passar são
 checadas sem modelo e valem como achados que impedem a aprovação:
 
 - o script `test` do `package.json` mudou entre a base e o commit (os checks passariam a rodar outra
   coisa), ou o diff toca `.github/`: achado `blocker`;
 - um arquivo de teste foi apagado: achado `major`.
+
+- numa issue com label `bug`, um teste que já existia na base perdeu casos ou asserções, ou ganhou um
+  `.skip`, `.only`, `.todo`, `xit`, `@pytest.mark.skip` ou `t.Skip`: achado `blocker`. Fora de uma
+  correção de bug, o mesmo achado é `major`. Quando o texto da issue cita o arquivo ou o caso removido,
+  ele vira `minor` e a decisão fica com o revisor, porque a remoção pode ser o que a issue pede. Um caso
+  que muda de arquivo com o mesmo nome não conta como perda. Um caso renomeado no próprio arquivo também
+  não: cada nome novo no arquivo, que nenhum arquivo do diff perdeu, cobre um nome que o arquivo perdeu.
+  Se o arquivo não perde asserção, a renomeação vira só um achado `minor` para o revisor conferir o título
+  novo. Dois casos que saem e um que entra contam como um caso removido.
+
+**Plano antes do código.** Numa task nova, antes de editar, o construtor recebe a issue e as regras do
+build e escreve um plano em JSON: os arquivos que vai mudar e por quê, a ordem, os riscos, a prova
+(testes ou comandos) e o que fica fora do escopo. Nesse turno ele não muda arquivo nem faz pergunta; o
+que ele mudar mesmo assim é descartado. Um plano ilegível ganha uma segunda chance, e sem plano a task
+falha em `plan`. O turno tem teto de 15 minutos. O build continua a mesma sessão, com a instrução de
+seguir o plano e de explicar no resumo final qualquer arquivo fora dele. O plano vai no corpo do PR, na
+seção "Plan" da task no painel e no prompt do revisor, junto com a lista dos arquivos do diff que o plano
+não cita (calculada sem modelo; lockfiles ficam de fora). O revisor trata cada um como achado, salvo
+motivo que a issue sustente, e a fábrica registra cada um como achado `minor`. Quando uma checagem da
+fábrica falhou num commit anterior da task e passa no commit em revisão, o prompt do revisor diz qual
+checagem, a linha do erro e os arquivos adicionados entre os dois commits: arquivo que a checagem exigiu
+(um changeset vazio, por exemplo) é legítimo, e esses arquivos não entram na lista de fora do plano. Uma task retomada
+(resposta a uma pergunta, mudanças pedidas, checks obrigatórios que devolveram o trabalho) usa o último
+plano gravado. Não há aprovação humana do plano: quem confere é o revisor, contra o diff
+([ADR 0009](adr/0009-plano-antes-do-codigo-e-testes-que-nao-enfraquecem.md)).
 
 **Tentativas.** São no máximo 3, contadas juntas para checks e review.
 
@@ -232,8 +310,9 @@ faz o que ela pede, a fábrica trata isso como uma alegação. Os checks rodam n
 construtor disse, com a instrução de conferir no código e nos testes, sem confiar no texto. Se os dois
 confirmam, a fábrica comenta na issue o commit, os checks que passaram, a conclusão do revisor e o que o
 construtor encontrou, fecha a issue como concluída e marca a task `done`, sem PR (`resolved_sha` na
-task). No painel ela aparece em Delivered como "already resolved" e não entra na caixa de entrada. Se os
-checks falham, a issue fica aberta e a task vai para uma pessoa, com o motivo. Se o revisor aponta algo
+task). No painel ela aparece na coluna "Already resolved", e não em Delivered, que guarda só o que
+espera uma release; também não entra na caixa de entrada. Ela vai para `released` quando a branch de
+release passa a conter o commit em que foi resolvida (ver "Task resolvida sem mudança" em Release). Se os checks falham, a issue fica aberta e a task vai para uma pessoa, com o motivo. Se o revisor aponta algo
 faltando e o construtor tem sessão para retomar, a revisão volta uma vez à sessão dele, com a instrução de
 fazer a mudança construindo sobre o que existe (e dizer o que assumiu) e de não mudar nada só quando faltar
 algo de fora do repositório. Uma mudança feita aí segue o caminho normal (push, checks, review, PR); nenhuma
@@ -305,6 +384,50 @@ uma branch protegida), a task não falha: o motivo fica no estágio `done` (`int
 rodar sozinho (veja o reinício automático acima); qualquer outra recusa deixa o PR aberto para uma
 pessoa. Trabalho entregue a uma pessoa (`handoff`) nunca é mergeado pela fábrica.
 
+**Integração que espera o CI do repositório.** Antes de mergear, a fábrica lê o que a branch de integração
+exige (`GET /repos/{r}/branches/{branch}` e as regras de `GET /repos/{r}/rules/branches/{branch}`). Se ela
+exige status checks, a fábrica não mergeia depois só dos checks dela: liga o auto-merge do PR (merge commit,
+com `expectedHeadOid` igual ao SHA verificado), grava esse SHA em `task.awaiting_ci_sha` e termina a
+execução. A task fica `done`, o painel mostra "waiting for CI", e nada de pré-release ainda. Se o GitHub
+recusar o auto-merge porque o PR já está `clean` (os checks obrigatórios passaram antes de a fábrica chegar
+aí), não há o que esperar: a fábrica mergeia na hora, fixada ao SHA verificado, pelo mesmo caminho de um
+repositório sem checks obrigatórios. Qualquer outra recusa faz a execução falhar com uma mensagem dizendo o
+que configurar.
+
+**PR que ainda é o rascunho de um handoff.** Quando uma pessoa pede mudanças numa task em `handoff` e a
+execução nova é aprovada, o PR aberto é o mesmo rascunho, com o título `[needs a person] ...`. O GitHub não
+mergeia rascunho, nem direto nem por auto-merge. Antes de integrar, nos dois caminhos, a fábrica marca o PR
+como pronto para revisão e devolve o título sem o prefixo (uma chamada GraphQL,
+`markPullRequestReadyForReview` com `updatePullRequest`; a API REST não tira um PR de rascunho). Um PR que
+não é rascunho não recebe chamada nenhuma. Se mesmo assim o GitHub recusar o auto-merge dizendo que o PR é
+rascunho, a fábrica marca como pronto e pede o auto-merge mais uma vez; uma segunda recusa falha a execução.
+
+O cron `integrate-after-ci` olha essas tasks a cada dois minutos:
+
+- O GitHub mergeou o SHA verificado: a fábrica grava `merged_sha` e faz o mesmo que depois de um merge
+  direto, com o mesmo código: avança `develop` (ou abre o PR para ela), cria a pré-release ali e aplica o
+  modo de release. O evento `done` novo leva `integratedBy: auto-merge`.
+- Um check obrigatório falhou: a fábrica desliga o auto-merge, para que o commit novo do agente não entre
+  antes de ser verificado, e manda o trabalho de volta ao agente, na mesma branch. O feedback nomeia cada
+  check, com o link e a evidência que a fábrica leu no servidor com o token do repositório, porque o
+  sandbox não abre o link: as linhas de erro do log de um job do Actions, ou as anotações e o resumo de
+  outro check (o mesmo `readEvidence` do `watch-promotions`). Se o check obrigatório é um job agregador
+  cujo log só diz que uma dependência não passou, a nota também traz os outros checks que falharam no
+  mesmo commit, marcados como não obrigatórios, com link e linhas de erro; um que não diz mais do que o
+  agregador fica de fora. Um commit status, que não tem check run,
+  leva o fim do que reportou. Se o GitHub não entrega a evidência, a nota diz isso, o motivo vai para o
+  log do cron e o trabalho volta mesmo assim. Conta como execução automática: depois de 3, vai para uma
+  pessoa com a lista dos checks.
+- O PR conflita com a base: recomeça sobre a base nova, como no conflito de um merge direto.
+- Um push depois da verificação, um PR fechado sem merge, um merge de outro commit, o auto-merge
+  desligado por alguém, ou um check obrigatório que não reporta em 6 horas (um check que só roda em push
+  nunca aparece num PR): vai para uma pessoa (`handoff`), com um comentário na issue. A fábrica nunca
+  deixa mergear outro commit além do verificado.
+- Checks ainda rodando: espera.
+
+Para esse caminho funcionar, o repositório precisa de "Allow auto-merge" e "Allow merge commits" ligados,
+e os checks exigidos têm de rodar em pull requests contra a branch de integração.
+
 **Pré-release.** Logo depois de integrar, a fábrica avança `develop` até o commit integrado e cria uma tag
 `pre/<issue>-<sha7>` sobre ele, marcada como pré-release no GitHub. Nas notas vão os checks, o veredito do
 review, as tentativas, o custo e o que o agente disse. Se o GitHub recusar o avanço de `develop` (uma branch
@@ -314,8 +437,9 @@ protegida que só aceita PR), a task continua integrada e a tag fica sobre o com
 PR só, e as integrações seguintes entram nele. Checks vermelhos não geram entrega, porque não há o que entregar.
 
 **Release.** É a promoção de `develop` para a branch padrão: abre (ou reaproveita) um PR `develop → main` e
-o mergeia, e publica uma release de verdade com a versão seguinte à da última (`v0.1.0` na primeira, e
-`patch`, `minor` ou `major` escolhe o que sobe). Como é a promoção da branch, **tudo o que está em `develop`
+o mergeia, e publica uma release de verdade com a versão seguinte à maior tag `vX.Y.Z` do repositório
+(`v0.1.0` quando não há nenhuma; tags de pacote e pré-releases como `v2.0.0-rc.1` não contam), e `patch`,
+`minor` ou `major` escolhe o que sobe. Como é a promoção da branch, **tudo o que está em `develop`
 vai junto** com o item pedido. Quem a faz:
 
 - um humano, pelo painel. O clique vale como a aprovação, e o painel pede confirmação;
@@ -333,14 +457,128 @@ vai junto** com o item pedido. Quem a faz:
 - o PR `develop → main` não pôde ser aberto (por exemplo, `develop` não tem nada que `main` já não tenha),
   está fechado ou é um rascunho.
 
-O merge é fixado ao commit que a fábrica viu em `develop`. Se o merge acontece mas a release não pôde ser
-criada, a task fica `released` com o erro registrado, porque o merge não se desfaz.
+O merge é fixado ao commit que a fábrica viu em `develop`. Com a release criada, toda task cujo trabalho
+está no commit promovido (a do release e toda task `done` integrada antes dela, conferido pela API de
+comparação) ganha uma entrega `release` com a tag, vai para `released`, recebe na issue o comentário
+"Available in `<tag>` (<url da release>)" e tem a issue fechada. É o mesmo código do cron
+`publish-changesets` (`factory/ship.ts`). Uma issue que o GitHub não deixa comentar ou fechar não desfaz o
+release: o motivo fica no estágio `released` da task (`issueError`) e na resposta (`issueErrors`). Se o merge
+acontece mas a release não pôde ser criada, só a task do release fica `released`, com o erro registrado,
+porque o merge não se desfaz.
+
+**Task resolvida sem mudança.** Uma task `done` com `resolved_sha` e sem `merged_sha` não tem nada que uma
+tag carregue, e a issue dela já foi fechada quando foi resolvida. Ela vai para `released` quando o commit em
+que foi resolvida está na branch de release (a que o dono escolheu, ou a branch padrão), conferido pela API
+de comparação. Isso acontece em dois momentos. Toda release que termina (a da própria fábrica ou uma
+publicação de changesets, pelo mesmo `shipContained`) confere as tasks resolvidas do repositório contra o
+commit promovido. E o cron `catch-up`, a cada 5 minutos, confere até 25 delas contra a ponta da branch de
+release, continuando de onde a passada anterior parou e recomeçando do início ao chegar ao fim, o que pega
+as que já estavam lá antes de existir essa regra. O estágio `released` registra `releaseBranch`,
+`resolvedSha` e quem moveu (`actor`; `factory` no cron, e na release também o `mergeSha` promovido). Não há
+entrega `release` nem tag, nenhum comentário na issue, e uma task cujo commit ainda não está na branch de
+release fica onde está. Uma comparação que o GitHub recusa vira log e a passada seguinte tenta de novo.
+
+**Release que espera o CI da branch de release.** Um PR `develop → main` aberto há um segundo ainda não tem
+os checks que a `main` exige, e o GitHub recusa o merge (`405 ... required status checks have not
+succeeded`). Por isso, quando a branch de release exige status checks, o `release()` não mergeia: liga o
+auto-merge do PR, fixado ao head que viu, e grava uma linha em `release_wait` com o PR, o head, a branch, o
+`bump`, quem decidiu e se o repositório usa changesets. A task continua `done`, a resposta traz
+`awaitingChecks`, e a página da task diz que o release espera os checks e esconde o botão de release.
+Só um release por repositório espera de cada vez, porque todos usariam o mesmo PR; um segundo pedido é
+recusado com o link do PR que espera. Se o GitHub recusar o auto-merge porque o PR já está `clean`, a linha
+de `release_wait` é apagada e o release mergeia na hora, fixado ao mesmo head, como sem checks
+obrigatórios. Qualquer outra recusa faz o release ser recusado com o motivo.
+
+O mesmo cron `integrate-after-ci` olha esses releases a cada dois minutos:
+
+- O GitHub mergeou o head fixado: a fábrica termina o release com o mesmo código do merge direto (a tag e a
+  release, ou a `publication` de um repositório com changesets, gravada só agora que a promoção está na
+  branch de release), cria a vigília do merge e move a task para `released`.
+- Um check obrigatório falhou, `develop` recebeu um push depois do pedido, o PR conflita, foi fechado, o
+  auto-merge foi desligado, ou um check não reporta em 6 horas: o release é recusado, com o motivo na
+  `release_wait` e na página da task, e o auto-merge é desligado quando ainda estava ligado. Um release
+  recusado nunca é tentado de novo sozinho: uma pessoa olha o PR e pede de novo. Se quem decidiu era um
+  agente, a recusa também vira uma decisão `would_release`.
+- Checks ainda rodando: espera.
 
 **A branch de release.** É a branch padrão do repositório, a não ser que o dono nomeie outra em "Branch a
 release lands on". Um repositório cuja branch padrão é `develop` (os gateways do theokit) precisa nomear a
 sua (`main`), porque `develop` é onde vai a pré-release e a fábrica se recusa a tratar a mesma branch como
 pré-release e como release. As branches que faltam são criadas a partir da branch de release, e a promoção
 abre o PR `develop → <branch de release>`.
+
+**Repositório que publica com changesets.** Quando `develop` tem `.changeset/config.json` (os quatro
+repositórios do theokit), a versão não é da fábrica: vem dos arquivos `.changeset/*.md`, e quem publica no
+npm e cria as tags (`@theokit/ui@1.13.0`) é o workflow de release do próprio repositório, ao mergear o PR
+"Version Packages" que ele abre a partir de `changeset-release/main`. Nesse caso o `release()`:
+
+- um changeset só conta como esperando quando a API de comparação entre a branch de release e `develop` o
+  lista como adicionado desde a base comum das duas (`.changeset/*.md`, menos o README). Um changeset que um
+  release anterior consumiu na branch de release, e que `develop` ainda guarda porque ninguém fez o
+  back-merge, não conta (o theokit-plugins depois do Version Packages #250);
+- quando nenhum changeset foi adicionado, lê na mesma comparação os arquivos que
+  `develop` muda desde a branch de release e liga cada um aos pacotes em que está (todo `package.json` de
+  `develop` acima dele, a raiz incluída). Se algum desses pacotes é publicado pelo changesets (tem nome, não
+  é `private` e não está no `ignore` do `.changeset/config.json`), recusa e diz o nome do pacote, porque ele
+  não seria publicado. Se nenhum é (o `theoclaw`, ignorado no theokit, ou arquivos fora de pacote), o
+  release é o da própria fábrica: tag, release, tasks liberadas e issues fechadas, como num repositório
+  sem changesets, porque nenhum changeset pode existir para esses pacotes;
+- com um changeset esperando, promove `develop` para a branch de release como sempre, mas não cria tag nem
+  release próprios;
+- grava uma `publication` esperando, e a task que pediu o release fica `released` (promovida). Quando a
+  branch de release exige checks, isso acontece só depois que o GitHub mergeia a promoção (veja acima).
+
+O cron `publish-changesets` olha cada `publication` esperando, a cada minuto. Ele acha o PR "Version
+Packages" e o mergeia quando os checks dele estão verdes, fixado ao commit que viu, em nome de quem decidiu o
+release. Checks vermelhos, pendentes ou ausentes, rascunho ou PR fechado: ele espera e registra o motivo na
+`publication`. O workflow cria as releases um pacote por vez, então o cron só segue quando existe uma release
+para cada pacote publicado cuja versão o merge do "Version Packages" mudou (lido do `package.json` de cada
+pacote no commit do merge e no primeiro pai dele); enquanto falta alguma, ele espera e registra qual. Passados
+30 minutos do merge, segue com as releases que existem e registra no `detail` da `publication` o pacote que
+ficou sem release, para nunca esperar para sempre. Depois que o workflow publica, ele lê as releases novas
+do GitHub, grava uma entrega `release` com cada tag, e cada task cujo trabalho está no commit promovido (a
+do release e toda task `done` integrada antes dela, conferido pela API de comparação) vai para `released`,
+ganha o comentário "Available in <tags>" na issue e tem a issue fechada. Uma issue que não fecha fica
+registrada na task e no `detail` da `publication`, e a publicação segue.
+
+Há workflows de release que fazem o versionamento, empurram `changeset-release/<release>` e param, porque a
+organização não deixa o Actions abrir pull request (o `release.yml` do usetheokit/theokit). Quando não há PR
+"Version Packages" aberto ou mergeado depois da promoção e essa branch existe, está à frente da branch de release
+e tem o commit da ponta mais novo que a promoção, a fábrica abre ela mesma o PR "Version Packages" a partir dela
+(título "Version Packages", corpo citando o commit promovido), e a `publication` continua esperando; na passada
+seguinte o PR é mergeado como qualquer outro. Uma branch com commit anterior à promoção é de um release antigo e
+é ignorada. Enquanto uma branch dessas espera, a `publication` nunca é encerrada pelo caminho abaixo.
+
+Se o workflow de release roda no commit promovido e não abre o PR "Version Packages" (porque não havia
+changeset para aplicar), nada é publicado, e a `publication` esperaria para sempre. Por isso, passados 10
+minutos da promoção, quando ainda não há PR "Version Packages" aberto ou mergeado depois dela, o cron lê os
+checks do commit promovido (a API de checks, a mesma permissão que a fábrica já tem; a de workflow runs pediria
+a permissão Actions):
+
+- algum check ainda roda, ou nenhum reportou: espera, e diz isso na `publication`;
+- algum check falhou: a `publication` fica `failed`, e o motivo vai para a task, onde o painel o mostra
+  ("merged by …, but the release could not be created: …");
+- todos terminaram sem falha: o run acabou e não vai abrir o PR. A fábrica lê o que a promoção mudou (a
+  comparação do commit promovido com o seu primeiro pai). Se mudou um pacote que o changesets publica, a
+  `publication` fica `failed` com o nome do pacote, porque uma tag da fábrica não o publicaria. Se não, a
+  promoção vira um release da própria fábrica, como no caso sem changeset acima: o patch depois da maior tag
+  `vX.Y.Z`, as tasks contidas na promoção liberadas e as issues comentadas e fechadas. A tag é escolhida
+  uma vez e gravada na `publication` antes de ser criada, então uma passada que falha depois e roda de novo
+  cria a mesma tag, não a seguinte.
+
+Depois do release, o workflow do repositório abre o back-merge: o PR da branch de release para a branch de
+integração (`main → workspace`). Enquanto ele não entra, `workspace` fica com as versões de antes do release,
+e um check que compara as duas coisas (o `check-changelog-current` do theokit) reprova todo PR da fábrica, que
+então devolve trabalho já aprovado ao agente. Por isso o mesmo cron, a cada passada, procura em cada
+repositório habilitado que já teve uma `publication` um PR aberto cuja head é a branch de release do próprio
+repositório (nunca a de um fork) e cuja base é a branch de integração. Com os checks verdes, ele mergeia com
+merge commit, fixado ao commit da head que viu. Checks vermelhos, pendentes ou ausentes, ou rascunho: o PR
+fica aberto e a próxima passada tenta de novo. Esses são os dois únicos PRs que esse passo mergeia: o
+"Version Packages" e o back-merge.
+
+Nesses repositórios a verificação ganha um check a mais, `changeset`
+(`pnpm exec changeset status --since=origin/<branch de integração>`): mudar um pacote sem changeset reprova
+o trabalho, e o agente volta para escrever um.
 
 **A fábrica nunca mergeia em `main` por conta própria.** A branch de integração não pode ser a branch
 padrão: a fábrica se recusa (ao habilitar o repositório e ao começar uma execução), porque integrar ali é
@@ -379,6 +617,39 @@ No painel, a task liberada ganha a seção "Default branch after the release", c
 do revert e o botão "I dealt with it", que tira o caso da caixa de entrada sem mexer em nada no GitHub. Uma
 `main` vermelha aparece na caixa de entrada e no cartão da task.
 
+## O vigia das promoções
+
+Os PRs que levam o trabalho adiante (`workspace` → `develop`, `develop` → a branch de release e o Version
+Packages `changeset-release/<release>`) também podem ficar vermelhos, e aí `develop` para e nada é lançado.
+Um cron (`watch-promotions`) olha esses PRs abertos em cada repositório habilitado, a cada cinco minutos, e
+trata cada check que falhou no commit de cabeça:
+
+| O que ele vê                                            | O que acontece                                                                    |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Um job do Actions falhou na primeira tentativa          | Roda de novo os jobs que falharam daquela run, uma vez só, e não abre nada ainda. |
+| O job falhou de novo depois disso                       | Lê o log do job e guarda as linhas que dizem o que quebrou.                       |
+| Um check que não é do Actions falhou (CodeQL, Sonar)    | Lê as anotações e o resumo do check, sem rodar de novo.                           |
+| A mesma falha, com a issue dela aberta, num commit novo | Comenta na issue, em vez de abrir outra.                                          |
+| A mesma falha, com a issue dela já fechada              | Abre uma issue nova: o conserto não se sustentou.                                 |
+
+As linhas do log são escolhidas sem modelo: asserções, testes que falharam, erros de tipo e de lint (com o
+arquivo), e o que ferramentas como o knip listam. Um job que só diz que outros falharam (o resumo do CI) é
+deixado de lado quando outro check diz o motivo. A falha é identificada pelo check e por essas linhas, sem os
+valores que um teste inventa a cada execução, e a tabela `promotion_finding` liga cada uma à sua issue.
+
+A issue sai com o label `factory`, então um agente a pega como qualquer outra. A exceção é um scanner de
+segredos (TruffleHog, gitleaks): ele lê todos os commits da promoção, inclusive os que já estão no histórico,
+que nunca é reescrito, e nenhuma mudança no código o faz passar. Essa issue sai sem o label, para uma pessoa
+decidir.
+
+Cada passada abre no máximo `FACTORY_PROMOTION_ISSUES_PER_PASS` issues novas por repositório (três, se não
+for definido; zero desliga a abertura e mantém as reexecuções), para que um pipeline quebrado não inunde o
+tracker. O resto fica para a próxima passada. Comentários não contam nesse limite. Nada aqui faz merge.
+
+O diagnóstico não passa por um assistente no processo do servidor. O log é texto que veio de fora, e um agente
+lendo esse texto onde estão as credenciais da fábrica seria uma porta aberta. Quem diagnostica é o agente
+que pega a issue, dentro da sandbox, com o repositório e os comandos do projeto à mão.
+
 ## Saúde da própria fábrica
 
 **Custo por execução.** Toda execução de um agente (um build, um retrabalho, uma retomada depois de uma
@@ -405,6 +676,43 @@ snapshots do provedor, a tabela de jobs) não resolve os achados dela: não ver 
 ter sumido. "Começar de novo" apaga a branch e recomeça do zero, e o painel pede confirmação, porque uma run
 que parecia parada pode, raramente, ainda estar viva.
 
+**Indicadores e faixas de controle.** O cron `measure` roda de hora em hora e lê o que a fábrica já grava
+(eventos de estágio, evidência, reviews e o vigia da `main`). Com isso calcula oito indicadores por
+repositório e um conjunto para a fábrica inteira (`*` no banco, "All repositories" no painel). Cada run de
+uma task começa num `intake` e só conta quando termina (`done`, `failed` ou `handoff`). Uma run que só
+esperou outra issue fechar não conta.
+
+| Indicador                 | O que mede                                                                                | Piora quando |
+| ------------------------- | ----------------------------------------------------------------------------------------- | ------------ |
+| `first_pass_checks`       | Se todas as checagens da primeira verificação da run passaram                             | cai          |
+| `rework_rounds`           | Quantos retrabalhos a run teve                                                            | sobe         |
+| `first_review_approval`   | Se o primeiro review da run aprovou                                                       | cai          |
+| `minutes_to_first_review` | Minutos do início da run até o primeiro review                                            | sobe         |
+| `minutes_to_delivery`     | Minutos do início da run até o `done`                                                     | sobe         |
+| `cost_per_delivery`       | Custo de uma run entregue                                                                 | sobe         |
+| `change_failure`          | Se a entrega voltou: nova run, `failed` ou `handoff` depois do `done`, ou `main` vermelha | sobe         |
+| `hours_to_release`        | Horas da criação da task até a primeira release                                           | sobe         |
+
+Os valores viram um ponto por dia (a média do dia, guardada em `metric_point`), e só quando o dia tem
+observações suficientes: três, ou uma para `hours_to_release`. A faixa de cada série é a média e o desvio dos
+pontos dos últimos 30 dias, sem os 8 mais recentes. Sobre esses 8 rodam as regras de Western Electric, sempre
+no sentido em que o indicador piora. Melhorar demais não dispara nada. Sem 7 pontos de base, ou com desvio
+zero, a série fica "no baseline yet". A detecção é só aritmética, sem modelo.
+
+| Regra                         | Quando dispara                     | O que acontece                |
+| ----------------------------- | ---------------------------------- | ----------------------------- |
+| `four_of_five_beyond_1_sigma` | 4 dos últimos 5 pontos além de 1σ  | Só registra                   |
+| `two_of_three_beyond_2_sigma` | 2 dos últimos 3 além de 2σ         | Registra e mostra no painel   |
+| `eight_on_one_side`           | Os últimos 8 do lado ruim da média | Registra e mostra no painel   |
+| `beyond_3_sigma`              | O último ponto além de 3σ          | Registra, mostra e abre issue |
+
+As faixas e os níveis ficam em `src/server/metrics/config.ts`, versionados. Cada regra quebrada num dia vira
+uma linha em `metric_signal`, uma vez só. A issue vai para `paulohenriquevn/aifactory`, com a tabela dos
+pontos, e só uma por indicador e repositório a cada 30 dias. Quando o mesmo dia já abriu issue num
+repositório, a série da fábrica inteira não abre outra. Se o GitHub recusa, o erro fica na linha e a passada
+seguinte tenta de novo. A página Health mostra o último dia de cada indicador, a base e o estado da faixa, e
+os sinais dos últimos 14 dias que mostram ou abrem issue.
+
 ## Qualidade do código
 
 Três gates rodam no job `quality` do CI, ao lado do `check`. Localmente: `pnpm quality`, ou cada um
@@ -422,6 +730,32 @@ Três gates rodam no job `quality` do CI, ao lado do `check`. Localmente: `pnpm 
   diff, a classificação da `main`, a leitura da resposta, as versões, as notas e a formatação do painel) e
   confere se algum teste falha. A nota mínima é 90; hoje é 97. Textos (literais de string) ficam de fora, para
   o gate cobrar lógica e não redação. Só os testes de unidade desses módulos rodam por mutante, sem banco.
+
+## Avaliação dos agentes
+
+Os testes de unidade usam agentes falsos, então não dizem se uma mudança de prompt, de harness, de modelo ou
+da imagem do sandbox deixou os agentes piores. Para isso existe uma suíte de casos reais, rodada pelos agentes
+de verdade (ADR 0008).
+
+- **Os casos** estão em `evals/cases.json`: 30 tarefas que a fábrica entregou, em seis repositórios, metade
+  bug e metade feature. Cada um tem a issue, o commit de partida e as checagens que aceitaram o trabalho.
+  `pnpm evals:cases` os escreve de novo a partir do banco e do GitHub, sem mudar nada em nenhum dos dois.
+- **Um caso roda como uma tarefa**: sandbox, plano do construtor, construtor, checagens, guardas do diff,
+  revisor e até três tentativas, com os agentes e modelos escolhidos no painel. O construtor não pode perguntar nada. Nada sai
+  do sandbox: o GitHub é alcançável sem credencial, então o clone funciona e um push não tem como passar. O
+  caso passa quando as checagens passam, o revisor aprova e nenhuma guarda bloqueia.
+- **`pnpm evals`** roda os cinco casos marcados como rápidos (`EVALS_SET=all` roda todos, `EVALS_CASES` escolhe
+  pelo id) e compara com `evals/baseline.json`. Cada rodada fica em `.evals/`. `EVALS_BASELINE=1` grava a
+  rodada como a nova baseline. Nenhum caso começa depois que o gasto chega a `EVALS_BUDGET_USD` (padrão
+  US$ 15).
+- **No deploy**, `scripts/deploy.sh` chama `pnpm evals:check` antes do build. Se nenhum arquivo da
+  configuração dos agentes mudou desde o commit da baseline, e o agente, o modelo e o esforço de cada papel
+  são os mesmos, a checagem não roda nada. Senão, roda os casos rápidos, e o deploy para sem build e sem
+  restart quando a taxa de aprovação cai mais de 20 pontos (um caso de cinco) ou o custo médio por caso sobe
+  mais de 25%.
+
+A baseline de 2026-11-11 passou cinco de cinco casos, com custo médio de US$ 0,35 por caso nos agentes, e
+levou 32 minutos. Somando o sandbox, a rodada custou US$ 1,98.
 
 ## O painel
 
@@ -548,7 +882,8 @@ uma é mudar o código, no arquivo que ela indica.
   precisa de uma pessoa), com o custo e o número de tentativas de cada task. Uma falha por cota do agente
   ou por problema de ambiente (rede, GitHub, sandbox, reinício) cai em "Will retry itself", porque a
   fábrica a repete sozinha quando passa. Só a falha do próprio trabalho fica em "Needs a person". Um PR
-  que a fábrica já integrou aparece como "integrated".
+  que a fábrica já integrou aparece como "integrated", e um que espera os checks obrigatórios do
+  repositório para o GitHub mergear aparece como "waiting for CI".
 - A caixa de entrada: só o que espera uma pessoa, do mais antigo ao mais novo. É uma pergunta do
   agente, um PR que ninguém aprovou, um trabalho entregue depois de três tentativas ou uma execução
   que falhou (com "sem cota" dito como tal).
@@ -577,12 +912,12 @@ enquanto o agente trabalha, e uma conexão que caiu.
 **Ações.** Todas passam pelo servidor, que confere o estágio da task de novo, então uma página velha não
 consegue fazer o que a task já não permite.
 
-| Ação                  | Quando                                                        | O que faz                                                                                                                                                                                                                |
-| --------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Aprovar               | task com PR (`done`, `handoff`)                               | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.                                                                                                          |
-| Pedir mudanças        | task com PR, com um texto                                     | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review.                                                                                                    |
-| Tentar de novo        | task `failed` ou `handoff`, ou `done` com o PR nunca mergeado | Apaga a branch (o que fecha o PR) e recomeça do zero, sobre a base atual. É o caminho para um PR que o GitHub recusou por conflito.                                                                                      |
-| Marcar como resolvida | task `failed` ou `handoff`, com um texto                      | Para o que uma pessoa resolveu por outro caminho (à mão, ou dividindo a issue em outras já entregues). O texto diz onde. A task vai para Delivered, marcada como resolvida no commit em que a branch de integração está. |
+| Ação                  | Quando                                                        | O que faz                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Aprovar               | task com PR (`done`, `handoff`)                               | Grava a aprovação **presa ao commit** em que o PR está. Se a branch andar, a aprovação não cobre o commit novo.                                                                                                                                                                                                                                                       |
+| Pedir mudanças        | task com PR, com um texto                                     | Uma nova execução parte da branch que o agente já enviou, com o texto no prompt, e passa de novo por checks e review. Se a branch não existe mais no GitHub (task resolvida sem mudança, ou branch apagada por um "Tentar de novo"), a execução parte da branch de integração, como a primeira, com o mesmo texto no prompt, e a task deixa de contar como resolvida. |
+| Tentar de novo        | task `failed` ou `handoff`, ou `done` com o PR nunca mergeado | Apaga a branch (o que fecha o PR) e recomeça do zero, sobre a base atual. É o caminho para um PR que o GitHub recusou por conflito.                                                                                                                                                                                                                                   |
+| Marcar como resolvida | task `failed` ou `handoff`, com um texto                      | Para o que uma pessoa resolveu por outro caminho (à mão, ou dividindo a issue em outras já entregues). O texto diz onde. A task vai para "Already resolved", marcada como resolvida no commit em que a branch de integração está.                                                                                                                                     |
 
 Se o agente, ao receber um pedido de mudança, concluir que não há o que mudar (o teste já existia, por
 exemplo), a task volta a `done` e a resposta dele vira um comentário na issue, em vez de falhar.
@@ -605,9 +940,9 @@ login já atrás de algo mais forte que um token (por exemplo, o Cloudflare Acce
 Tudo o que o dono precisa fazer acontece no painel (`http://localhost:3000`) e nas páginas do GitHub que
 ele abre. Nenhum comando.
 
-1. **Setup.** A página lista o que falta: a GitHub App, o webhook, o segredo do webhook, o sandbox, ao
-   menos um agente (Claude Code ou Codex) e um repositório habilitado. Cada linha diz o que está
-   errado e leva à página que conserta. Nunca mostra um segredo, só se ele existe e o que o paga.
+1. **Setup.** A página lista o que falta: a GitHub App, o webhook, os eventos que a App assina, o
+   segredo do webhook, o sandbox, ao menos um agente (Claude Code ou Codex) e um repositório
+   habilitado. Cada linha diz o que está errado e leva à página que conserta. Nunca mostra um segredo, só se ele existe e o que o paga.
 2. **Instalar a App e dar acesso aos repositórios.** O botão "Install on GitHub" (em Repositories e no
    Setup) abre a página de instalação da App no GitHub, numa aba nova. Lá o dono escolhe a conta ou a
    organização e os repositórios, e o painel, que passa a perguntar ao GitHub a cada poucos segundos,
@@ -1029,7 +1364,8 @@ ficar entre as duas).
 novo as que falharam, enquanto o servidor ou o túnel estavam fora. Uma entrega é deixada em paz se alguma
 tentativa dela foi aceita, se a fábrica já a gravou ou se já foi pedida três vezes. O GitHub guarda três
 dias. Os ids de entrega passam do que um número do JavaScript guarda sem arredondar, então são lidos
-como texto.
+como texto. A mesma passada move para `released` as tasks resolvidas sem mudança cujo commit já está na
+branch de release (ver "Task resolvida sem mudança").
 
 ### Memória e quantas execuções ao mesmo tempo
 

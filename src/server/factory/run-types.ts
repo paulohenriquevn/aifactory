@@ -36,6 +36,11 @@ export type RunTaskDeps = {
   releaseMode?: ReleaseMode
   /** What must pass on the pushed commit before a pull request opens. */
   checks?: CheckSpec[]
+  /**
+   * Whether the builder writes a plan before it changes anything (on unless false). A builder that cannot
+   * resume a session never does, since the plan would not reach the turn that does the work.
+   */
+  planFirst?: boolean
   timeouts?: { sandboxMs: number; agentMs: number; checkMs?: number; reviewMs?: number }
   /** Wait between push attempts. */
   pushRetryDelayMs?: number

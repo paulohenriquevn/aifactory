@@ -75,6 +75,14 @@ describe('a delivery and its job', () => {
     expect(await jobs()).toHaveLength(0)
   })
 
+  it('queues nothing for a delivery that is routed', async () => {
+    const closed = { ...(labeled() as object), action: 'closed', sender: { login: 'alice' } }
+    const result = await recordAndQueue(delivery('d-1', closed), queue)
+
+    expect(result.status).toBe('routed')
+    expect(await jobs()).toHaveLength(0)
+  })
+
   it('rolls the delivery and the task back when the job cannot be queued', async () => {
     const broken = {
       ...queue,

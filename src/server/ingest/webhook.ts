@@ -28,8 +28,8 @@ export async function handleGithubDelivery(
 
   const webhook = defineWebhook({
     verify: github({ secret }),
-    // GitHub deliveries carry up to 25 MB; an issues event is far smaller, so the default cap
-    // (1 MB) is kept and a larger body is refused with 413.
+    // GitHub deliveries carry up to 25 MB; the events the factory reads (issues, comments, reviews,
+    // checks) are far smaller, so the default cap (1 MB) is kept and a larger body is refused with 413.
     handler: async ({ rawBody, request: verified }) => {
       const deliveryId = verified.headers.get('x-github-delivery')
       const event = verified.headers.get('x-github-event')

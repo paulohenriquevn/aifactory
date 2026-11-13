@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createGithubApi } from './pulls'
+import { AutoMergeRefused, autoMergeOrMergeable, createGithubApi, titleToRestore } from './pulls'
 
 type Call = { method: string; url: string; body?: unknown; auth?: string }
 
@@ -134,6 +134,93 @@ describe('openPullRequest', () => {
     expect(result.number).toBe(3)
     expect(calls.some((c) => c.method === 'POST')).toBe(false)
   })
+
+  it('says whether the pull request that is already open is a draft, and its title', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls': {
+        status: 200,
+        body: [
+          {
+            number: 3,
+            html_url: 'https://github.com/o/r/pull/3',
+            draft: true,
+            title: '[needs a person] T',
+          },
+        ],
+      },
+    })
+
+    const result = await createGithubApi(fetch).openPullRequest('o/r', 'tok', pull)
+
+    expect(result).toEqual({
+      number: 3,
+      url: 'https://github.com/o/r/pull/3',
+      draft: true,
+      title: '[needs a person] T',
+    })
+  })
+})
+
+describe('titleToRestore', () => {
+  it('is nothing for a pull request that is not a draft', () => {
+    expect(titleToRestore({ draft: false, title: '[needs a person] T' }, 'T')).toBeUndefined()
+    expect(titleToRestore({}, 'T')).toBeUndefined()
+  })
+
+  it('is the title of a draft without the handoff prefix', () => {
+    expect(titleToRestore({ draft: true, title: '[needs a person] Fix it' }, 'T')).toBe('Fix it')
+  })
+
+  it('keeps a title a person already rewrote, and only strips the prefix at the start', () => {
+    expect(titleToRestore({ draft: true, title: 'Mine' }, 'T')).toBe('Mine')
+    expect(titleToRestore({ draft: true, title: 'A [needs a person] B' }, 'T')).toBe(
+      'A [needs a person] B',
+    )
+  })
+
+  it('falls back to the title of the run when the draft came without one', () => {
+    expect(titleToRestore({ draft: true }, 'T')).toBe('T')
+    expect(titleToRestore({ draft: true }, '')).toBe('')
+  })
+})
+
+describe('markReadyForReview', () => {
+  it('takes the pull request out of draft and sets its title, in one GraphQL call', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { data: { markPullRequestReadyForReview: { pullRequest: { number: 12 } } } },
+      },
+    })
+
+    await createGithubApi(fetch).markReadyForReview('o/r', 'tok', 12, 'Fix it')
+
+    const graphql = calls.filter((c) => c.url.includes('graphql'))
+    expect(graphql).toHaveLength(1)
+    expect(graphql[0].auth).toBe('Bearer tok')
+    expect((graphql[0].body as { variables: object }).variables).toEqual({
+      id: 'PR_12',
+      title: 'Fix it',
+    })
+    const query = (graphql[0].body as { query: string }).query
+    expect(query).toContain('markPullRequestReadyForReview(input: { pullRequestId: $id })')
+    expect(query).toContain('updatePullRequest(input: { pullRequestId: $id, title: $title })')
+  })
+
+  it('throws with what GitHub said when it will not', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { errors: [{ message: 'Resource not accessible by integration' }] },
+      },
+    })
+
+    await expect(createGithubApi(fetch).markReadyForReview('o/r', 't', 12, 'T')).rejects.toThrow(
+      /o\/r#12 ready for review: Resource not accessible by integration/,
+    )
+  })
 })
 
 describe('commentOnIssue', () => {
@@ -237,13 +324,131 @@ describe('releases', () => {
     await expect(createGithubApi(fetch).createRelease('o/r', 't', release)).rejects.toThrow(/403/)
   })
 
-  it('reads the latest full release, or nothing when there is none', async () => {
+  it('lists the tags that start with v, by name', async () => {
     const some = fakeFetch({
-      'GET /releases/latest': { status: 200, body: { tag_name: 'v1.2.3' } },
+      'GET /git/matching-refs/tags/v': {
+        status: 200,
+        body: [{ ref: 'refs/tags/v1.2.0' }, { ref: 'refs/tags/vendor-drop' }],
+      },
     })
-    expect(await createGithubApi(some.fetch).latestReleaseTag('o/r', 't')).toBe('v1.2.3')
-    const none = fakeFetch({ 'GET /releases/latest': { status: 404 } })
-    expect(await createGithubApi(none.fetch).latestReleaseTag('o/r', 't')).toBeUndefined()
+    expect(await createGithubApi(some.fetch).versionTags('o/r', 't')).toEqual([
+      'v1.2.0',
+      'vendor-drop',
+    ])
+    expect(some.calls[0].url).toBe('/git/matching-refs/tags/v')
+  })
+
+  it('throws when GitHub will not list the tags', async () => {
+    const { fetch } = fakeFetch({ 'GET /git/matching-refs/tags/v': { status: 403 } })
+    await expect(createGithubApi(fetch).versionTags('o/r', 't')).rejects.toThrow(/403/)
+  })
+})
+
+describe('what changed between two branches, and the files of a branch', () => {
+  /** A compare that answers one page of files per request, then none. */
+  function comparePages(
+    pages: { filename: string; status?: string; previous_filename?: string }[][],
+  ) {
+    const urls: string[] = []
+    const fetch = async (url: string) => {
+      urls.push(url.replace('https://api.github.com/repos/o/r', ''))
+      const page = Number(new URL(url).searchParams.get('page'))
+      return new Response(JSON.stringify({ files: pages[page - 1] ?? [] }), { status: 200 })
+    }
+    return { fetch, urls }
+  }
+
+  it('lists every file the head changed since the base, page by page, with its status and the old name of a rename', async () => {
+    const { fetch, urls } = comparePages([
+      [
+        { filename: 'apps/theoclaw/a.ts', status: 'modified' },
+        { filename: 'b.md', status: 'renamed', previous_filename: 'old/b.md' },
+      ],
+      [{ filename: '.changeset/brave-fox.md', status: 'added' }],
+    ])
+
+    expect(await createGithubApi(fetch).changedFiles('o/r', 't', 'main', 'develop')).toEqual([
+      { path: 'apps/theoclaw/a.ts', status: 'modified' },
+      { path: 'b.md', status: 'renamed', previousPath: 'old/b.md' },
+      { path: '.changeset/brave-fox.md', status: 'added' },
+    ])
+    expect(urls).toEqual([
+      '/compare/main...develop?per_page=100&page=1',
+      '/compare/main...develop?per_page=100&page=2',
+      '/compare/main...develop?per_page=100&page=3',
+    ])
+  })
+
+  it('refuses to answer for a change larger than GitHub lists, rather than leave files out', async () => {
+    const page = Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}`, status: 'added' }))
+    const { fetch } = comparePages(Array.from({ length: 10 }, () => page))
+    await expect(
+      createGithubApi(fetch).changedFiles('o/r', 't', 'main', 'develop'),
+    ).rejects.toThrow(/main\.\.\.develop on o\/r changes 3000 files or more/)
+  })
+
+  it('throws when GitHub will not compare the branches', async () => {
+    const { fetch } = fakeFetch({ 'GET /compare/main...develop': { status: 404 } })
+    await expect(
+      createGithubApi(fetch).changedFiles('o/r', 't', 'main', 'develop'),
+    ).rejects.toThrow(/404 comparing main with develop/)
+  })
+
+  it('lists the files of a branch, without directories', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /git/trees/develop': {
+        status: 200,
+        body: {
+          truncated: false,
+          tree: [
+            { path: 'package.json', type: 'blob' },
+            { path: 'apps', type: 'tree' },
+            { path: 'apps/theoclaw/package.json', type: 'blob' },
+          ],
+        },
+      },
+    })
+    expect(await createGithubApi(fetch).filePaths('o/r', 't', 'develop')).toEqual([
+      'package.json',
+      'apps/theoclaw/package.json',
+    ])
+    expect(calls[0].url).toBe('/git/trees/develop?recursive=1')
+  })
+
+  it('refuses a listing GitHub cut short, which would leave packages out', async () => {
+    const { fetch } = fakeFetch({
+      'GET /git/trees/develop': { status: 200, body: { truncated: true, tree: [] } },
+    })
+    await expect(createGithubApi(fetch).filePaths('o/r', 't', 'develop')).rejects.toThrow(
+      /truncated/,
+    )
+  })
+
+  it('reads a file at a branch, raw, and nothing when it is not there', async () => {
+    const urls: string[] = []
+    const accepts: string[] = []
+    const fetch = async (url: string, init: RequestInit = {}) => {
+      urls.push(url.replace('https://api.github.com/repos/o/r', ''))
+      accepts.push((init.headers as Record<string, string>).accept)
+      return url.includes('missing')
+        ? new Response('{}', { status: 404 })
+        : new Response('{"name":"theoclaw"}', { status: 200 })
+    }
+    const api = createGithubApi(fetch)
+
+    expect(await api.readFile('o/r', 't', 'apps/the claw/package.json', 'develop')).toBe(
+      '{"name":"theoclaw"}',
+    )
+    expect(await api.readFile('o/r', 't', 'missing.json', 'develop')).toBeUndefined()
+    expect(urls[0]).toBe('/contents/apps/the%20claw/package.json?ref=develop')
+    expect(accepts[0]).toBe('application/vnd.github.raw+json')
+  })
+
+  it('throws when GitHub will not give the file', async () => {
+    const { fetch } = fakeFetch({ 'GET /contents/package.json': { status: 403 } })
+    await expect(
+      createGithubApi(fetch).readFile('o/r', 't', 'package.json', 'develop'),
+    ).rejects.toThrow(/403 reading package.json at develop/)
   })
 })
 
@@ -499,6 +704,63 @@ describe('the branches of a repository', () => {
     expect(calls[0].url).toContain('/git/ref/heads/release/1')
   })
 
+  it('reads how far a branch is ahead of another, and when its head was committed', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /git/ref/heads/changeset-release/main': { status: 200, body: { object: { sha: 'v1' } } },
+      'GET /compare/main...v1': { status: 200, body: { status: 'ahead', ahead_by: 1 } },
+      'GET /commits/v1': {
+        status: 200,
+        body: { sha: 'v1', commit: { committer: { date: '2026-11-12T10:04:00Z' } } },
+      },
+    })
+
+    const ahead = await createGithubApi(fetch).branchAhead(
+      'o/r',
+      'tok',
+      'main',
+      'changeset-release/main',
+    )
+
+    expect(ahead).toEqual({ sha: 'v1', aheadBy: 1, committedAt: new Date('2026-11-12T10:04:00Z') })
+    expect(calls.map((c) => c.url)).toEqual([
+      '/git/ref/heads/changeset-release/main',
+      '/compare/main...v1',
+      '/commits/v1',
+    ])
+  })
+
+  it('says a branch that does not exist is not ahead of anything, without comparing', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /git/ref/heads/changeset-release/main': { status: 404, body: { message: 'Not Found' } },
+    })
+
+    expect(
+      await createGithubApi(fetch).branchAhead('o/r', 'tok', 'main', 'changeset-release/main'),
+    ).toBeUndefined()
+    expect(calls).toHaveLength(1)
+  })
+
+  it('fails when the comparison or the commit cannot be read', async () => {
+    const head = { status: 200, body: { object: { sha: 'v1' } } }
+    const compare = { status: 200, body: { status: 'ahead', ahead_by: 1 } }
+    const noCompare = fakeFetch({
+      'GET /git/ref/heads/b': head,
+      'GET /compare/main...v1': { status: 500, body: 'boom' },
+    }).fetch
+    const noCommit = fakeFetch({
+      'GET /git/ref/heads/b': head,
+      'GET /compare/main...v1': compare,
+      'GET /commits/v1': { status: 500, body: 'boom' },
+    }).fetch
+
+    await expect(createGithubApi(noCompare).branchAhead('o/r', 't', 'main', 'b')).rejects.toThrow(
+      /500/,
+    )
+    await expect(createGithubApi(noCommit).branchAhead('o/r', 't', 'main', 'b')).rejects.toThrow(
+      /500/,
+    )
+  })
+
   it('fails on any other answer when reading a branch', async () => {
     const { fetch } = fakeFetch({ 'GET /git/ref/heads/x': { status: 500, body: 'boom' } })
     await expect(createGithubApi(fetch).branchHead('o/r', 'tok', 'x')).rejects.toThrow(/500/)
@@ -548,5 +810,534 @@ describe('the branches of a repository', () => {
     await expect(
       createGithubApi(protectedBranch.fetch).mergeBranch('o/r', 'tok', 'd', 'x'),
     ).rejects.toThrow(/403/)
+  })
+})
+
+describe('what a release with changesets needs to read', () => {
+  it('lists the names in a directory at a ref, and nothing when the directory is not there', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /contents/.changeset': {
+        status: 200,
+        body: [{ name: 'config.json' }, { name: 'README.md' }, { name: 'brave-fox.md' }],
+      },
+    })
+    expect(await createGithubApi(fetch).listDirectory('o/r', 't', '.changeset', 'develop')).toEqual(
+      ['config.json', 'README.md', 'brave-fox.md'],
+    )
+    expect(calls[0].url).toBe('/contents/.changeset?ref=develop')
+    const none = fakeFetch({ 'GET /contents/.changeset': { status: 404 } })
+    expect(
+      await createGithubApi(none.fetch).listDirectory('o/r', 't', '.changeset', 'develop'),
+    ).toBeUndefined()
+  })
+
+  it('throws when the path is a file, not a directory', async () => {
+    const { fetch } = fakeFetch({
+      'GET /contents/.changeset': { status: 200, body: { name: '.changeset', type: 'file' } },
+    })
+    await expect(
+      createGithubApi(fetch).listDirectory('o/r', 't', '.changeset', 'develop'),
+    ).rejects.toThrow(/not a directory/)
+  })
+
+  it('reads the full releases published since a time, leaving pre-releases and drafts out', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /releases': {
+        status: 200,
+        body: [
+          {
+            tag_name: '@theokit/ui@1.13.0',
+            html_url: 'https://github.com/o/r/releases/tag/u',
+            prerelease: false,
+            draft: false,
+            published_at: '2026-11-11T12:00:00Z',
+          },
+          {
+            tag_name: 'pre/7-abc',
+            html_url: 'p',
+            prerelease: true,
+            draft: false,
+            published_at: '2026-11-11T12:00:00Z',
+          },
+          { tag_name: 'draft', html_url: 'd', prerelease: false, draft: true, published_at: null },
+          {
+            tag_name: '@theokit/ui@1.12.2',
+            html_url: 'old',
+            prerelease: false,
+            draft: false,
+            published_at: '2026-09-25T21:13:42Z',
+          },
+        ],
+      },
+    })
+    expect(
+      await createGithubApi(fetch).releasesSince('o/r', 't', new Date('2026-11-11T11:00:00Z')),
+    ).toEqual([
+      {
+        tag: '@theokit/ui@1.13.0',
+        url: 'https://github.com/o/r/releases/tag/u',
+        publishedAt: new Date('2026-11-11T12:00:00Z'),
+      },
+    ])
+    expect(calls[0].url).toContain('per_page=100')
+  })
+
+  it('says whether a commit is in the history of another', async () => {
+    const answer = (status: string) =>
+      fakeFetch({ 'GET /compare/old...new': { status: 200, body: { status } } }).fetch
+    const api = (status: string) => createGithubApi(answer(status))
+    expect(await api('ahead').contains('o/r', 't', 'new', 'old')).toBe(true)
+    expect(await api('identical').contains('o/r', 't', 'new', 'old')).toBe(true)
+    expect(await api('behind').contains('o/r', 't', 'new', 'old')).toBe(false)
+    expect(await api('diverged').contains('o/r', 't', 'new', 'old')).toBe(false)
+  })
+
+  it('reads when a pull request was merged', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls': {
+        status: 200,
+        body: [
+          {
+            number: 171,
+            html_url: 'u',
+            head: { sha: 'abc' },
+            draft: false,
+            state: 'closed',
+            merged_at: '2026-09-25T21:12:10Z',
+          },
+        ],
+      },
+    })
+    expect(
+      (await createGithubApi(fetch).findPullRequest('o/r', 't', 'changeset-release/main'))
+        ?.mergedAt,
+    ).toEqual(new Date('2026-09-25T21:12:10Z'))
+  })
+  it('lists the open pull requests from a branch of the repository into a base, with where each comes from', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls': {
+        status: 200,
+        body: [
+          {
+            number: 1738,
+            html_url: 'u',
+            draft: false,
+            head: { sha: 'abc', ref: 'main', repo: { full_name: 'o/r' } },
+            base: { ref: 'workspace' },
+          },
+          {
+            number: 5,
+            html_url: 'v',
+            draft: true,
+            head: { sha: 'def', ref: 'main', repo: null },
+            base: { ref: 'workspace' },
+          },
+        ],
+      },
+    })
+
+    const found = await createGithubApi(fetch).openPullRequestsBetween(
+      'o/r',
+      't',
+      'main',
+      'workspace',
+    )
+
+    expect(found).toEqual([
+      {
+        number: 1738,
+        url: 'u',
+        headSha: 'abc',
+        headRef: 'main',
+        headRepo: 'o/r',
+        baseRef: 'workspace',
+        draft: false,
+      },
+      {
+        number: 5,
+        url: 'v',
+        headSha: 'def',
+        headRef: 'main',
+        headRepo: undefined,
+        baseRef: 'workspace',
+        draft: true,
+      },
+    ])
+    expect(calls[0].url).toBe('/pulls?state=open&head=o:main&base=workspace&per_page=100')
+  })
+})
+
+describe('what integrating through the repository CI needs', () => {
+  it('names the checks the integration branch requires, from its protection and its rulesets', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /branches/workspace': {
+        status: 200,
+        body: {
+          protected: true,
+          protection: {
+            enabled: true,
+            required_status_checks: {
+              contexts: ['CI', 'Lint'],
+              checks: [{ context: 'CI', app_id: 15368 }],
+            },
+          },
+        },
+      },
+      'GET /rules/branches/workspace': {
+        status: 200,
+        body: [
+          { type: 'deletion' },
+          {
+            type: 'required_status_checks',
+            parameters: { required_status_checks: [{ context: 'Types' }, { context: 'Lint' }] },
+          },
+        ],
+      },
+    })
+
+    expect(await createGithubApi(fetch).requiredChecks('o/r', 't', 'workspace')).toEqual([
+      'CI',
+      'Lint',
+      'Types',
+    ])
+    expect(calls.map((c) => c.url)).toEqual(['/branches/workspace', '/rules/branches/workspace'])
+  })
+
+  it('requires nothing of a branch with no protection and no rulesets', async () => {
+    const { fetch } = fakeFetch({
+      'GET /branches/workspace': {
+        status: 200,
+        body: {
+          protected: false,
+          protection: {
+            enabled: false,
+            required_status_checks: { contexts: [], checks: [], enforcement_level: 'off' },
+          },
+        },
+      },
+      'GET /rules/branches/workspace': { status: 200, body: [] },
+    })
+
+    expect(await createGithubApi(fetch).requiredChecks('o/r', 't', 'workspace')).toEqual([])
+  })
+
+  it('throws when the integration branch cannot be read, rather than merging past its rules', async () => {
+    const { fetch } = fakeFetch({ 'GET /branches/workspace': { status: 404 } })
+    await expect(createGithubApi(fetch).requiredChecks('o/r', 't', 'workspace')).rejects.toThrow(
+      /404 reading the branch workspace of o\/r/,
+    )
+  })
+
+  it('reads a pull request by number, with its merge commit and whether auto-merge is on', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': {
+        status: 200,
+        body: {
+          number: 12,
+          html_url: 'https://github.com/o/r/pull/12',
+          state: 'closed',
+          merged: true,
+          merge_commit_sha: 'm1',
+          merged_at: '2026-11-12T13:00:00Z',
+          head: { sha: 'h1' },
+          auto_merge: { merge_method: 'merge' },
+          mergeable_state: 'clean',
+        },
+      },
+    })
+
+    expect(await createGithubApi(fetch).readPullRequest('o/r', 't', 12)).toEqual({
+      number: 12,
+      url: 'https://github.com/o/r/pull/12',
+      state: 'closed',
+      merged: true,
+      mergeCommitSha: 'm1',
+      mergedAt: new Date('2026-11-12T13:00:00Z'),
+      headSha: 'h1',
+      autoMerge: true,
+      mergeableState: 'clean',
+    })
+  })
+
+  it('has no merge commit for a pull request that is not merged', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': {
+        status: 200,
+        body: {
+          number: 12,
+          html_url: 'u',
+          state: 'open',
+          merged: false,
+          merge_commit_sha: 'test-merge',
+          head: { sha: 'h1' },
+          auto_merge: null,
+          mergeable_state: 'dirty',
+        },
+      },
+    })
+
+    expect(await createGithubApi(fetch).readPullRequest('o/r', 't', 12)).toMatchObject({
+      merged: false,
+      mergeCommitSha: undefined,
+      mergedAt: undefined,
+      autoMerge: false,
+      mergeableState: 'dirty',
+    })
+  })
+
+  it('turns auto-merge on as a merge commit, pinned to the verified head', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { data: { enablePullRequestAutoMerge: { pullRequest: { number: 12 } } } },
+      },
+    })
+
+    await createGithubApi(fetch).enableAutoMerge('o/r', 'tok', 12, 'abc')
+
+    const graphql = calls.find((c) => c.url.includes('graphql'))!
+    expect(graphql.auth).toBe('Bearer tok')
+    expect((graphql.body as { variables: object }).variables).toEqual({
+      id: 'PR_12',
+      sha: 'abc',
+    })
+    expect(JSON.stringify(graphql.body)).toContain('enablePullRequestAutoMerge')
+    expect(JSON.stringify(graphql.body)).toContain('mergeMethod: MERGE')
+    expect(JSON.stringify(graphql.body)).toContain('expectedHeadOid: $sha')
+  })
+
+  it('says what to configure when GitHub will not turn auto-merge on', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { errors: [{ message: 'Auto merge is not allowed for this repository' }] },
+      },
+    })
+
+    const refused = createGithubApi(fetch).enableAutoMerge('o/r', 't', 12, 'abc')
+
+    await expect(refused).rejects.toBeInstanceOf(AutoMergeRefused)
+    await expect(refused).rejects.toThrow(
+      /o\/r#12.*Auto merge is not allowed for this repository.*Allow auto-merge.*merge commits/,
+    )
+  })
+
+  it('tells a refusal because the pull request is already clean from any other refusal', () => {
+    const clean = new AutoMergeRefused('o/r', 12, 'Pull request Pull request is in clean status')
+    const notAllowed = new AutoMergeRefused(
+      'o/r',
+      12,
+      'Auto merge is not allowed for this repository',
+    )
+    const unstable = new AutoMergeRefused(
+      'o/r',
+      12,
+      'Pull request Pull request is in unstable status',
+    )
+
+    expect(clean.pullRequestIsClean).toBe(true)
+    expect(notAllowed.pullRequestIsClean).toBe(false)
+    expect(unstable.pullRequestIsClean).toBe(false)
+  })
+
+  it('tells a refusal because the pull request is a draft from any other refusal', () => {
+    const refused = (why: string) => new AutoMergeRefused('o/r', 12, why).pullRequestIsDraft
+
+    expect(refused('Pull request Pull request is a draft')).toBe(true)
+    expect(refused('Draft pull requests cannot be merged')).toBe(true)
+    expect(refused('Pull request Pull request is in clean status')).toBe(false)
+    expect(refused('Auto merge is not allowed for this repository')).toBe(false)
+  })
+
+  describe('autoMergeOrMergeable', () => {
+    const pull = { repo: 'o/r', token: 't', number: 12, sha: 'abc' }
+    const refusing = (error: Error) => ({
+      enableAutoMerge: async () => {
+        throw error
+      },
+    })
+
+    it('waits for the checks once auto-merge is on, pinned to the sha', async () => {
+      const calls: unknown[][] = []
+      const api = { enableAutoMerge: async (...args: unknown[]) => void calls.push(args) }
+
+      await expect(autoMergeOrMergeable(api, pull)).resolves.toBe('waiting')
+      expect(calls).toEqual([['o/r', 't', 12, 'abc']])
+    })
+
+    it('says the pull request is mergeable when GitHub refuses because it is clean', async () => {
+      const clean = new AutoMergeRefused('o/r', 12, 'Pull request Pull request is in clean status')
+
+      await expect(autoMergeOrMergeable(refusing(clean), pull)).resolves.toBe('mergeable')
+    })
+
+    it('throws any other refusal as it came', async () => {
+      const notAllowed = new AutoMergeRefused('o/r', 12, 'Auto merge is not allowed')
+
+      await expect(autoMergeOrMergeable(refusing(notAllowed), pull)).rejects.toBe(notAllowed)
+    })
+
+    describe('when the refusal says the pull request is a draft', () => {
+      const draft = () => new AutoMergeRefused('o/r', 12, 'Pull request Pull request is a draft')
+      /** A GitHub that refuses a draft `refusals` times, then turns auto-merge on. */
+      const draftFor = (refusals: number) => {
+        const log: string[] = []
+        const api = {
+          enableAutoMerge: async () => {
+            log.push('auto-merge')
+            if (log.filter((l) => l === 'auto-merge').length <= refusals) throw draft()
+          },
+        }
+        const ready = async () => void log.push('ready')
+        return { api, ready, log }
+      }
+
+      it('marks it ready and asks once more', async () => {
+        const { api, ready, log } = draftFor(1)
+
+        await expect(autoMergeOrMergeable(api, pull, ready)).resolves.toBe('waiting')
+        expect(log).toEqual(['auto-merge', 'ready', 'auto-merge'])
+      })
+
+      it('throws the second refusal instead of asking a third time', async () => {
+        const { api, ready, log } = draftFor(2)
+
+        await expect(autoMergeOrMergeable(api, pull, ready)).rejects.toBeInstanceOf(
+          AutoMergeRefused,
+        )
+        expect(log).toEqual(['auto-merge', 'ready', 'auto-merge'])
+      })
+
+      it('says the pull request is mergeable when the second answer is that it is clean', async () => {
+        const answers = [
+          draft(),
+          new AutoMergeRefused('o/r', 12, 'Pull request Pull request is in clean status'),
+        ]
+        const api = {
+          enableAutoMerge: async () => {
+            throw answers.shift()
+          },
+        }
+
+        await expect(autoMergeOrMergeable(api, pull, async () => {})).resolves.toBe('mergeable')
+      })
+
+      it('throws it as it came when the caller has no way to mark it ready', async () => {
+        const { api, log } = draftFor(1)
+
+        await expect(autoMergeOrMergeable(api, pull)).rejects.toBeInstanceOf(AutoMergeRefused)
+        expect(log).toEqual(['auto-merge'])
+      })
+    })
+
+    it('marks nothing ready for a refusal that is not about a draft', async () => {
+      const notAllowed = new AutoMergeRefused('o/r', 12, 'Auto merge is not allowed')
+      let readied = 0
+      const ready = async () => void (readied += 1)
+
+      await expect(autoMergeOrMergeable(refusing(notAllowed), pull, ready)).rejects.toBe(notAllowed)
+      const clean = new AutoMergeRefused('o/r', 12, 'Pull request Pull request is in clean status')
+      await expect(autoMergeOrMergeable(refusing(clean), pull, ready)).resolves.toBe('mergeable')
+      expect(readied).toBe(0)
+    })
+
+    it('throws an error that is not a refusal, even when it mentions a clean status', async () => {
+      const failure = new Error('GitHub answered 502: clean status unknown')
+
+      await expect(autoMergeOrMergeable(refusing(failure), pull)).rejects.toBe(failure)
+    })
+  })
+
+  it('turns auto-merge off', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': {
+        status: 200,
+        body: { data: { disablePullRequestAutoMerge: { pullRequest: { number: 12 } } } },
+      },
+    })
+
+    await createGithubApi(fetch).disableAutoMerge('o/r', 't', 12)
+
+    const graphql = calls.find((c) => c.url.includes('graphql'))!
+    expect(JSON.stringify(graphql.body)).toContain('disablePullRequestAutoMerge')
+    expect((graphql.body as { variables: object }).variables).toEqual({ id: 'PR_12' })
+  })
+
+  it('throws when auto-merge cannot be turned off', async () => {
+    const { fetch } = fakeFetch({
+      'GET /pulls/12': { status: 200, body: { node_id: 'PR_12' } },
+      'POST https://api.github.com/graphql': { status: 502, body: {} },
+    })
+    await expect(createGithubApi(fetch).disableAutoMerge('o/r', 't', 12)).rejects.toThrow(
+      /could not turn auto-merge off on o\/r#12: HTTP 502/,
+    )
+  })
+
+  it('reports each check on a commit with what it said and where to read it', async () => {
+    const { fetch } = fakeFetch({
+      'GET /commits/abc/check-runs': {
+        status: 200,
+        body: {
+          check_runs: [
+            {
+              name: 'CI',
+              status: 'completed',
+              conclusion: 'failure',
+              html_url: 'https://github.com/o/r/runs/1',
+              output: { title: 't', summary: 'two tests failed', text: 'at foo.test.ts:3' },
+            },
+            { name: 'Lint', status: 'in_progress', conclusion: null, html_url: 'l', output: {} },
+            { name: 'Skip', status: 'completed', conclusion: 'skipped', html_url: 's', output: {} },
+          ],
+        },
+      },
+      'GET /commits/abc/status': {
+        status: 200,
+        body: {
+          state: 'failure',
+          total_count: 1,
+          statuses: [
+            { context: 'socket', state: 'error', description: 'down', target_url: 'https://x' },
+          ],
+        },
+      },
+    })
+
+    expect(await createGithubApi(fetch).checkReports('o/r', 't', 'abc')).toEqual([
+      {
+        name: 'CI',
+        state: 'failure',
+        detail: 'two tests failed\nat foo.test.ts:3',
+        url: 'https://github.com/o/r/runs/1',
+      },
+      { name: 'Lint', state: 'pending', detail: '', url: 'l' },
+      { name: 'Skip', state: 'success', detail: '', url: 's' },
+      { name: 'socket', state: 'failure', detail: 'down', url: 'https://x' },
+    ])
+  })
+
+  it('keeps every run of a check that ran more than once on the commit', async () => {
+    const run = (conclusion: string, url: string) => ({
+      name: 'CI',
+      status: 'completed',
+      conclusion,
+      html_url: url,
+      output: {},
+    })
+    const { fetch } = fakeFetch({
+      'GET /commits/abc/check-runs': {
+        status: 200,
+        body: { check_runs: [run('success', 'push'), run('failure', 'pr')] },
+      },
+      'GET /commits/abc/status': { status: 200, body: { state: 'pending', total_count: 0 } },
+    })
+
+    expect(await createGithubApi(fetch).checkReports('o/r', 't', 'abc')).toEqual([
+      { name: 'CI', state: 'success', detail: '', url: 'push' },
+      { name: 'CI', state: 'failure', detail: '', url: 'pr' },
+    ])
   })
 })

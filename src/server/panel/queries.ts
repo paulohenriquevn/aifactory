@@ -3,11 +3,13 @@ import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import type { Database } from '../db'
 import {
   agentRun,
+  changePlan,
   decision,
   delivery,
   evidence,
   finding,
   question,
+  releaseWait,
   review,
   stageEvent,
   task,
@@ -17,9 +19,11 @@ import { retryAt } from '../factory/auto-retry'
 import {
   columnOf,
   retryableFailure,
+  type ChangePlanView,
   type DecisionView,
   type Retryable,
   type DeliveryView,
+  type ReleaseWaitView,
   type CostGroup,
   type EvidenceView,
   type FindingView,
@@ -95,6 +99,11 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
     .where(inArray(delivery.taskId, ids))
     .orderBy(asc(delivery.id))
   const watched = await db.select().from(watch).where(inArray(watch.taskId, ids))
+  const releases = await db
+    .select()
+    .from(releaseWait)
+    .where(inArray(releaseWait.taskId, ids))
+    .orderBy(asc(releaseWait.id))
   const failures = await db
     .selectDistinctOn([stageEvent.taskId], {
       taskId: stageEvent.taskId,
@@ -117,7 +126,10 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       issueNumber: r.issueNumber,
       title: r.issueTitle,
       stage: r.stage as Stage,
-      column: columnOf(r.stage as Stage, again?.retryable ?? null),
+      column: columnOf(r.stage as Stage, again?.retryable ?? null, {
+        resolved: r.resolvedSha !== null,
+        integrated: r.mergedSha !== null,
+      }),
       pullRequestUrl: r.pullRequestUrl,
       headSha: r.headSha,
       costUsd: r.costUsd,
@@ -126,14 +138,31 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       updatedAt: iso(new Date(seen?.last ?? r.createdAt)),
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
       integrated: r.mergedSha !== null,
+      waitingForChecks: r.awaitingCiSha !== null,
       resolved: r.resolvedSha !== null,
       retryable: again?.retryable ?? null,
       retryAt: again?.at.toISOString() ?? null,
       preRelease: lastDelivery(delivered, r, 'prerelease'),
       release: lastDelivery(delivered, r, 'release'),
       mainRed: watched.some((w) => w.taskId === r.id && w.status === 'red' && !w.acknowledgedAt),
+      releaseWait: lastReleaseWait(releases, r),
     }
   })
+}
+
+/** The latest release of a task that waits for checks or was refused, while the task is not released. */
+function lastReleaseWait(
+  rows: (typeof releaseWait.$inferSelect)[],
+  t: TaskRow,
+): ReleaseWaitView | null {
+  const last = rows.filter((w) => w.taskId === t.id).at(-1)
+  if (!last || last.status === 'merged' || t.stage !== 'done') return null
+  return {
+    status: last.status,
+    pullRequestUrl: last.pullRequestUrl,
+    checks: last.checks,
+    reason: last.detail,
+  }
 }
 
 type DeliveryRow = typeof delivery.$inferSelect
@@ -163,7 +192,7 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
   const [row] = await db.select().from(task).where(eq(task.id, id))
   if (!row) return undefined
   const [card] = await cards(db, [row])
-  const [events, checks, reviews, questions, decisions, deliveries, watches, runs] =
+  const [events, checks, reviews, questions, decisions, deliveries, watches, runs, plans] =
     await Promise.all([
       db.select().from(stageEvent).where(eq(stageEvent.taskId, id)).orderBy(asc(stageEvent.id)),
       db.select().from(evidence).where(eq(evidence.taskId, id)).orderBy(asc(evidence.id)),
@@ -173,6 +202,7 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
       db.select().from(delivery).where(eq(delivery.taskId, id)).orderBy(asc(delivery.id)),
       db.select().from(watch).where(eq(watch.taskId, id)).orderBy(asc(watch.id)),
       db.select().from(agentRun).where(eq(agentRun.taskId, id)).orderBy(asc(agentRun.id)),
+      db.select().from(changePlan).where(eq(changePlan.taskId, id)).orderBy(asc(changePlan.id)),
     ])
   return {
     task: card,
@@ -203,6 +233,13 @@ export async function taskDetail(db: Database, id: number): Promise<TaskDetail |
       summary: r.summary,
       findings: r.findings as ReviewView['findings'],
       at: iso(r.at),
+    })),
+    plans: plans.map((p): ChangePlanView => ({
+      id: p.id,
+      baseSha: p.baseSha,
+      harness: p.harness,
+      ...(p.plan as Omit<ChangePlanView, 'id' | 'baseSha' | 'harness' | 'at'>),
+      at: iso(p.at),
     })),
     questions: questions.map((q): QuestionView => ({
       id: q.id,
