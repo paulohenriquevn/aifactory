@@ -709,6 +709,7 @@ const metricsReport: MetricsReport = {
       rules: [],
     },
   ],
+  byAgent: { approval: [], rework: [], cost: [] },
   signals: [
     {
       metric: 'cost_per_delivery',
@@ -749,7 +750,11 @@ describe('health metrics', () => {
   it('says when there is nothing to measure yet', async () => {
     serve({
       'GET /api/panel/health': report(),
-      'GET /api/panel/metrics': { rows: [], signals: [] },
+      'GET /api/panel/metrics': {
+        rows: [],
+        signals: [],
+        byAgent: { approval: [], rework: [], cost: [] },
+      },
     })
     render(
       <MemoryRouter>
@@ -975,6 +980,49 @@ describe('health', () => {
     const reviews = screen.getByRole('region', { name: 'Reviews' })
     expect(reviews.textContent).toContain('codex on abcdef1')
     expect(reviews.textContent).toContain('gpt-6.1-sol · medium')
+  })
+
+  it('gives each review the model of its own pass, also after a retry restarted the attempts', async () => {
+    const run = {
+      role: 'reviewer' as const,
+      harness: 'codex',
+      effort: null,
+      tokensIn: null,
+      tokensOut: null,
+      attempt: 1,
+      costUsd: null,
+      durationMs: 1000,
+      ok: true,
+      quota: false,
+    }
+    const review = (id: number, at: string, sha: string) => ({
+      id,
+      round: 1,
+      sha,
+      reviewer: 'codex',
+      verdict: 'approve' as const,
+      summary: 'fine',
+      findings: [],
+      at,
+    })
+    serve({
+      'GET /api/panel/tasks/5': detail({
+        reviews: [
+          review(1, '2026-11-04T10:04:00Z', 'aaaaaaa1111'),
+          review(2, '2026-11-05T10:04:00Z', 'bbbbbbb2222'),
+        ],
+        runs: [
+          { ...run, id: 1, model: 'gpt-6.1-terra', at: '2026-11-04T10:03:00Z' },
+          { ...run, id: 2, model: 'gpt-6.1-sol', at: '2026-11-05T10:03:00Z' },
+        ],
+      }),
+    })
+    renderTask()
+    const reviews = await screen.findByRole('region', { name: 'Reviews' })
+    const [first, second] = within(reviews).getAllByRole('listitem')
+    expect(first.textContent).toContain('gpt-6.1-terra')
+    expect(first.textContent).not.toContain('gpt-6.1-sol')
+    expect(second.textContent).toContain('gpt-6.1-sol')
   })
 })
 

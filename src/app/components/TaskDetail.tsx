@@ -244,9 +244,7 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
                   <span className="font-medium">{t.task.reviewLine(r.round, r.verdict)}</span>
                   <span className="text-xs text-muted-foreground">
                     {t.task.reviewedOn(r.reviewer, shortSha(r.sha))}
-                    {reviewRun(detail.runs, r) ? (
-                      <> · {modelOf(reviewRun(detail.runs, r)!, t.task.defaultModel)}</>
-                    ) : null}
+                    {modelLine(detail.runs, r, t.task.defaultModel)}
                   </span>
                 </div>
                 <p className="mt-1 text-foreground">{r.summary}</p>
@@ -275,9 +273,20 @@ function modelOf(run: RunView, fallback: string): string {
   return [run.model ?? fallback, run.effort].filter(Boolean).join(' · ')
 }
 
-/** The agent pass that made a review: the reviewer's own run of that round. */
+/**
+ * The agent pass that made a review: the latest reviewer run of that agent at or before the review was
+ * written. Attempts restart at one when a task is retried, so the time is what tells the runs apart.
+ */
 function reviewRun(runs: RunView[], r: ReviewView): RunView | undefined {
-  return runs.find(
-    (x) => x.role === 'reviewer' && x.harness === r.reviewer && x.attempt === r.round,
-  )
+  const reviewedAt = Date.parse(r.at)
+  return runs
+    .filter(
+      (x) => x.role === 'reviewer' && x.harness === r.reviewer && Date.parse(x.at) <= reviewedAt,
+    )
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0]
+}
+
+function modelLine(runs: RunView[], r: ReviewView, fallback: string): string {
+  const run = reviewRun(runs, r)
+  return run ? ` · ${modelOf(run, fallback)}` : ''
 }

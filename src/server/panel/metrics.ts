@@ -4,7 +4,7 @@ import type { Database } from '../db'
 import { metricPoint, metricSignal } from '../db/schema'
 import { evaluate, strongest, type Point } from '../metrics/bands'
 import { BANDS, METRIC_NAMES, METRICS, type BandConfig, type MetricName } from '../metrics/config'
-import { reviewerApproval } from '../metrics/by-agent'
+import { comparisonByAgent } from '../metrics/by-agent'
 import { firstDay } from '../metrics/measure'
 import { ALL_REPOSITORIES } from '../metrics/series'
 import type { MetricBand, MetricRow, MetricsReport, MetricSignalView } from '../../shared/panel'
@@ -90,8 +90,5 @@ export async function metricsReport(
     issueUrl: s.issueUrl,
     error: s.error,
   }))
-  return { rows, signals }
+  return { rows, signals, byAgent: await comparisonByAgent(db) }
 }
-
-/** First-review approval for each agent that reviewed, so a change of reviewer can be compared with before. */
-export const approvalByAgent = (db: Database) => reviewerApproval(db)

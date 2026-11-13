@@ -15,7 +15,7 @@ import {
   task,
   watch,
 } from '../db/schema'
-import { approvalByAgent, metricsReport } from '../panel/metrics'
+import { metricsReport } from '../panel/metrics'
 
 import { BANDS } from './config'
 import { loadHistories, measure } from './measure'
@@ -350,7 +350,7 @@ describe('first-review approval by agent', () => {
     await reviewed('claude-code', 'approve')
     await reviewed('codex', 'approve')
 
-    expect(await approvalByAgent(db)).toEqual([
+    expect((await metricsReport(db, NOW)).byAgent.approval).toEqual([
       { reviewer: 'claude-code', reviews: 2, approved: 1, share: 0.5 },
       { reviewer: 'codex', reviews: 1, approved: 1, share: 1 },
     ])

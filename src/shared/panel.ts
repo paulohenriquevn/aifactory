@@ -121,7 +121,7 @@ export type WatchView = {
 
 export type RunView = {
   id: number
-  role: 'builder' | 'reviewer'
+  role: 'builder' | 'planner' | 'reviewer'
   harness: string
   /** The model and effort the pass ran with; null when the agent used its own default. */
   model: string | null
@@ -152,7 +152,7 @@ export type FindingView = {
 
 export type CostGroup = {
   harness: string
-  role: 'builder' | 'reviewer'
+  role: 'builder' | 'planner' | 'reviewer'
   runs: number
   /** How many of them reported a cost, since some agents report none. */
   reportedRuns: number
@@ -200,7 +200,37 @@ export type MetricSignalView = {
   error: string | null
 }
 
-export type MetricsReport = { rows: MetricRow[]; signals: MetricSignalView[] }
+/** What each builder's runs needed: the rework rounds after its first builds. */
+export type BuilderRework = {
+  builder: string
+  runs: number
+  reworkRounds: number
+  /** reworkRounds / runs. */
+  perRun: number
+}
+
+/** What a delivered run cost with an agent and model in it. A null model is the agent's own default. */
+export type AgentDeliveryCost = {
+  agent: string
+  model: string | null
+  deliveredRuns: number
+  costUsd: number
+  /** costUsd / deliveredRuns. */
+  perDelivery: number
+}
+
+/** The indicators the factory keeps, split by agent, so a change of agent can be compared with what came before. */
+export type AgentComparison = {
+  approval: ReviewerApproval[]
+  rework: BuilderRework[]
+  cost: AgentDeliveryCost[]
+}
+
+export type MetricsReport = {
+  rows: MetricRow[]
+  signals: MetricSignalView[]
+  byAgent: AgentComparison
+}
 
 export type HealthReport = {
   cost: {

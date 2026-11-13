@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { approvalByReviewer, type ReviewFact } from './by-agent'
+import { approvalByReviewer, reworkByBuilder, type ReviewFact } from './by-agent'
 
 const at = (hour: number) => new Date(Date.UTC(2026, 10, 13, hour))
 const fact = (
@@ -45,5 +45,27 @@ describe('approvalByReviewer', () => {
 
   it('says nothing when nobody reviewed', () => {
     expect(approvalByReviewer([], new Map())).toEqual([])
+  })
+})
+
+describe('reworkByBuilder', () => {
+  it('counts the rework rounds of each builder against its runs, not an answer that resumed a run', () => {
+    const build = (harness: string, detail: Record<string, unknown> | null = null) => ({
+      harness,
+      detail,
+    })
+    expect(
+      reworkByBuilder([
+        build('claude-code'),
+        build('claude-code', { rework: true }),
+        build('claude-code', { rework: true }),
+        build('claude-code', { resumed: true }),
+        build('codex'),
+        build('codex', { refuted: true }),
+      ]),
+    ).toEqual([
+      { builder: 'claude-code', runs: 1, reworkRounds: 2, perRun: 2 },
+      { builder: 'codex', runs: 1, reworkRounds: 0, perRun: 0 },
+    ])
   })
 })

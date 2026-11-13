@@ -1381,6 +1381,24 @@ describe('runTask planning before it builds', () => {
       ),
     )
 
+  it('records the planning pass as its own execution, apart from the build', async () => {
+    const id = await seedTask()
+    const builder = planningBuilder([`Read it.\n${JSON.stringify(plan)}`])
+
+    await runTask(deps(twoFiles(), { harness: builder, planFirst: true }), id)
+
+    const runs = await getDb()
+      .select()
+      .from(agentRun)
+      .where(eq(agentRun.taskId, id))
+      .orderBy(agentRun.id)
+    expect(runs.map((r) => [r.role, r.harness])).toEqual([
+      ['planner', 'fake-agent'],
+      ['builder', 'fake-agent'],
+      ['reviewer', 'fake-reviewer'],
+    ])
+  })
+
   it('stores the plan and builds in the session that wrote it', async () => {
     const id = await seedTask()
     const builder = planningBuilder([`Read it.\n${JSON.stringify(plan)}`])

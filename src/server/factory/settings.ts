@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from 'drizzle-orm'
+import { asc, eq, inArray, sql } from 'drizzle-orm'
 
 import type { AgentRole, AgentSettingChange, AgentSettings, EngineOption } from '../../shared/panel'
 import type { Database } from '../db'
@@ -27,13 +27,16 @@ type Write = {
   field: AgentSettingChange['field']
 }
 
+/** The advisory lock that serializes saves of the agent settings. */
+const SETTINGS_LOCK = 81_001
+
 export type Chosen = Record<AgentRole, string | null>
 type Stored = { engine: Chosen; model: Chosen; effort: Chosen }
 
 const nobody = (): Chosen => ({ builder: null, planner: null, reviewer: null })
 
 /** What the owner saved, the model and the effort still tagged with the agent they were chosen for. */
-async function loadStored(db: Database): Promise<Stored> {
+async function loadStored(db: Pick<Database, 'select'>): Promise<Stored> {
   const keys = ROLES.flatMap((role) => [ENGINE_KEY(role), MODEL_KEY(role), EFFORT_KEY(role)])
   const rows = await db.select().from(setting).where(inArray(setting.key, keys))
   const stored: Stored = { engine: nobody(), model: nobody(), effort: nobody() }
@@ -183,19 +186,27 @@ export async function saveChosen(
       })
   }
 
-  for (const { key, value, role, field } of writes) {
-    const before = stored[field][role]
-    if (before !== value) {
-      await db.insert(agentSettingChange).values({ role, field, oldValue: before, newValue: value })
+  // The writes and their history commit together, one save at a time, so a failed write leaves no change on
+  // record and the old value of each change is what the save before it left.
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(${SETTINGS_LOCK})`)
+    const current = await loadStored(tx)
+    for (const { key, value, role, field } of writes) {
+      const before = current[field][role]
+      if (before !== value) {
+        await tx
+          .insert(agentSettingChange)
+          .values({ role, field, oldValue: before, newValue: value })
+      }
+      if (value === null) await tx.delete(setting).where(eq(setting.key, key))
+      else {
+        await tx
+          .insert(setting)
+          .values({ key, value })
+          .onConflictDoUpdate({ target: setting.key, set: { value, updatedAt: new Date() } })
+      }
     }
-    if (value === null) await db.delete(setting).where(eq(setting.key, key))
-    else {
-      await db
-        .insert(setting)
-        .values({ key, value })
-        .onConflictDoUpdate({ target: setting.key, set: { value, updatedAt: new Date() } })
-    }
-  }
+  })
   return loadChosen(db)
 }
 

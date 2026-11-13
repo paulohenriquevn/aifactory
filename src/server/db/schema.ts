@@ -349,7 +349,7 @@ export const agentRun = pgTable('agent_run', {
   taskId: integer('task_id')
     .notNull()
     .references(() => task.id),
-  role: text('role', { enum: ['builder', 'reviewer'] }).notNull(),
+  role: text('role', { enum: ['builder', 'planner', 'reviewer'] }).notNull(),
   harness: text('harness').notNull(),
   /** The model and effort the pass ran with; null when the owner chose none and the agent used its own default. */
   model: text('model'),
