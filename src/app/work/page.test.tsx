@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { TaskCard } from '../../shared/panel'
 
+import { CopyProvider } from '../lib/copy'
+import { en } from '../lib/copy/en'
+import { ptBR } from '../lib/copy/pt-BR'
+
 import Page from './page'
 
 const card = (over: Partial<TaskCard>): TaskCard => ({
@@ -41,6 +45,7 @@ function serve(body: unknown) {
 }
 
 afterEach(() => {
+  window.localStorage.clear()
   cleanup()
   vi.unstubAllGlobals()
 })
@@ -64,11 +69,11 @@ describe('board', () => {
 
     await waitFor(() => expect(screen.getByText('Building one')).toBeDefined())
     const inColumn = (name: string) => within(screen.getByRole('region', { name }))
-    expect(inColumn('Working').getByText('Building one')).toBeDefined()
-    expect(inColumn('Waiting for you').getByText('Asking one')).toBeDefined()
-    expect(inColumn('Delivered').getByText('Done one')).toBeDefined()
-    expect(inColumn('Needs a person').getByText('Broken one')).toBeDefined()
-    expect(inColumn('Queued').getByText('Nothing here.')).toBeDefined()
+    expect(inColumn(en.columns.working).getByText('Building one')).toBeDefined()
+    expect(inColumn(en.columns.waiting).getByText('Asking one')).toBeDefined()
+    expect(inColumn(en.columns.review).getByText('Done one')).toBeDefined()
+    expect(inColumn(en.columns.attention).getByText('Broken one')).toBeDefined()
+    expect(inColumn(en.columns.queued).getByText(en.board.nothingHere)).toBeDefined()
     expect(screen.getByText(/\$0\.31/)).toBeDefined()
   })
 
@@ -101,13 +106,13 @@ describe('board', () => {
     )
     await waitFor(() => expect(screen.getByText('Out of quota')).toBeDefined())
     const inColumn = (name: string) => within(screen.getByRole('region', { name }))
-    expect(inColumn('Will retry itself').getByText('Out of quota')).toBeDefined()
-    expect(inColumn('Will retry itself').getByText('waiting for the limit')).toBeDefined()
-    expect(inColumn('Will retry itself').getByText('runs again in 2h')).toBeDefined()
-    expect(inColumn('Will retry itself').getByText('will retry')).toBeDefined()
-    expect(inColumn('Delivered').getByText('integrated')).toBeDefined()
-    expect(inColumn('Needs a person').getByText('Real failure')).toBeDefined()
-    expect(inColumn('Needs a person').queryByText('Out of quota')).toBeNull()
+    expect(inColumn(en.columns.retrying).getByText('Out of quota')).toBeDefined()
+    expect(inColumn(en.columns.retrying).getByText(en.stages.waitingForLimit)).toBeDefined()
+    expect(inColumn(en.columns.retrying).getByText(en.time.runsInHours(2))).toBeDefined()
+    expect(inColumn(en.columns.retrying).getByText(en.stages.willRetry)).toBeDefined()
+    expect(inColumn(en.columns.review).getByText(en.stages.integrated)).toBeDefined()
+    expect(inColumn(en.columns.attention).getByText('Real failure')).toBeDefined()
+    expect(inColumn(en.columns.attention).queryByText('Out of quota')).toBeNull()
   })
 
   it('always draws all eight columns, in the same order and the same width, with cards in them or not', async () => {
@@ -125,31 +130,33 @@ describe('board', () => {
     await waitFor(() => expect(screen.getByText('Building one')).toBeDefined())
     const regions = screen.getAllByRole('region')
     expect(regions.map((r) => r.getAttribute('aria-label'))).toEqual([
-      'Queued',
-      'Working',
-      'Waiting for you',
-      'Will retry itself',
-      'Delivered',
-      'Released',
-      'Already resolved',
-      'Needs a person',
+      en.columns.queued,
+      en.columns.working,
+      en.columns.waiting,
+      en.columns.retrying,
+      en.columns.review,
+      en.columns.released,
+      en.columns.resolved,
+      en.columns.attention,
     ])
     const grid = regions[0].parentElement as HTMLElement
     expect(grid.style.gridTemplateColumns).toBe('repeat(8, minmax(150px, 1fr))')
     for (const name of [
-      'Queued',
-      'Waiting for you',
-      'Will retry itself',
-      'Delivered',
-      'Released',
+      en.columns.queued,
+      en.columns.waiting,
+      en.columns.retrying,
+      en.columns.review,
+      en.columns.released,
     ]) {
       expect(
-        within(screen.getByRole('region', { name })).getByText('Nothing here.'),
+        within(screen.getByRole('region', { name })).getByText(en.board.nothingHere),
         name,
       ).toBeDefined()
     }
     expect(
-      within(screen.getByRole('region', { name: 'Needs a person' })).queryByText('Nothing here.'),
+      within(screen.getByRole('region', { name: en.columns.attention })).queryByText(
+        en.board.nothingHere,
+      ),
     ).toBeNull()
     expect(screen.queryByLabelText('Empty columns')).toBeNull()
   })
@@ -162,15 +169,18 @@ describe('board', () => {
       </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByText('Building one')).toBeDefined())
-    const title = screen.getByRole('region', { name: 'Working' }).querySelector('h2') as HTMLElement
+    const title = screen
+      .getByRole('region', { name: en.columns.working })
+      .querySelector('h2') as HTMLElement
     expect(title.className).toContain('sticky')
-    const frame = screen.getByRole('region', { name: 'Working' }).parentElement
+    const frame = screen.getByRole('region', { name: en.columns.working }).parentElement
       ?.parentElement as HTMLElement
     expect(frame.className).toContain('overflow-auto')
     expect(frame.className).toContain('max-h-')
     // A title sticks only inside its own column, so every column must be as tall as the tallest. With
     // `items-start` an empty one is short and its title scrolled away while the others stayed.
-    const grid = screen.getByRole('region', { name: 'Working' }).parentElement as HTMLElement
+    const grid = screen.getByRole('region', { name: en.columns.working })
+      .parentElement as HTMLElement
     expect(grid.className).not.toContain('items-start')
     for (const section of screen.getAllByRole('region')) {
       expect((section.querySelector('h2') as HTMLElement).className).toContain('sticky')
@@ -210,7 +220,7 @@ describe('board', () => {
         <Page />
       </MemoryRouter>,
     )
-    await waitFor(() => expect(screen.getByText(/No tasks yet/)).toBeDefined())
+    await waitFor(() => expect(screen.getByText(en.work.emptyTitle)).toBeDefined())
   })
 
   it('shows the attempt a task is on once it is past the first', async () => {
@@ -220,6 +230,33 @@ describe('board', () => {
         <Page />
       </MemoryRouter>,
     )
-    await waitFor(() => expect(screen.getByText('attempt 2 of 3')).toBeDefined())
+    await waitFor(() => expect(screen.getByText(en.board.attempt(2))).toBeDefined())
+  })
+
+  it('writes the eight column titles in Portuguese, in the same order', async () => {
+    window.localStorage.setItem('aifactory.language', 'pt-BR')
+    serve({ tasks: [card({ id: 1, title: 'Building one' })] })
+    render(
+      <MemoryRouter>
+        <CopyProvider>
+          <Page />
+        </CopyProvider>
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('Building one')).toBeDefined())
+    const order = [
+      'queued',
+      'working',
+      'waiting',
+      'retrying',
+      'review',
+      'released',
+      'resolved',
+      'attention',
+    ] as const
+    expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(
+      order.map((id) => ptBR.columns[id]),
+    )
+    expect(screen.getByText(ptBR.stages.build)).toBeDefined()
   })
 })

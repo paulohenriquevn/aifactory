@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { Stage, TimelineEvent } from '../../shared/panel'
 
+import { DICTIONARIES } from './copy'
 import { ago, describeEvent, metricValue, money, runsAgain, shortSha, stageLabel } from './format'
 
 describe('money', () => {
@@ -239,5 +240,40 @@ describe('stageLabel with what is known of the task', () => {
   it('says a finished task waits for the repository checks, rather than that it is not integrated', () => {
     expect(stageLabel('done', { waitingForChecks: true })).toBe('waiting for CI')
     expect(stageLabel('handoff', { waitingForChecks: true })).toBe('handed to a person')
+  })
+})
+
+describe('in both languages', () => {
+  const now = Date.parse('2026-11-04T12:00:00Z')
+  const before = (seconds: number) => new Date(now - seconds * 1000).toISOString()
+
+  for (const language of ['en', 'pt-BR'] as const) {
+    const t = DICTIONARIES[language]
+
+    it(`ago reads from the ${language} dictionary`, () => {
+      expect(ago(before(5), now, t.time)).toBe(t.time.secondsAgo(5))
+      expect(ago(before(120), now, t.time)).toBe(t.time.minutesAgo(2))
+      expect(ago(before(7_200), now, t.time)).toBe(t.time.hoursAgo(2))
+      expect(ago(before(2 * 86_400), now, t.time)).toBe(t.time.daysAgo(2))
+    })
+
+    it(`runsAgain reads from the ${language} dictionary`, () => {
+      const after = (seconds: number) => new Date(now + seconds * 1000).toISOString()
+      expect(runsAgain(after(-1), now, t.time)).toBe(t.time.runsNextPass)
+      expect(runsAgain(after(30), now, t.time)).toBe(t.time.runsUnderMinute)
+      expect(runsAgain(after(300), now, t.time)).toBe(t.time.runsInMinutes(5))
+    })
+
+    it(`stageLabel reads from the ${language} dictionary`, () => {
+      expect(stageLabel('build', {}, t.stages)).toBe(t.stages.build)
+      expect(stageLabel('done', { resolved: true }, t.stages)).toBe(t.stages.alreadyResolved)
+      expect(stageLabel('done', { integrated: true }, t.stages)).toBe(t.stages.integrated)
+      expect(stageLabel('failed', { retryable: 'quota' }, t.stages)).toBe(t.stages.waitingForLimit)
+    })
+  }
+
+  it('says things differently in Portuguese', () => {
+    expect(ago(before(120), now, DICTIONARIES['pt-BR'].time)).toBe('há 2min')
+    expect(stageLabel('intake', {}, DICTIONARIES['pt-BR'].stages)).toBe('na fila')
   })
 })

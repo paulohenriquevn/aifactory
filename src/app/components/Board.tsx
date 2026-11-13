@@ -2,6 +2,7 @@ import { Card as Surface, Table } from '@usetheo/ui'
 import { Link } from 'react-router'
 
 import { COLUMNS, type TaskCard } from '../../shared/panel'
+import { useCopy } from '../lib/copy'
 import { ago, money, runsAgain } from '../lib/format'
 
 import { StageBadge } from './Badges'
@@ -11,6 +12,7 @@ export const openTask = (id: number) => ({ pathname: '/work', search: `?task=${i
 
 /** Every card on the board is this tall and as wide as its column, so the columns read as even stacks. */
 export function Card({ task }: { task: TaskCard }) {
+  const { t } = useCopy()
   return (
     <Link to={openTask(task.id)} className="block">
       <Surface size="sm" className="flex h-[152px] flex-col p-3 hover:border-primary/60">
@@ -23,7 +25,7 @@ export function Card({ task }: { task: TaskCard }) {
           </span>
           <span className="shrink-0">
             {task.costUsd >= 0.005 ? `${money(task.costUsd)} · ` : ''}
-            {ago(task.updatedAt)}
+            {ago(task.updatedAt, Date.now(), t.time)}
           </span>
         </div>
         <div title={task.title} className="mt-1 line-clamp-2 text-sm font-medium text-foreground">
@@ -31,17 +33,17 @@ export function Card({ task }: { task: TaskCard }) {
         </div>
         {task.mainRed ? (
           <div className="mt-1 truncate text-xs font-medium text-destructive">
-            main is red after the release
+            {t.board.mainRedAfterRelease}
           </div>
         ) : null}
         {task.retryAt ? (
           <div className="mt-1 truncate text-xs text-muted-foreground">
-            {runsAgain(task.retryAt)}
+            {runsAgain(task.retryAt, Date.now(), t.time)}
           </div>
         ) : null}
         {task.attempts > 1 ? (
           <div className="mt-1 truncate text-xs text-muted-foreground">
-            attempt {task.attempts} of 3
+            {t.board.attempt(task.attempts)}
           </div>
         ) : null}
         <div className="mt-auto">
@@ -66,6 +68,7 @@ export function Card({ task }: { task: TaskCard }) {
 const COLUMN = 'minmax(150px, 1fr)'
 
 function Column({ title, tasks }: { title: string; tasks: TaskCard[] }) {
+  const { t } = useCopy()
   return (
     <section aria-label={title} className="min-w-0">
       <h2 className="sticky top-0 z-10 mb-2 truncate bg-background pb-1 text-sm font-semibold text-foreground">
@@ -75,7 +78,9 @@ function Column({ title, tasks }: { title: string; tasks: TaskCard[] }) {
         {tasks.map((task) => (
           <Card key={task.id} task={task} />
         ))}
-        {tasks.length === 0 ? <p className="text-xs text-muted-foreground">Nothing here.</p> : null}
+        {tasks.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{t.board.nothingHere}</p>
+        ) : null}
       </div>
     </section>
   )
@@ -87,6 +92,7 @@ function Column({ title, tasks }: { title: string; tasks: TaskCard[] }) {
  * of the screen where it can be found, and the column titles stay at the top.
  */
 export function Board({ tasks }: { tasks: TaskCard[] }) {
+  const { t } = useCopy()
   return (
     <div className="max-h-[calc(100vh-170px)] overflow-auto pb-2">
       {/* The columns are as tall as the tallest: a title sticks only inside its own column, so a short one would let it go. */}
@@ -97,7 +103,7 @@ export function Board({ tasks }: { tasks: TaskCard[] }) {
         {COLUMNS.map((column) => (
           <Column
             key={column.id}
-            title={column.title}
+            title={t.columns[column.id]}
             tasks={tasks.filter((t) => t.column === column.id)}
           />
         ))}
@@ -108,15 +114,16 @@ export function Board({ tasks }: { tasks: TaskCard[] }) {
 
 /** The same tasks as a table, for when the columns are too many to scan. */
 export function TaskList({ tasks }: { tasks: TaskCard[] }) {
+  const { t } = useCopy()
   return (
-    <Table aria-label="Tasks">
+    <Table aria-label={t.board.tasks}>
       <Table.Header>
         <Table.Row>
-          <Table.HeaderCell>Task</Table.HeaderCell>
-          <Table.HeaderCell>Repository</Table.HeaderCell>
-          <Table.HeaderCell>Stage</Table.HeaderCell>
-          <Table.HeaderCell align="right">Cost</Table.HeaderCell>
-          <Table.HeaderCell align="right">Updated</Table.HeaderCell>
+          <Table.HeaderCell>{t.board.task}</Table.HeaderCell>
+          <Table.HeaderCell>{t.board.repository}</Table.HeaderCell>
+          <Table.HeaderCell>{t.board.stage}</Table.HeaderCell>
+          <Table.HeaderCell align="right">{t.board.cost}</Table.HeaderCell>
+          <Table.HeaderCell align="right">{t.board.updated}</Table.HeaderCell>
         </Table.Row>
       </Table.Header>
       <Table.Body>
@@ -127,7 +134,7 @@ export function TaskList({ tasks }: { tasks: TaskCard[] }) {
                 {task.title}
               </Link>
               {task.mainRed ? (
-                <span className="ml-2 text-xs font-medium text-destructive">main is red</span>
+                <span className="ml-2 text-xs font-medium text-destructive">{t.board.mainRed}</span>
               ) : null}
             </Table.Cell>
             <Table.Cell>
@@ -145,7 +152,7 @@ export function TaskList({ tasks }: { tasks: TaskCard[] }) {
             <Table.Cell align="right" numeric>
               {money(task.costUsd)}
             </Table.Cell>
-            <Table.Cell align="right">{ago(task.updatedAt)}</Table.Cell>
+            <Table.Cell align="right">{ago(task.updatedAt, Date.now(), t.time)}</Table.Cell>
           </Table.Row>
         ))}
       </Table.Body>
