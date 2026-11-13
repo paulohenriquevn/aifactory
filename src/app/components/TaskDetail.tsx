@@ -7,6 +7,7 @@ import { WatchPanel } from './WatchPanel'
 import { TaskActions } from './TaskActions'
 import { Transcript } from './Transcript'
 import { ago, describeEvent, money, shortSha } from '../lib/format'
+import { useCopy } from '../lib/copy'
 import { useResource } from '../lib/live'
 
 /**
@@ -15,11 +16,12 @@ import { useResource } from '../lib/live'
  * (the way back) from whoever shows it.
  */
 export function TaskDetailView({ id, above }: { id: number; above?: ReactNode }) {
+  const { t } = useCopy()
   const resource = useResource<TaskDetail>(`/api/panel/tasks/${id}`, { only: id })
   const detail = resource.data
 
   if (resource.error) return <p className="text-sm text-destructive">{resource.error}</p>
-  if (!detail) return <p className="text-sm text-muted-foreground">Loading…</p>
+  if (!detail) return <p className="text-sm text-muted-foreground">{t.task.loading}</p>
   const { task } = detail
 
   return (
@@ -39,7 +41,7 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
             retryable={task.retryable}
           />
           <span>{money(task.costUsd)}</span>
-          {task.attempts > 0 ? <span>{task.attempts} of 3 attempts</span> : null}
+          {task.attempts > 0 ? <span>{t.task.attempts(task.attempts)}</span> : null}
           {task.headSha ? <code>{shortSha(task.headSha)}</code> : null}
           {task.preRelease ? (
             <a
@@ -48,7 +50,7 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
               target="_blank"
               rel="noreferrer"
             >
-              Pre-release {task.preRelease.tag}
+              {t.task.preRelease(task.preRelease.tag)}
             </a>
           ) : null}
           {task.release ? (
@@ -58,7 +60,7 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
               target="_blank"
               rel="noreferrer"
             >
-              Release {task.release.tag}
+              {t.task.release(task.release.tag)}
             </a>
           ) : null}
           {task.pullRequestUrl ? (
@@ -68,7 +70,7 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
               target="_blank"
               rel="noreferrer"
             >
-              Pull request
+              {t.task.pullRequest}
             </a>
           ) : null}
         </div>
@@ -79,8 +81,8 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
       <WatchPanel watches={detail.watches} onDone={resource.reload} />
 
       {detail.questions.length > 0 ? (
-        <section aria-label="Questions">
-          <h2 className="mb-2 text-sm font-semibold">Questions</h2>
+        <section aria-label={t.task.questions}>
+          <h2 className="mb-2 text-sm font-semibold">{t.task.questions}</h2>
           <ul className="space-y-3">
             {detail.questions.map((q) => (
               <li
@@ -89,9 +91,7 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
               >
                 <p className="whitespace-pre-wrap">{q.body}</p>
                 <p className="mt-2 text-foreground">
-                  {q.answer
-                    ? `${q.answeredBy} answered: ${q.answer}`
-                    : 'Reply in a comment on the issue, as someone with write access.'}
+                  {q.answer ? t.task.answered(q.answeredBy ?? '', q.answer) : t.task.replyHint}
                 </p>
               </li>
             ))}
@@ -100,13 +100,13 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
       ) : null}
 
       {detail.deliveries.length > 0 ? (
-        <section aria-label="Deliveries">
-          <h2 className="mb-2 text-sm font-semibold">Deliveries</h2>
+        <section aria-label={t.task.deliveries}>
+          <h2 className="mb-2 text-sm font-semibold">{t.task.deliveries}</h2>
           <ul className="space-y-1 text-sm">
             {detail.deliveries.map((d) => (
               <li key={d.id}>
                 <span className="font-medium">
-                  {d.kind === 'release' ? 'Release' : 'Pre-release'}
+                  {d.kind === 'release' ? t.task.deliveryRelease : t.task.deliveryPreRelease}
                 </span>{' '}
                 <a
                   href={d.url}
@@ -117,7 +117,7 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
                   {d.tag}
                 </a>{' '}
                 <span className="text-xs text-muted-foreground">
-                  on {shortSha(d.sha)} by {d.actor} · {ago(d.at)}
+                  {t.task.deliveryMeta(shortSha(d.sha), d.actor, ago(d.at))}
                 </span>
               </li>
             ))}
@@ -125,8 +125,8 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
         </section>
       ) : null}
 
-      <section aria-label="Timeline">
-        <h2 className="mb-2 text-sm font-semibold">Timeline</h2>
+      <section aria-label={t.task.timeline}>
+        <h2 className="mb-2 text-sm font-semibold">{t.task.timeline}</h2>
         <ol className="space-y-1 border-l border-border pl-4">
           {detail.timeline.map((event) => (
             <li key={event.id} className="text-sm">
@@ -142,23 +142,23 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
         </ol>
       </section>
 
-      <section aria-label="Transcript">
-        <h2 className="mb-2 text-sm font-semibold">What the agents did</h2>
+      <section aria-label={t.task.transcript}>
+        <h2 className="mb-2 text-sm font-semibold">{t.task.transcript}</h2>
         <Transcript taskId={task.id} live={columnOf(task.stage) === 'working'} />
       </section>
 
       {detail.runs.length > 0 ? (
-        <section aria-label="Executions">
-          <h2 className="mb-2 text-sm font-semibold">Executions</h2>
+        <section aria-label={t.task.executions}>
+          <h2 className="mb-2 text-sm font-semibold">{t.task.executions}</h2>
           <table className="w-full text-left text-sm">
             <thead className="text-xs text-muted-foreground">
               <tr>
-                <th className="py-1 pr-3">Role</th>
-                <th className="py-1 pr-3">Agent</th>
-                <th className="py-1 pr-3">Attempt</th>
-                <th className="py-1 pr-3">Cost</th>
-                <th className="py-1 pr-3">Time</th>
-                <th className="py-1 pr-3">Result</th>
+                <th className="py-1 pr-3">{t.task.role}</th>
+                <th className="py-1 pr-3">{t.task.agent}</th>
+                <th className="py-1 pr-3">{t.task.attempt}</th>
+                <th className="py-1 pr-3">{t.task.cost}</th>
+                <th className="py-1 pr-3">{t.task.time}</th>
+                <th className="py-1 pr-3">{t.task.result}</th>
               </tr>
             </thead>
             <tbody>
@@ -169,14 +169,14 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
                   <td className="py-1 pr-3">{r.attempt}</td>
                   <td className="py-1 pr-3">
                     {r.costUsd === null ? (
-                      <span className="text-muted-foreground">not reported</span>
+                      <span className="text-muted-foreground">{t.task.notReported}</span>
                     ) : (
                       money(r.costUsd)
                     )}
                   </td>
-                  <td className="py-1 pr-3">{(r.durationMs / 1000).toFixed(1)} s</td>
+                  <td className="py-1 pr-3">{t.task.seconds((r.durationMs / 1000).toFixed(1))}</td>
                   <td className="py-1 pr-3">
-                    {r.quota ? 'out of quota' : r.ok ? 'finished' : 'failed'}
+                    {r.quota ? t.task.outOfQuota : r.ok ? t.task.finished : t.task.failed}
                   </td>
                 </tr>
               ))}
@@ -185,10 +185,10 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
         </section>
       ) : null}
 
-      <section aria-label="Evidence">
-        <h2 className="mb-2 text-sm font-semibold">Evidence</h2>
+      <section aria-label={t.task.evidence}>
+        <h2 className="mb-2 text-sm font-semibold">{t.task.evidence}</h2>
         {detail.evidence.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No checks have run yet.</p>
+          <p className="text-sm text-muted-foreground">{t.task.noChecks}</p>
         ) : (
           <ul className="space-y-2">
             {detail.evidence.map((e) => (
@@ -197,13 +197,17 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
                   <code>{e.command}</code>
                   <Pass ok={e.passed} />
                   <span className="text-xs text-muted-foreground">
-                    on {shortSha(e.sha)} · exit {e.exitCode} · {(e.durationMs / 1000).toFixed(1)} s
+                    {t.task.evidenceMeta(
+                      shortSha(e.sha),
+                      e.exitCode,
+                      (e.durationMs / 1000).toFixed(1),
+                    )}
                   </span>
                 </div>
                 {e.output ? (
                   <details className="mt-2">
                     <summary className="cursor-pointer text-xs text-muted-foreground">
-                      Output
+                      {t.task.output}
                     </summary>
                     <pre className="mt-1 max-h-64 overflow-auto rounded bg-muted p-2 text-xs text-foreground">
                       {e.output}
@@ -218,20 +222,18 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
 
       <PlanSection plans={detail.plans} />
 
-      <section aria-label="Reviews">
-        <h2 className="mb-2 text-sm font-semibold">Reviews</h2>
+      <section aria-label={t.task.reviews}>
+        <h2 className="mb-2 text-sm font-semibold">{t.task.reviews}</h2>
         {detail.reviews.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Not reviewed yet.</p>
+          <p className="text-sm text-muted-foreground">{t.task.notReviewed}</p>
         ) : (
           <ul className="space-y-2">
             {detail.reviews.map((r) => (
               <li key={r.id} className="rounded border border-border bg-card p-3 text-sm">
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="font-medium">
-                    Attempt {r.round}: {r.verdict}
-                  </span>
+                  <span className="font-medium">{t.task.reviewLine(r.round, r.verdict)}</span>
                   <span className="text-xs text-muted-foreground">
-                    {r.reviewer} on {shortSha(r.sha)}
+                    {t.task.reviewedOn(r.reviewer, shortSha(r.sha))}
                   </span>
                 </div>
                 <p className="mt-1 text-foreground">{r.summary}</p>

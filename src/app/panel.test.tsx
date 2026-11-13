@@ -14,6 +14,11 @@ import type {
 } from '../shared/panel'
 
 import { TaskActions } from './components/TaskActions'
+import { TaskDetailView } from './components/TaskDetail'
+import { Transcript } from './components/Transcript'
+import { CopyProvider, LANGUAGE_KEY } from './lib/copy'
+import { en } from './lib/copy/en'
+import { ptBR } from './lib/copy/pt-BR'
 import HealthPage from './health/page'
 import InboxPage from './inbox/page'
 import { describeEvent, shortSha } from './lib/format'
@@ -992,5 +997,56 @@ describe('describing events', () => {
       'u\npre-release pre/7-abcdef1',
     )
     expect(shortSha(null)).toBe('')
+  })
+})
+
+describe('the task page in two languages', () => {
+  const inLanguage = (language: 'en' | 'pt-BR', ui: React.ReactNode) => {
+    window.localStorage.setItem(LANGUAGE_KEY, language)
+    return render(
+      <MemoryRouter>
+        <CopyProvider>{ui}</CopyProvider>
+      </MemoryRouter>,
+    )
+  }
+  afterEach(() => window.localStorage.clear())
+
+  for (const [language, t] of [
+    ['en', en],
+    ['pt-BR', ptBR],
+  ] as const) {
+    it(`shows the section headings of ${language}`, async () => {
+      serve({
+        'GET /api/panel/tasks/5': detail({ runs: [], deliveries: [] }),
+        'GET /api/panel/tasks/5/transcript?after=0': { events: [], more: false },
+      })
+      inLanguage(language, <TaskDetailView id={5} />)
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: t.task.timeline })).toBeDefined(),
+      )
+      for (const name of [t.task.transcript, t.task.evidence, t.task.reviews]) {
+        expect(screen.getByRole('heading', { name })).toBeDefined()
+      }
+      expect(screen.getByText(t.taskActions.approve)).toBeDefined()
+    })
+
+    it(`shows the empty transcript of ${language}`, async () => {
+      serve({ 'GET /api/panel/tasks/5/transcript?after=0': { events: [], more: false } })
+      inLanguage(language, <Transcript taskId={5} live={false} />)
+      await waitFor(() => expect(screen.getByText(t.transcript.none)).toBeDefined())
+      cleanup()
+      inLanguage(language, <Transcript taskId={5} live />)
+      await waitFor(() => expect(screen.getByText(t.transcript.waitingFirst)).toBeDefined())
+    })
+  }
+
+  it('labels every action button of a handoff in Portuguese', () => {
+    const handoff = detail({ task: { ...base, stage: 'handoff', column: 'attention' } })
+    inLanguage('pt-BR', <TaskActions detail={handoff} onDone={() => {}} />)
+    const t = ptBR.taskActions
+    for (const name of [t.approve, t.retry, t.sendBack, t.markResolved]) {
+      expect(screen.getByRole('button', { name })).toBeDefined()
+    }
+    expect(screen.getByText(t.heading)).toBeDefined()
   })
 })

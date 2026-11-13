@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 
 import type { TranscriptEvent, TranscriptPage } from '../../shared/panel'
 import { get } from '../lib/api'
+import { useCopy } from '../lib/copy'
 import { ago } from '../lib/format'
 import { subscribe } from '../lib/live'
 import { mergeSteps, transcriptRows } from '../lib/transcript'
@@ -58,17 +59,14 @@ function useTranscript(taskId: number) {
   return { events, error }
 }
 
-const ROLE = { builder: 'Builder', reviewer: 'Reviewer' } as const
-
 export function Transcript({ taskId, live }: { taskId: number; live: boolean }) {
   const { events, error } = useTranscript(taskId)
+  const { t } = useCopy()
   if (error) return <p className="text-sm text-destructive">{error}</p>
   if (events.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        {live
-          ? 'Waiting for the first step of the agent…'
-          : 'No steps were recorded for this task.'}
+        {live ? t.transcript.waitingFirst : t.transcript.none}
       </p>
     )
   }
@@ -91,7 +89,7 @@ export function Transcript({ taskId, live }: { taskId: number; live: boolean }) 
           ) : row.type === 'say' ? (
             <p className="whitespace-pre-wrap">
               <span className="mr-2 text-xs font-medium text-muted-foreground">
-                {ROLE[row.role]}
+                {t.transcript[row.role]}
               </span>
               {row.text}
             </p>

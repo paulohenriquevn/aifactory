@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ClaudeLoginState } from '../../shared/panel'
 
+import { en } from '../lib/copy/en'
+
 import { ClaudeAccount } from './ClaudeAccount'
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), del: vi.fn() }))
@@ -104,25 +106,23 @@ describe('starting again the tasks that waited for the account', () => {
     api.get.mockResolvedValueOnce({ status: 'done' })
     api.post.mockImplementationOnce(answer)
     mount()
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Refazer as tarefas que esperavam a conta' }),
-    )
+    fireEvent.click(await screen.findByRole('button', { name: en.retryWaiting.button }))
   }
 
   it('says how many tasks started', async () => {
     await done(() => Promise.resolve({ started: 3, skipped: 0 }))
-    expect(await screen.findByText('3 tarefas começaram de novo.')).toBeTruthy()
+    expect(await screen.findByText(en.retryWaiting.started(3))).toBeTruthy()
     expect(api.post).toHaveBeenCalledWith('/api/panel/retry-waiting')
   })
 
   it('says it in the singular for one task', async () => {
     await done(() => Promise.resolve({ started: 1, skipped: 0 }))
-    expect(await screen.findByText('1 tarefa começou de novo.')).toBeTruthy()
+    expect(await screen.findByText(en.retryWaiting.started(1))).toBeTruthy()
   })
 
   it('says so when no task was waiting', async () => {
     await done(() => Promise.resolve({ started: 0, skipped: 0 }))
-    expect(await screen.findByText('Nenhuma tarefa estava esperando.')).toBeTruthy()
+    expect(await screen.findByText(en.retryWaiting.none)).toBeTruthy()
   })
 
   it('shows why starting them failed', async () => {
