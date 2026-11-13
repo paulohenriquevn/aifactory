@@ -46,7 +46,7 @@ src/server/         backend — never leaves the machine
   knowledge/        the owner's knowledge repository: mirror, sync, the slice each agent gets, notes
   db/               Postgres config, pool, Drizzle schema, health probe
   ingest/           GitHub delivery: decide, record (ingress + task), signed webhook handler
-  factory/          one task end to end: sandbox, agent, push, stage history
+  factory/          one task end to end: sandbox, agent, push, stage history; the repository doctor
   github/           GitHub App auth (repository-scoped tokens) and issue reads
   jobs/             defineJob files; `run-task` runs a task
   routes/           file-based HTTP
@@ -104,6 +104,11 @@ reads that file, not a convention.
   nothing of the factory; `knowledge/format.ts` is the factory's layout on top of it. What the factory writes
   conforms (a test checks every file it writes), and what it reads may not: never refuse a bundle for missing
   front matter, an unknown type or a broken link (§11 of the specification).
+- **The doctor never calls fine what it did not read.** `factory/doctor.ts` decides over facts and reads
+  nothing; `factory/doctor-facts.ts` reads and decides nothing. A read that fails is a fact that was not
+  read, and its item is `unknown` with what was tried. A new diagnosis is a new item function and a new
+  fact, listed in `DOCTOR_ITEMS`. The doctor asks GitHub only for what the App's permissions allow, and
+  `repairRepository` does only what the App can do (create a branch, create the label).
 - **Every text box in the panel has an `<Assist>`.** `src/app/every-box.test.ts` fails when a file with a
   textarea has none. The premise is that the owner never has to be a programmer.
 - **Panel routes are owner-only.** `.policy(ownerOnly)` on everything under `/api/panel` but the login;

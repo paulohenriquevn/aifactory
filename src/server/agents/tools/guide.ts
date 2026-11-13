@@ -95,8 +95,12 @@ export const updateRepositoryTool = tool('update_repository')
   )
   .input(repositoryPatchSchema.extend({ repository: z.string().max(200).describe('owner/name') }))
   .execute(async ({ repository, ...patch }) => {
-    await saveRepository(workDeps(), repository, patch)
-    return `Saved the settings of ${repository}.`
+    const { doctor } = await saveRepository(workDeps(), repository, patch)
+    const found = (doctor?.items ?? []).filter((item) => item.status !== 'ok')
+    if (found.length === 0) return `Saved the settings of ${repository}.`
+    return `Saved the settings of ${repository}. The doctor found: ${found
+      .map((item) => `${item.id} (${item.status}): ${item.cause} ${item.repair}`)
+      .join(' | ')}`
   })
   .build()
 

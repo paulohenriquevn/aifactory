@@ -15,7 +15,8 @@ export type RecipeDeps = {
   readRecipe: (repo: string, token: string) => Promise<Recipe | undefined>
 }
 
-async function savedName(db: Database, fullName: string): Promise<string> {
+/** The name a repository was saved under, whatever case it is asked for in. One never saved is refused. */
+export async function savedName(db: Database, fullName: string): Promise<string> {
   const [row] = await db
     .select({ fullName: repository.fullName })
     .from(repository)

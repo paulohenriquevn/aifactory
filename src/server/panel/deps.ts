@@ -9,6 +9,7 @@ import { createIssuesApi } from '../github/issues-api'
 import { createGithubApi } from '../github/pulls'
 
 import { ActionRefused, type ActionDeps } from './actions'
+import { repositoryDoctor, type DoctorDeps } from './doctor'
 import type { WorkDeps } from './work'
 import { readFileSync } from 'node:fs'
 
@@ -36,6 +37,16 @@ export function actionDeps(env: NodeJS.ProcessEnv = process.env): ActionDeps {
   }
 }
 
+/** What the doctor of a repository reads with, and repairs with. */
+export function doctorDeps(env: NodeJS.ProcessEnv = process.env): DoctorDeps {
+  return {
+    db: getDb(),
+    github: githubAppFromEnv(env),
+    api: createGithubApi(),
+    issues: createIssuesApi(),
+  }
+}
+
 /** What the repositories, jobs and plans pages need, read when they run. */
 export function workDeps(env: NodeJS.ProcessEnv = process.env): WorkDeps {
   const slug = env.GITHUB_APP_SLUG
@@ -44,6 +55,7 @@ export function workDeps(env: NodeJS.ProcessEnv = process.env): WorkDeps {
     github: githubAppFromEnv(env),
     issues: createIssuesApi(),
     api: createGithubApi(),
+    diagnose: (fullName) => repositoryDoctor(doctorDeps(env), fullName),
     installUrl: slug ? `https://github.com/apps/${slug}/installations/new` : undefined,
     agents: Object.keys(harnessRegistry(env)),
     inTransaction: inTransactionForPlan,

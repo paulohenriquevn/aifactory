@@ -1031,6 +1031,38 @@ ele abre. Nenhum comando.
    validado (sem `-` no começo, sem `..`), e a branch de integração não pode ser a branch padrão do
    repositório. Se `workspace` e `develop` não existem, a fábrica as cria ao habilitar.
 
+   **O doctor do repositório.** Habilitar um repositório roda o doctor nele, e
+   `GET /api/panel/repositories/<dono>/<nome>/doctor` roda de novo a qualquer momento. Ele examina o
+   repositório antes que uma task falhe e devolve um item por diagnóstico, cada um com o estado (`ok`,
+   `warn`, `blocked` ou `unknown`), a causa, o reparo, o link de onde o reparo é feito e se a fábrica
+   consegue fazê-lo sozinha (`canRepair`):
+
+   | Item              | O que acusa                                                                                             |
+   | ----------------- | ------------------------------------------------------------------------------------------------------- |
+   | `issues_disabled` | Issues desligadas no repositório (um fork nasce assim)                                                  |
+   | `app_access`      | a App não alcança o repositório, ou a instalação não aceitou uma permissão que a fábrica pede           |
+   | `app_events`      | a App não assina um evento que a fábrica lê                                                             |
+   | `branches`        | falta `workspace` ou `develop` (a fábrica cria)                                                         |
+   | `label`           | falta a label `factory` (a fábrica cria)                                                                |
+   | `auto_merge`      | a branch de integração exige checks e o repositório não permite auto-merge ou merge commits             |
+   | `ci_silent`       | um check exigido não reportou em nenhum dos últimos commits da branch nem dos últimos PRs para ela      |
+   | `checks_parity`   | um check exigido não tem check da fábrica com o mesmo nome                                              |
+   | `publish_mode`    | como o repositório publica: `changesets`, `tag` ou `none`; em `tag`, se o `package.json` bate com a tag |
+   | `recipe`          | a receita não pode ser usada, ou tem domínios esperando aprovação                                       |
+   | `sandbox`         | o provedor de sandbox recusou a última execução (sem crédito, chave recusada)                           |
+
+   O que o doctor não conseguiu ler vira `unknown`, com o que ele tentou e o que o GitHub respondeu, e
+   nunca `ok`. Um item `blocked` não impede habilitar: o relatório volta na resposta e fica em
+   `repository.doctor`, com a hora. `POST .../doctor/repair` com `{ "item": "branches" }` ou
+   `{ "item": "label" }` faz o reparo e devolve o relatório novo; qualquer outro item é recusado com o
+   motivo, porque a App não tem permissão para mudar ajustes do repositório nem para ligar um workflow.
+   Por essa mesma razão o `ci_silent` é lido dos check runs dos commits recentes, e não da API do Actions.
+   Com nenhum PR para olhar ele só avisa (`warn`), já que um workflow que roda só em PR também pareceria
+   mudo. Em `checks_parity`, um check da fábrica responde por um check exigido quando todas as palavras do
+   nome dele estão no nome exigido (`lint` responde por `CI / Lint (node 22)`). O `publish_mode` fica
+   também em `repository.publish_mode`. O painel ainda não mostra o relatório: por enquanto são as duas
+   rotas e a resposta do Enable.
+
 5. **Planejar.** Em Plans, o dono escolhe o repositório e escreve o objetivo. Um agente lê o repositório
    num sandbox (sem escrever nada) e devolve até dez issues independentes, cada uma com critérios de
    aceite. O dono edita os títulos e as descrições, tira ou reordena itens e decide: "Create issues"

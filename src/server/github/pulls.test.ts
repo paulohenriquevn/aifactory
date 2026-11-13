@@ -1341,3 +1341,99 @@ describe('what integrating through the repository CI needs', () => {
     ])
   })
 })
+
+describe('what the doctor reads of a repository', () => {
+  it('reads the settings the factory depends on, with the merge settings GitHub showed', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /': {
+        status: 200,
+        body: {
+          has_issues: false,
+          default_branch: 'trunk',
+          allow_auto_merge: false,
+          allow_merge_commit: true,
+        },
+      },
+    })
+
+    expect(await createGithubApi(fetch).repositorySettings('o/r', 'tok')).toEqual({
+      hasIssues: false,
+      defaultBranch: 'trunk',
+      allowAutoMerge: false,
+      allowMergeCommit: true,
+    })
+    expect(calls[0]).toMatchObject({ method: 'GET', auth: 'Bearer tok' })
+  })
+
+  it('leaves a merge setting undefined, not off, when GitHub leaves it out', async () => {
+    const { fetch } = fakeFetch({
+      'GET /': { status: 200, body: { has_issues: true, default_branch: 'main' } },
+    })
+
+    const settings = await createGithubApi(fetch).repositorySettings('o/r', 't')
+
+    expect(settings.allowAutoMerge).toBeUndefined()
+    expect(settings.allowMergeCommit).toBeUndefined()
+  })
+
+  it('throws when the settings cannot be read', async () => {
+    const { fetch } = fakeFetch({ 'GET /': { status: 502 } })
+    await expect(createGithubApi(fetch).repositorySettings('o/r', 't')).rejects.toThrow(
+      /GitHub answered 502 reading o\/r/,
+    )
+  })
+
+  it('says whether a label exists, and throws on any answer that is neither', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /labels/factory': { status: 200, body: { name: 'factory' } },
+      'GET /labels/broken': { status: 500 },
+    })
+    const api = createGithubApi(fetch)
+
+    expect(await api.labelExists('o/r', 't', 'factory')).toBe(true)
+    expect(await api.labelExists('o/r', 't', 'good first issue')).toBe(false)
+    await expect(api.labelExists('o/r', 't', 'broken')).rejects.toThrow(
+      /500 reading the label broken of o\/r/,
+    )
+    expect(calls[1].url).toBe('/labels/good%20first%20issue')
+  })
+
+  it('lists the last commits of a branch, newest first as GitHub gives them', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /commits': { status: 200, body: [{ sha: 'c2' }, { sha: 'c1' }] },
+    })
+
+    expect(await createGithubApi(fetch).recentCommits('o/r', 't', 'feat/x', 5)).toEqual([
+      'c2',
+      'c1',
+    ])
+    expect(calls[0].url).toBe('/commits?sha=feat%2Fx&per_page=5')
+  })
+
+  it('throws when the commits of a branch cannot be listed', async () => {
+    const { fetch } = fakeFetch({})
+    await expect(createGithubApi(fetch).recentCommits('o/r', 't', 'gone', 5)).rejects.toThrow(
+      /404 listing the commits of gone on o\/r/,
+    )
+  })
+
+  it('lists the heads of the pull requests into a branch that changed last, open or not', async () => {
+    const { fetch, calls } = fakeFetch({
+      'GET /pulls': { status: 200, body: [{ head: { sha: 'p2' } }, { head: { sha: 'p1' } }] },
+    })
+
+    expect(await createGithubApi(fetch).recentPullRequestHeads('o/r', 't', 'workspace', 3)).toEqual(
+      ['p2', 'p1'],
+    )
+    expect(calls[0].url).toBe(
+      '/pulls?state=all&base=workspace&sort=updated&direction=desc&per_page=3',
+    )
+  })
+
+  it('throws when the pull requests cannot be listed', async () => {
+    const { fetch } = fakeFetch({ 'GET /pulls': { status: 403 } })
+    await expect(
+      createGithubApi(fetch).recentPullRequestHeads('o/r', 't', 'workspace', 3),
+    ).rejects.toThrow(/403 listing the pull requests into workspace on o\/r/)
+  })
+})

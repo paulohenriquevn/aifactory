@@ -223,6 +223,10 @@ const ISSUE_CHANGES = new Map<string, { kind: IssueChange; what: string }>([
 /** Every event the factory reads, which is what the GitHub App has to subscribe to. */
 export const ROUTED_EVENTS: readonly string[] = ['issues', ...ROUTES.keys()]
 
+/** The events the factory reads that are not among the ones the App subscribes to. */
+export const missingRoutedEvents = (subscribed: string[]): string[] =>
+  ROUTED_EVENTS.filter((event) => !subscribed.includes(event))
+
 export type IngressDecision =
   | {
       accept: true

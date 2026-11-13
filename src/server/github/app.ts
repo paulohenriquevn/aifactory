@@ -54,6 +54,15 @@ export type AppEvents = {
   subscriptions(): Promise<{ events: string[]; settingsUrl: string }>
 }
 
+/** What an installation was granted, which its account accepts on GitHub and nowhere else. */
+export type AppAccess = {
+  /**
+   * The permissions of the installation that covers a repository, by name (`contents: 'write'`), or
+   * undefined when the App is not installed on it.
+   */
+  installationPermissions(repo: string): Promise<Record<string, string> | undefined>
+}
+
 export type GithubApp = {
   /**
    * A short-lived token limited to one repository. There is no way to ask for a token without a
@@ -71,7 +80,8 @@ export type GithubAppOptions = {
   now?: () => number
 }
 
-const PERMISSIONS = {
+/** What the factory asks of an installation: every token it mints carries exactly these. */
+export const APP_PERMISSIONS = {
   contents: 'write',
   pull_requests: 'write',
   issues: 'write',
@@ -105,7 +115,7 @@ const base64url = (value: unknown) =>
 
 export function createGithubApp(
   options: GithubAppOptions,
-): GithubApp & AppHooks & AppRepos & AppEvents {
+): GithubApp & AppHooks & AppRepos & AppEvents & AppAccess {
   const { appId, privateKey, apiUrl = 'https://api.github.com' } = options
   const fetchImpl: FetchLike = options.fetch ?? ((url, init) => fetch(url, init))
   const now = options.now ?? Date.now
@@ -178,6 +188,17 @@ export function createGithubApp(
       const account =
         owner.type === 'Organization' ? `organizations/${owner.login}/settings` : 'settings'
       return { events, settingsUrl: `https://github.com/${account}/apps/${slug}/permissions` }
+    },
+    async installationPermissions(repo) {
+      if (!REPO.test(repo)) {
+        throw new Error(`repository must be written owner/name, got ${JSON.stringify(repo)}`)
+      }
+      const response = await call(`/repos/${repo}/installation`)
+      if (response.status === 404) return undefined
+      if (!response.ok) {
+        throw new Error(`GitHub answered ${response.status} reading the installation of ${repo}`)
+      }
+      return ((await response.json()) as { permissions?: Record<string, string> }).permissions ?? {}
     },
     async installationRepositories() {
       // The list is walked page by page, so a page that asks twice in a row is answered from memory.
@@ -282,7 +303,7 @@ export function createGithubApp(
 
       const minted = await call(`/app/installations/${id}/access_tokens`, {
         method: 'POST',
-        body: JSON.stringify({ repositories: [name], permissions: PERMISSIONS }),
+        body: JSON.stringify({ repositories: [name], permissions: APP_PERMISSIONS }),
       })
       if (minted.status !== 201) {
         throw new Error(`GitHub answered ${minted.status} minting a token for ${repo}`)

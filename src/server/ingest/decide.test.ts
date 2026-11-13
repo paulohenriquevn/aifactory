@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { decideIngress, ROUTED_EVENTS } from './decide'
+import { decideIngress, missingRoutedEvents, ROUTED_EVENTS } from './decide'
 
 const repository = { full_name: 'paulo/app' }
 const issue = (labels: string[] = []) => ({
@@ -316,5 +316,14 @@ describe('deliveries the factory routes without taking work', () => {
       'check_suite',
       'check_run',
     ])
+  })
+  it('names the events it reads that the App does not subscribe to, in its own order', () => {
+    expect(missingRoutedEvents(['check_run', 'issues', 'push'])).toEqual([
+      'issue_comment',
+      'pull_request_review',
+      'pull_request_review_comment',
+      'check_suite',
+    ])
+    expect(missingRoutedEvents([...ROUTED_EVENTS])).toEqual([])
   })
 })

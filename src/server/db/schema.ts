@@ -13,6 +13,8 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
+import type { DoctorReport } from '../../shared/panel'
+
 /**
  * The stages of a task, in the order a successful run passes through them, then the ways a run ends
  * without delivering. `cancelled` is a run that was stopped because its issue no longer asks for it.
@@ -440,6 +442,10 @@ export const repository = pgTable('repository', {
   harness: text('harness'),
   reviewer: text('reviewer'),
   releaseMode: text('release_mode', { enum: ['manual', 'trial', 'auto'] }),
+  /** The doctor's last report on the repository, with its time. */
+  doctor: jsonb('doctor').$type<DoctorReport>(),
+  /** How the repository publishes a release, as the doctor last read it. */
+  publishMode: text('publish_mode', { enum: ['changesets', 'tag', 'none'] }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })

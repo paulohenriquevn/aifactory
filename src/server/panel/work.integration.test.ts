@@ -14,6 +14,7 @@ import { writeKnowledgeConfig } from '../knowledge/store'
 import { FakeGithub } from '../../test/fake-github'
 
 import { ActionRefused } from './actions'
+import { repositoryDoctor } from './doctor'
 import {
   createJob,
   createPlan,
@@ -101,6 +102,8 @@ const created = () => api.answered('createBranch').map(([branch]) => branch)
 const deps = (): WorkDeps => ({
   db: getDb(),
   api,
+  diagnose: (fullName) =>
+    repositoryDoctor({ db: getDb(), github: api.appClient(), api, issues: api }, fullName),
   github: {
     async installationToken(repo) {
       world.tokens.push(repo)
@@ -159,7 +162,7 @@ describe('the repositories page', () => {
   })
 
   it('enables a repository under the name GitHub gives it, whatever case was asked for', async () => {
-    expect(await saveRepository(deps(), 'paulo/app', { enabled: true })).toEqual({
+    expect(await saveRepository(deps(), 'paulo/app', { enabled: true })).toMatchObject({
       fullName: 'Paulo/App',
     })
     const view = await listRepositories(deps())
@@ -167,6 +170,43 @@ describe('the repositories page', () => {
     expect(await getDb().select().from(repository)).toMatchObject([
       { fullName: 'Paulo/App', enabled: true },
     ])
+  })
+
+  it('runs the doctor on a repository it enables, answers with the report and keeps it', async () => {
+    const { doctor } = await saveRepository(deps(), 'paulo/app', { enabled: true })
+
+    expect(doctor?.fullName).toBe('Paulo/App')
+    expect(doctor?.items.find((i) => i.id === 'branches')?.status).toBe('ok')
+    expect((await getDb().select().from(repository))[0].doctor).toEqual(doctor)
+  })
+
+  it('enables a repository the doctor finds blocked, and shows what blocks it', async () => {
+    repo().hasIssues = false
+
+    const { doctor } = await saveRepository(deps(), 'paulo/app', { enabled: true })
+
+    expect(doctor?.items.find((i) => i.id === 'issues_disabled')).toMatchObject({
+      status: 'blocked',
+      link: 'https://github.com/Paulo/App/settings',
+    })
+    expect(await getDb().select().from(repository)).toMatchObject([
+      { fullName: 'Paulo/App', enabled: true },
+    ])
+  })
+
+  it('does not run the doctor on a save that enables nothing', async () => {
+    await enable()
+    const examined = () => api.callsTo('repositorySettings').length
+    const before = examined()
+
+    expect(await saveRepository(deps(), 'paulo/app', { harness: 'codex' })).toEqual({
+      fullName: 'Paulo/App',
+    })
+    expect(await saveRepository(deps(), 'paulo/app', { enabled: false })).toEqual({
+      fullName: 'Paulo/App',
+    })
+    expect(before).toBe(1)
+    expect(examined()).toBe(1)
   })
 
   it('refuses to enable a repository the App does not reach', async () => {

@@ -466,3 +466,40 @@ describe('where the App is installed and who owns it', () => {
     await expect(app(odd).subscriptions()).rejects.toThrow('GitHub described the App without')
   })
 })
+
+describe('what an installation was granted', () => {
+  const answering = (status: number, body: unknown = {}) => {
+    const urls: string[] = []
+    const fetch: FetchLike = async (url) => {
+      urls.push(url)
+      return Response.json(body, { status })
+    }
+    return { fetch, urls }
+  }
+
+  it('reads the permissions of the installation that covers a repository, with the App key', async () => {
+    const { fetch, urls } = answering(200, { id: 1, permissions: { contents: 'write' } })
+
+    expect(await app(fetch).installationPermissions('o/r')).toEqual({ contents: 'write' })
+    expect(urls).toEqual(['https://api.github.com/repos/o/r/installation'])
+  })
+
+  it('is nothing for a repository the App is not installed on', async () => {
+    const { fetch } = answering(404, { message: 'Not Found' })
+    expect(await app(fetch).installationPermissions('o/r')).toBeUndefined()
+  })
+
+  it('is no permission at all when GitHub names none', async () => {
+    const { fetch } = answering(200, { id: 1 })
+    expect(await app(fetch).installationPermissions('o/r')).toEqual({})
+  })
+
+  it('says what GitHub answered when it cannot be read, and refuses a name that is not a repository', async () => {
+    const { fetch, urls } = answering(502)
+    await expect(app(fetch).installationPermissions('o/r')).rejects.toThrow(
+      'GitHub answered 502 reading the installation of o/r',
+    )
+    await expect(app(fetch).installationPermissions('o/r/x')).rejects.toThrow(/owner\/name/)
+    expect(urls).toHaveLength(1)
+  })
+})

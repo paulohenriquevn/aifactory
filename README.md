@@ -29,7 +29,8 @@ com o token de `FACTORY_PANEL_TOKEN`.
 1. A página Setup mostra o que falta e leva à página que conserta.
 2. Em Repositories, o botão "Install on GitHub" abre o GitHub, onde você escolhe a conta ou a
    organização e o que a App alcança, e o painel percebe quando a instalação termina. Habilite os repositórios em que a fábrica pode trabalhar e ajuste os checks, os
-   domínios e os agentes de cada um.
+   domínios e os agentes de cada um. Ao habilitar, o doctor examina o repositório e diz o que bloqueia
+   (Issues desligadas, CI mudo, um check exigido sem par na fábrica), com o reparo e o link.
 3. Em Plans, escreva o objetivo, revise as issues que o agente propõe e crie-as (já iniciadas ou não).
 4. O botão New job no quadro abre uma issue avulsa.
 5. Acompanhe no quadro, aprove, peça mudanças e faça o release.

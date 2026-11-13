@@ -401,6 +401,48 @@ export type RecipeView = {
   problem: string | null
 }
 
+/** One diagnosis of the repository doctor. */
+export type DoctorItemId =
+  | 'issues_disabled'
+  | 'app_access'
+  | 'app_events'
+  | 'branches'
+  | 'label'
+  | 'auto_merge'
+  | 'ci_silent'
+  | 'checks_parity'
+  | 'publish_mode'
+  | 'recipe'
+  | 'sandbox'
+
+/**
+ * What the doctor found about one thing a repository needs. `blocked` stops work, `warn` does not, and
+ * `unknown` is something the doctor could not read: its cause says what it tried, and it is never `ok`.
+ */
+export type DoctorItem = {
+  id: DoctorItemId
+  status: 'ok' | 'warn' | 'blocked' | 'unknown'
+  /** What is wrong, or what was found to be fine, in one sentence. */
+  cause: string
+  /** The exact repair; empty when there is nothing to repair. */
+  repair: string
+  /** Where the repair is made: a page on GitHub, or a path of the panel. */
+  link?: string
+  /** Whether the factory can make the repair itself. */
+  canRepair: boolean
+}
+
+/** How a repository publishes a release: its own changesets workflow, a workflow that runs on a tag, or nothing. */
+export type PublishMode = 'changesets' | 'tag' | 'none'
+
+/** The last examination of a repository. `publishMode` is null when it could not be read. */
+export type DoctorReport = {
+  fullName: string
+  at: string
+  items: DoctorItem[]
+  publishMode: PublishMode | null
+}
+
 export type RepositoriesView = {
   repositories: RepositoryView[]
   /** The agents the owner can pick for a repository. */

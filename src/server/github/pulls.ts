@@ -166,7 +166,33 @@ export function titleToRestore(
   return title.startsWith(NEEDS_A_PERSON) ? title.slice(NEEDS_A_PERSON.length) : title
 }
 
+/**
+ * What a repository's own settings say that the factory depends on. GitHub leaves the two merge settings
+ * out for a token it does not show them to, and then they are undefined: not known, which is not "off".
+ */
+export type RepositorySettings = {
+  hasIssues: boolean
+  defaultBranch: string
+  /** "Allow auto-merge". */
+  allowAutoMerge: boolean | undefined
+  /** "Allow merge commits". */
+  allowMergeCommit: boolean | undefined
+}
+
 export type GithubApi = {
+  /** The settings of the repository the factory depends on. */
+  repositorySettings(repo: string, token: string): Promise<RepositorySettings>
+  /** Whether a label exists in the repository. */
+  labelExists(repo: string, token: string, name: string): Promise<boolean>
+  /** The last commits of a branch, newest first, at most `count` of them. */
+  recentCommits(repo: string, token: string, branch: string, count: number): Promise<string[]>
+  /** The head commits of the pull requests into `base` that changed last, open or not, at most `count`. */
+  recentPullRequestHeads(
+    repo: string,
+    token: string,
+    base: string,
+    count: number,
+  ): Promise<string[]>
   createCheckRun(repo: string, token: string, check: CheckRun): Promise<void>
   /**
    * Opens a pull request from `head` into `base`, or into the default branch when `base` is not given,
@@ -661,6 +687,56 @@ export function createGithubApi(
         )
       ).json()) as { status: string }
       return body.status === 'ahead' || body.status === 'identical'
+    },
+
+    async repositorySettings(repo, token) {
+      const body = (await (
+        await ensure(await call(repo, token, ''), `reading ${repo}`, [200])
+      ).json()) as {
+        has_issues: boolean
+        default_branch: string
+        allow_auto_merge?: boolean
+        allow_merge_commit?: boolean
+      }
+      return {
+        hasIssues: body.has_issues,
+        defaultBranch: body.default_branch,
+        allowAutoMerge: body.allow_auto_merge,
+        allowMergeCommit: body.allow_merge_commit,
+      }
+    },
+
+    async labelExists(repo, token, name) {
+      const response = await call(repo, token, `/labels/${encodeURIComponent(name)}`)
+      if (response.status === 404) return false
+      await ensure(response, `reading the label ${name} of ${repo}`, [200])
+      return true
+    },
+
+    async recentCommits(repo, token, branch, count) {
+      const commits = (await (
+        await ensure(
+          await call(repo, token, `/commits?sha=${encodeURIComponent(branch)}&per_page=${count}`),
+          `listing the commits of ${branch} on ${repo}`,
+          [200],
+        )
+      ).json()) as { sha: string }[]
+      return commits.map((commit) => commit.sha)
+    },
+
+    async recentPullRequestHeads(repo, token, base, count) {
+      const pulls = (await (
+        await ensure(
+          await call(
+            repo,
+            token,
+            `/pulls?state=all&base=${encodeURIComponent(base)}&sort=updated&direction=desc&per_page=${count}`,
+          ),
+          `listing the pull requests into ${base} on ${repo}`,
+          [200],
+        )
+      ).json()) as { head: { sha: string } }[]
+      return pulls.map((pull) => pull.head.sha)
     },
 
     async defaultBranch(repo, token) {
