@@ -1,0 +1,58 @@
+/** The panel's text in English. `pt-BR.ts` is typed against this one, so the two always have the same keys. */
+export const en = {
+  layout: {
+    loading: 'Loading…',
+    ownerName: 'owner',
+    ownerRole: 'factory owner',
+  },
+  places: {
+    board: 'Board',
+    plans: 'Plans',
+    repositories: 'Repositories',
+    inbox: 'Inbox',
+    health: 'Health',
+    agents: 'Agents',
+    setup: 'Setup',
+  },
+  menu: {
+    label: 'Menu',
+    folded: 'Folded menu',
+    main: 'Main',
+    show: 'Show the menu',
+    hide: 'Fold the menu',
+    newChat: 'New chat',
+    searchChats: 'Search chats',
+    searchInChats: 'Search in chats',
+    pinned: 'Pinned',
+    recent: 'Recent',
+    chats: 'Chats',
+    noneFound: 'No chat found',
+    noneYet: 'No chat yet',
+    account: 'Account',
+    signOut: 'Sign out',
+  },
+  chatRow: {
+    name: 'Chat name',
+    options: (title: string) => `Options for ${title}`,
+    pin: 'Pin',
+    unpin: 'Unpin',
+    rename: 'Rename',
+    remove: 'Delete',
+    confirmRemove: (title: string) => `Delete "${title}"?`,
+  },
+  topBar: {
+    part: 'Part of the app',
+    chat: 'Chat',
+    work: 'Work',
+    guide: 'Guide',
+    openGuide: (name: string) => `Open ${name}`,
+    closeGuide: (name: string) => `Close ${name}`,
+    lightTheme: 'Light theme',
+    darkTheme: 'Dark theme',
+    language: 'Language',
+    switchLanguage: 'Mudar para português',
+    languageName: 'English',
+  },
+}
+
+export type Copy = typeof en

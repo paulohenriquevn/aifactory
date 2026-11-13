@@ -21,6 +21,7 @@ import { Link, NavLink, useNavigate, useParams } from 'react-router'
 
 import type { GuideId } from '../../../shared/guides'
 import type { ChatSummary } from '../../../shared/panel'
+import { useCopy } from '../../lib/copy'
 import { chatApi, groupChats } from '../../lib/chat'
 import { useChats } from '../../lib/chats'
 
@@ -68,10 +69,11 @@ function ChatRow({ chat }: { chat: ChatSummary }) {
   const { chatId } = useParams()
   const navigate = useNavigate()
   const { reload } = useChats()
+  const { t } = useCopy()
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(chat.title)
   const active = chatId === chat.id
-  const title = chat.title || 'Novo chat'
+  const title = chat.title || t.menu.newChat
 
   async function rename() {
     setEditing(false)
@@ -84,7 +86,7 @@ function ChatRow({ chat }: { chat: ChatSummary }) {
     return (
       <input
         autoFocus
-        aria-label="Nome da conversa"
+        aria-label={t.chatRow.name}
         value={name}
         onChange={(e) => setName(e.target.value)}
         onBlur={() => void rename()}
@@ -109,7 +111,7 @@ function ChatRow({ chat }: { chat: ChatSummary }) {
         <DropdownMenu.Trigger asChild>
           <button
             type="button"
-            aria-label={`Opções de ${title}`}
+            aria-label={t.chatRow.options(title)}
             className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded-md p-1 text-foreground/70 hover:bg-muted/60 group-hover:block data-[state=open]:block"
           >
             <MoreHorizontal className="size-4" />
@@ -120,17 +122,17 @@ function ChatRow({ chat }: { chat: ChatSummary }) {
             onSelect={() => void chatApi.patch(chat.id, { pinned: !chat.pinned }).then(reload)}
           >
             {chat.pinned ? <PinOff className="mr-2 size-4" /> : <Pin className="mr-2 size-4" />}
-            {chat.pinned ? 'Desafixar' : 'Fixar'}
+            {chat.pinned ? t.chatRow.unpin : t.chatRow.pin}
           </DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => setEditing(true)}>
             <Pencil className="mr-2 size-4" />
-            Renomear
+            {t.chatRow.rename}
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.Item
             className="text-destructive"
             onSelect={() => {
-              if (!window.confirm(`Apagar "${title}"?`)) return
+              if (!window.confirm(t.chatRow.confirmRemove(title))) return
               void chatApi.remove(chat.id).then(() => {
                 reload()
                 if (active) void navigate('/')
@@ -138,7 +140,7 @@ function ChatRow({ chat }: { chat: ChatSummary }) {
             }}
           >
             <Trash2 className="mr-2 size-4" />
-            Apagar
+            {t.chatRow.remove}
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu>
@@ -184,6 +186,7 @@ export function Sidebar({
   startSearching?: boolean
 }) {
   const { chats } = useChats()
+  const { t } = useCopy()
   const navigate = useNavigate()
   const onNewChat = useOnNewChat()
   const [searching, setSearching] = useState(startSearching)
@@ -192,7 +195,7 @@ export function Sidebar({
 
   return (
     <aside
-      aria-label="Menu"
+      aria-label={t.menu.label}
       className="flex h-full w-[338px] max-w-[40vw] shrink-0 flex-col border-r border-border bg-card"
     >
       <div className="flex items-center justify-between px-4 pb-2 pt-3">
@@ -200,7 +203,7 @@ export function Sidebar({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            aria-label="Buscar conversas"
+            aria-label={t.menu.searchChats}
             onClick={() => setSearching((on) => !on)}
             className="rounded-lg p-2 text-foreground/80 hover:bg-muted/60"
           >
@@ -208,7 +211,7 @@ export function Sidebar({
           </button>
           <button
             type="button"
-            aria-label="Recolher o menu"
+            aria-label={t.menu.hide}
             onClick={onToggle}
             className="rounded-lg p-2 text-foreground/80 hover:bg-muted/60"
           >
@@ -217,7 +220,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <nav aria-label="Principal" className="px-2">
+      <nav aria-label={t.menu.main} className="px-2">
         <Link
           to="/"
           aria-current={onNewChat ? 'page' : undefined}
@@ -228,16 +231,21 @@ export function Sidebar({
           className={`${row} ${onNewChat ? ACTIVE : ''}`}
         >
           <SquarePen className="size-[18px] shrink-0" />
-          Novo chat
+          {t.menu.newChat}
         </Link>
         <div className="mt-3 space-y-0.5">
-          <Place id="board" to="/work" icon={LayoutDashboard} label="Quadro" />
-          <Place id="plans" to="/plans" icon={ListChecks} label="Planos" />
-          <Place id="repositories" to="/repositories" icon={FolderGit2} label="Repositórios" />
-          <Place id="inbox" to="/inbox" icon={Inbox} label="Caixa de entrada" count={waiting} />
-          <Place id="health" to="/health" icon={HeartPulse} label="Saúde" count={wrong} />
-          <Place id="agents" to="/agents" icon={Bot} label="Agentes" />
-          <Place id="setup" to="/setup" icon={Settings2} label="Configuração" />
+          <Place id="board" to="/work" icon={LayoutDashboard} label={t.places.board} />
+          <Place id="plans" to="/plans" icon={ListChecks} label={t.places.plans} />
+          <Place
+            id="repositories"
+            to="/repositories"
+            icon={FolderGit2}
+            label={t.places.repositories}
+          />
+          <Place id="inbox" to="/inbox" icon={Inbox} label={t.places.inbox} count={waiting} />
+          <Place id="health" to="/health" icon={HeartPulse} label={t.places.health} count={wrong} />
+          <Place id="agents" to="/agents" icon={Bot} label={t.places.agents} />
+          <Place id="setup" to="/setup" icon={Settings2} label={t.places.setup} />
         </div>
       </nav>
 
@@ -245,8 +253,8 @@ export function Sidebar({
         <div className="px-4 pt-3">
           <input
             autoFocus
-            aria-label="Buscar nas conversas"
-            placeholder="Buscar nas conversas"
+            aria-label={t.menu.searchInChats}
+            placeholder={t.menu.searchInChats}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             className="w-full rounded-lg bg-muted px-3 py-2 text-[14px] outline-none placeholder:text-foreground/40"
@@ -256,16 +264,13 @@ export function Sidebar({
 
       <ScrollArea className="mt-1 min-h-0 flex-1 px-2">
         {pinned.length > 0 ? (
-          <Section title="Fixados">
+          <Section title={t.menu.pinned}>
             {pinned.map((c) => (
               <ChatRow key={c.id} chat={c} />
             ))}
           </Section>
         ) : null}
-        <Section
-          title="Recentes"
-          empty={filter ? 'Nenhuma conversa encontrada' : 'Nenhuma conversa ainda'}
-        >
+        <Section title={t.menu.recent} empty={filter ? t.menu.noneFound : t.menu.noneYet}>
           {recent.length > 0 ? recent.map((c) => <ChatRow key={c.id} chat={c} />) : undefined}
         </Section>
       </ScrollArea>
@@ -273,7 +278,7 @@ export function Sidebar({
       <div className="border-t border-border p-2">
         <DropdownMenu>
           <DropdownMenu.Trigger asChild>
-            <button type="button" aria-label="Conta" className={`${row} gap-3 py-2`}>
+            <button type="button" aria-label={t.menu.account} className={`${row} gap-3 py-2`}>
               <Avatar className="size-8 text-xs">
                 <Avatar.Fallback>{name.slice(0, 2).toUpperCase()}</Avatar.Fallback>
               </Avatar>
@@ -284,7 +289,7 @@ export function Sidebar({
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="start" side="top" className="min-w-52">
-            <DropdownMenu.Item onSelect={onSignOut}>Sair</DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={onSignOut}>{t.menu.signOut}</DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu>
       </div>
