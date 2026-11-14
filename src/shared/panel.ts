@@ -119,10 +119,22 @@ export type WatchView = {
   acknowledged: boolean
 }
 
+/**
+ * What `agent_run.model` and `.effort` hold for a pass that ran on the agent's own default. A null there is a
+ * pass from before the model was recorded: unknown, not the default.
+ */
+export const AGENT_DEFAULT = 'default'
+
 export type RunView = {
   id: number
-  role: 'builder' | 'reviewer'
+  role: 'builder' | 'planner' | 'reviewer'
   harness: string
+  /** The model and effort the pass ran with, `AGENT_DEFAULT` for the agent's own; null when it was not recorded. */
+  model: string | null
+  effort: string | null
+  /** Null for an agent that reports no tokens. */
+  tokensIn: number | null
+  tokensOut: number | null
   attempt: number
   /** Empty for an agent that does not report a cost. */
   costUsd: number | null
@@ -146,7 +158,7 @@ export type FindingView = {
 
 export type CostGroup = {
   harness: string
-  role: 'builder' | 'reviewer'
+  role: 'builder' | 'planner' | 'reviewer'
   runs: number
   /** How many of them reported a cost, since some agents report none. */
   reportedRuns: number
@@ -194,7 +206,53 @@ export type MetricSignalView = {
   error: string | null
 }
 
-export type MetricsReport = { rows: MetricRow[]; signals: MetricSignalView[] }
+/** What each builder's runs needed: the rework rounds after its first builds. */
+export type BuilderRework = {
+  builder: string
+  runs: number
+  reworkRounds: number
+  /** reworkRounds / runs. */
+  perRun: number
+}
+
+/** What each reviewer's verdicts caused: the rework rounds that followed their reviews. */
+export type ReviewerRework = {
+  reviewer: string
+  model: string | null
+  reviews: number
+  reworkRounds: number
+  /** reworkRounds / reviews. */
+  perReview: number
+}
+
+/** What a delivered run cost with an agent and model in it. A null model is the agent's own default. */
+export type AgentDeliveryCost = {
+  agent: string
+  model: string | null
+  deliveredRuns: number
+  /** How many of them have a cost for every pass of this agent; the rest are unknown, never zero. */
+  reportedRuns: number
+  /** The cost of the reported runs. */
+  costUsd: number
+  /** costUsd / reportedRuns; null when no run reported a cost. */
+  perDelivery: number | null
+}
+
+/** The indicators the factory keeps, split by agent, so a change of agent can be compared with what came before. */
+export type AgentComparison = {
+  approval: ReviewerApproval[]
+  rework: BuilderRework[]
+  reviewerRework: ReviewerRework[]
+  cost: AgentDeliveryCost[]
+  /** The whole cost of a delivered run, for the agent and model that reviewed it. */
+  reviewerCost: AgentDeliveryCost[]
+}
+
+export type MetricsReport = {
+  rows: MetricRow[]
+  signals: MetricSignalView[]
+  byAgent: AgentComparison
+}
 
 export type HealthReport = {
   cost: {
@@ -639,6 +697,28 @@ export type AgentSettings = {
   engines: Record<string, EngineModels>
   /** Repositories that name an agent of their own, which wins over what is chosen here. */
   repositoriesWithOwn: { repository: string; builder: string | null; reviewer: string | null }[]
+}
+
+/** One change of the agent settings: what a role had, what it has now, and when. A null is the default. */
+export type AgentSettingChange = {
+  id: number
+  role: AgentRole
+  field: 'engine' | 'model' | 'effort'
+  oldValue: string | null
+  newValue: string | null
+  actor: string
+  at: string
+}
+
+/** How the first review of each run went, for the agent that did it. */
+export type ReviewerApproval = {
+  reviewer: string
+  /** The model the reviews ran with; null when none was recorded. */
+  model: string | null
+  reviews: number
+  approved: number
+  /** approved / reviews. */
+  share: number
 }
 
 /** A model a coding agent can be told to use, and the effort levels it takes. */

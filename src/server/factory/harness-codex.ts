@@ -15,6 +15,8 @@ import {
   executeAgent,
   PROMPT_FILE,
   SUMMARY_MAX,
+  sum,
+  tokenCounts,
   type CodingHarness,
   type HarnessInput,
   type HarnessResult,
@@ -124,6 +126,8 @@ export function codexHarness(
 
   return {
     name: 'codex',
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.effort ? { effort: options.effort } : {}),
 
     async egress(): Promise<EgressRule[]> {
       if (credential.kind === 'api-key') {
@@ -171,6 +175,7 @@ type CodexEvent = {
   message?: string
   item?: { type?: string; text?: string; message?: string }
   error?: { message?: string }
+  usage?: { input_tokens?: number; output_tokens?: number }
 }
 
 /**
@@ -202,6 +207,8 @@ export function parseCodexResult(exitCode: number, stdout: string, stderr: strin
   let summary = ''
   let completed = false
   let failure: string | undefined
+  let tokensIn: number | undefined
+  let tokensOut: number | undefined
   for (const line of stdout.split('\n')) {
     if (!line.startsWith('{')) continue
     let event: CodexEvent
@@ -214,7 +221,12 @@ export function parseCodexResult(exitCode: number, stdout: string, stderr: strin
     if (event.type === 'item.completed' && event.item?.type === 'agent_message') {
       summary = event.item.text ?? summary
     }
-    if (event.type === 'turn.completed') completed = true
+    if (event.type === 'turn.completed') {
+      completed = true
+      // A thread has several turns; what it used is what each one reports, added up.
+      tokensIn = sum(tokensIn, event.usage?.input_tokens)
+      tokensOut = sum(tokensOut, event.usage?.output_tokens)
+    }
     if (event.type === 'turn.failed') failure = event.error?.message ?? 'the turn failed'
     // A stream that fell back to another transport is reported as an error event but the turn goes on.
     if (
@@ -233,6 +245,7 @@ export function parseCodexResult(exitCode: number, stdout: string, stderr: strin
     ok,
     summary: (ok ? summary : `codex failed: ${text || `exit ${exitCode}`}`).slice(0, SUMMARY_MAX),
     ...(sessionId ? { sessionId } : {}),
+    ...tokenCounts(tokensIn, tokensOut),
     ...(quota ? { quota } : {}),
   }
 }

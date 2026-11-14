@@ -2,6 +2,7 @@ import type { AgentSettings } from '../../shared/panel'
 import type { Database } from '../db'
 import {
   agentSettings,
+  listSettingChanges,
   saveChosen,
   SettingRefused,
   type AgentSettingsPatch,
@@ -23,3 +24,6 @@ export async function changeAgentSettings(
   }
   return agentSettings(db, env)
 }
+
+/** What changed in the agent settings, oldest first. */
+export const agentSettingHistory = listSettingChanges

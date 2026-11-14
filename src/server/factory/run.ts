@@ -1,6 +1,8 @@
 import { type SandboxBackend } from '@theokit/agents/sandbox'
 import { asc, desc, eq } from 'drizzle-orm'
 
+import { AGENT_DEFAULT } from '../../shared/panel'
+
 import {
   agentRun,
   changePlan,
@@ -431,7 +433,7 @@ export class Run {
   /** Runs the agent, books its cost and session, and turns a quota stop into its own error. */
   private async settle(
     who: CodingHarness,
-    role: 'builder' | 'reviewer',
+    role: 'builder' | 'planner' | 'reviewer',
     attempt: number,
     call: (onEvent: (event: AgentEvent) => void) => Promise<HarnessResult>,
   ): Promise<HarnessResult> {
@@ -441,7 +443,7 @@ export class Run {
     const started = Date.now()
     let result: HarnessResult
     try {
-      result = await call(this.transcript.sink(role, attempt))
+      result = await call(this.transcript.sink(role === 'planner' ? 'builder' : role, attempt))
     } catch (error) {
       await this.transcript.drain()
       // The agent did not come back (the sandbox died, say). It still ran, and that is on record.
@@ -449,6 +451,8 @@ export class Run {
         taskId,
         role,
         harness: who.name,
+        model: who.model ?? AGENT_DEFAULT,
+        effort: who.effort ?? AGENT_DEFAULT,
         attempt,
         durationMs: Date.now() - started,
         ok: false,
@@ -462,6 +466,10 @@ export class Run {
       taskId,
       role,
       harness: who.name,
+      model: who.model ?? AGENT_DEFAULT,
+      effort: who.effort ?? AGENT_DEFAULT,
+      tokensIn: result.tokensIn ?? null,
+      tokensOut: result.tokensOut ?? null,
       attempt,
       costUsd: result.costUsd ?? null,
       durationMs: Date.now() - started,
@@ -691,7 +699,7 @@ export class Run {
     state.current = 'plan'
     await enterStage(deps.db, taskId, 'plan', { harness: this.builder.name })
     const prompt = changePlanPrompt(this.buildInput())
-    const first = await this.settle(this.builder, 'builder', 1, (onEvent) =>
+    const first = await this.settle(this.builder, 'planner', 1, (onEvent) =>
       this.builder.run(this.backend, { onEvent, cwd: this.repoDir, timeoutMs, prompt }),
     )
     if (!first.ok) throw new StageFailure(`the agent did not finish the plan: ${first.summary}`)
@@ -713,7 +721,7 @@ export class Run {
     if (!this.sessionId)
       throw new StageFailure('the agent wrote no plan and gave no session to ask again')
     const sessionId = this.sessionId
-    const again = await this.settle(this.builder, 'builder', 1, (onEvent) =>
+    const again = await this.settle(this.builder, 'planner', 1, (onEvent) =>
       this.builder.resume!(this.backend, sessionId, {
         onEvent,
         cwd: this.repoDir,
