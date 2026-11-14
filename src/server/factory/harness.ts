@@ -46,6 +46,8 @@ export interface CodingHarness {
    * and puts the new one in the sandbox. Answers the rules the firewall must now have.
    */
   reauthorize?(backend: SandboxBackend, installed: string): Promise<EgressRule[]>
+  /** Records that the provider refused `installed` again after a renewal, so the panel can say so. */
+  markRefused?(installed: string): Promise<void>
   run(backend: SandboxBackend, input: HarnessInput): Promise<HarnessResult>
   /** Continues a conversation `run` started, in the same sandbox or one restored from a snapshot. */
   resume?(backend: SandboxBackend, sessionId: string, input: HarnessInput): Promise<HarnessResult>

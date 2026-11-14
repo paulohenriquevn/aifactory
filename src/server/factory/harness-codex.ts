@@ -174,6 +174,10 @@ export function codexHarness(
       if (current) await placeAuth(backend, current)
     },
 
+    async markRefused(installed) {
+      if (credential.kind === 'subscription') await markCodexRefused(installed, authDeps().env)
+    },
+
     async reauthorize(backend, installed) {
       if (credential.kind !== 'subscription') return []
       await markCodexRefused(installed, authDeps().env)

@@ -513,6 +513,8 @@ export class Run {
     }
     const again = await call(this.transcript!.sink(role, attempt))
     if (again.unauthorized) {
+      const now = rules[at]?.headers?.authorization?.replace(/^Bearer /, '')
+      if (now) await who.markRefused?.(now).catch(() => {})
       throw new StageFailure(
         'Codex login was refused again after it was renewed: connect Codex again from the Setup page',
       )
