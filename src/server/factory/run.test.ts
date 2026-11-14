@@ -2,11 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { retryableFailure } from '../../shared/panel'
 import { GET } from '../routes/panel/codex/login'
 
+import { CREDENTIAL_RENEWAL_MS, githubEgress } from './credential-renewal'
 import { FakeSandbox } from './fake-sandbox'
 import { codexHarness } from './harness-codex'
 import { Run } from './run'
@@ -68,7 +69,7 @@ function reviewerRun(answers: string[], fetchLike: typeof fetch) {
     command.includes(' exec ') ? { stdout: answers.shift() ?? DONE } : {},
   )
   const rules: EgressRule[] = [
-    { domain: 'github.com' },
+    githubEgress('github-1'),
     { domain: 'chatgpt.com', headers: { authorization: `Bearer ${INSTALLED}` } },
   ]
   const updates: EgressRule[][] = []
@@ -80,13 +81,33 @@ function reviewerRun(answers: string[], fetchLike: typeof fetch) {
   }
   const state = { current: 'review' }
   const run = Object.create(Run.prototype) as Record<string, unknown>
-  run.c = { deps: { db: { insert: () => chain, update: () => chain } }, taskId: 1, state }
+  const c = {
+    deps: {
+      db: { insert: () => chain, update: () => chain },
+      github: { installationToken: async () => ({ token: 'github-2' }) },
+    },
+    row: { repository: 'o/r' },
+    taskId: 1,
+    state,
+    token: 'github-1',
+  }
+  run.c = c
   run.cost = 0
   run.spec = { egress: rules }
-  run.sandbox = {
-    backend: sandbox.backend,
-    updateEgress: async (next: EgressRule[]) => void updates.push([...next]),
-  }
+  // The run's own wrapper, so a renewal of the GitHub token and a Codex one share the firewall as they do live.
+  run.sandbox = (
+    Run as unknown as {
+      withCredentials: (c: unknown, s: unknown, e: EgressRule[]) => unknown
+    }
+  ).withCredentials(
+    c,
+    {
+      backend: sandbox.backend,
+      stop: async () => {},
+      updateEgress: async (next: EgressRule[]) => void updates.push([...next]),
+    },
+    rules,
+  )
   run.transcript = { sink: () => () => {}, drain: async () => {}, flush: async () => {} }
   const reviewer = codexHarness(
     { kind: 'subscription', home },
@@ -105,7 +126,7 @@ function reviewerRun(answers: string[], fetchLike: typeof fetch) {
         onEvent,
       } as never),
     )
-  return { settle, rules, updates, rows, state, sandbox }
+  return { settle, rules, c, updates, rows, state, sandbox }
 }
 
 const panel = async () =>
@@ -157,5 +178,25 @@ describe('a reviewer pass the provider refused with a 401', () => {
     const { account } = await panel()
     expect(account.connected).toBe(false)
     expect(account.problem).toMatch(/refused/)
+  })
+
+  it('keeps the renewed GitHub token when the Codex token is replaced later', async () => {
+    vi.useFakeTimers()
+    try {
+      const renewed = access(240)
+      const { settle, updates, c } = reviewerRun([REFUSED], refreshing(renewed))
+      await vi.advanceTimersByTimeAsync(CREDENTIAL_RENEWAL_MS)
+      expect(c.token).toBe('github-2')
+
+      await settle()
+
+      const last = updates.at(-1)!
+      expect(last).toEqual([
+        githubEgress('github-2'),
+        { domain: 'chatgpt.com', headers: { authorization: `Bearer ${renewed}` } },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

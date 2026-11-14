@@ -174,17 +174,20 @@ export function codexHarness(
       if (current) await placeAuth(backend, current)
     },
 
-    async markRefused(installed) {
-      if (credential.kind === 'subscription') await markCodexRefused(installed, authDeps().env)
-    },
-
-    async reauthorize(backend, installed) {
-      if (credential.kind !== 'subscription') return []
-      await markCodexRefused(installed, authDeps().env)
-      login = await renewCodexLogin(installed, authDeps())
-      await placeAuth(backend, login)
-      return [{ domain: 'chatgpt.com', headers: { authorization: `Bearer ${login.accessToken}` } }]
-    },
+    // An API key has no login to renew, so only a subscription gets the recovery.
+    ...(credential.kind === 'subscription'
+      ? {
+          markRefused: (installed: string) => markCodexRefused(installed, authDeps().env),
+          async reauthorize(backend: SandboxBackend, installed: string): Promise<EgressRule[]> {
+            await markCodexRefused(installed, authDeps().env)
+            login = await renewCodexLogin(installed, authDeps())
+            await placeAuth(backend, login)
+            return [
+              { domain: 'chatgpt.com', headers: { authorization: `Bearer ${login.accessToken}` } },
+            ]
+          },
+        }
+      : {}),
 
     run: (backend, input) => invoke(backend, input, ''),
     resume: async (backend, sessionId, input) => invoke(backend, input, assertSessionId(sessionId)),

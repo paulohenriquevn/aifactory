@@ -361,4 +361,10 @@ describe('a login the provider refused', () => {
     ])
     expect(codexAccount(env)).toMatchObject({ connected: true })
   })
+
+  it('offers no recovery for an API key, whose 401 is a plain failure of the run', () => {
+    const harness = codexHarness({ kind: 'api-key', secret: 'k' })
+    expect(harness.reauthorize).toBeUndefined()
+    expect(harness.markRefused).toBeUndefined()
+  })
 })
