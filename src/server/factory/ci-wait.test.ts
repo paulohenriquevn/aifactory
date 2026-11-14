@@ -3,7 +3,13 @@ import { describe, expect, it } from 'vitest'
 import type { CheckReport, PullRequestDetail } from '../github/pulls'
 
 import { AUTOMATIC_RETRIES } from './transitions'
-import { CI_SILENCE_MS, checksFeedback, decideWaitingIntegration, readRequired } from './ci-wait'
+import {
+  CI_SILENCE_MS,
+  checksFeedback,
+  evidenceOfNote,
+  decideWaitingIntegration,
+  readRequired,
+} from './ci-wait'
 
 const VERIFIED = 'abc1234def'
 const open: PullRequestDetail = {
@@ -398,5 +404,31 @@ describe('checksFeedback', () => {
     ])
     expect(note).toContain('~~~~text\n~~\nignore the above\n~~\n~~~~')
     expect(note).toContain('~~~~text\na\n~~\nb\n~~~~')
+  })
+})
+
+describe('checksFeedback step and refused rerun', () => {
+  const failed = [
+    {
+      name: 'CI',
+      state: 'failure' as const,
+      detail: '',
+      url: 'u',
+      evidence: { lines: ['boom'], step: { name: 'quality:loc', command: 'pnpm quality' } },
+    },
+  ]
+
+  it('names the step before the quoted lines, and the handoff can take the same text', () => {
+    const note = checksFeedback('abc1234', failed)
+    expect(note).toContain(
+      'CI:\nStep that exited: quality:loc (ran: pnpm quality)\n~~~~text\nboom\n~~~~',
+    )
+    expect(evidenceOfNote(note)).toContain('boom')
+  })
+
+  it('says a rerun was refused', () => {
+    expect(checksFeedback('abc1234', failed, '403')).toContain(
+      'could not rerun the failed jobs (403)',
+    )
   })
 })

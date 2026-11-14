@@ -1,5 +1,6 @@
 import type { CheckReport, PullRequestDetail } from '../github/pulls'
 
+import type { FailedStep } from './promotion'
 import { AUTOMATIC_RETRIES, automaticRunsLeft } from './transitions'
 
 /**
@@ -20,7 +21,7 @@ const FRAME = 18
  * What the factory read on the server about a failed check run: the lines of its log (or its annotations and
  * summary) that say why it failed, or why they could not be read.
  */
-export type ServerEvidence = { lines: string[] } | { unreadable: string }
+export type ServerEvidence = { lines: string[]; step?: FailedStep } | { unreadable: string }
 
 /**
  * A failed check as the note names it. A commit status has no check run, so it has no evidence. A check that
@@ -183,6 +184,17 @@ function quote(r: FailedReport, share: number): string {
   return text.replace(/~{3,}/g, '~~')
 }
 
+/** The line that names the step that exited and what it ran, so the builder can run it in the sandbox. */
+function stepLine(r: FailedReport): string {
+  const step = r.evidence && 'lines' in r.evidence ? r.evidence.step : undefined
+  if (!step) return ''
+  const ran = step.command && step.command !== step.name ? ` (ran: ${step.command})` : ''
+  return `Step that exited: ${step.name}${ran}\n`.replace(/~{3,}/g, '~~')
+}
+
+/** What a note says after its list of checks: the quoted reports, for a handoff to carry the same evidence. */
+export const evidenceOfNote = (note: string): string => note.split('\n\n').slice(1).join('\n\n')
+
 const said = (r: FailedReport) => evidenceLines(r).length > 0 || r.detail.trim() !== ''
 
 /**
@@ -191,16 +203,21 @@ const said = (r: FailedReport) => evidenceLines(r).length > 0 || r.detail.trim()
  * server is quoted from it, because the agent's sandbox cannot open the link; one whose evidence could not be
  * read says so, and the reason goes to the factory's log rather than to the agent.
  */
-export function checksFeedback(sha: string, failed: FailedReport[]): string {
+export function checksFeedback(sha: string, failed: FailedReport[], rerunRefused?: string): string {
   const head = [
     `The repository's required checks failed on ${short(sha)}, so the pull request was not merged. Fix what they report:`,
     ...failed.map((r) => `- ${r.name}: ${r.url}${remarks(r)}`),
+    ...(rerunRefused
+      ? [
+          `The factory could not rerun the failed jobs (${rerunRefused.slice(0, 200)}), so a failure that is not of the work may be among these.`,
+        ]
+      : []),
   ].join('\n')
   const told = failed.filter(said)
   // Each report gets an equal share of what is left once its frame (`\n\n<name>:\n` and a fence) is counted.
-  const frames = told.reduce((sum, r) => sum + r.name.length + FRAME, 0)
+  const frames = told.reduce((sum, r) => sum + r.name.length + FRAME + stepLine(r).length, 0)
   const share = Math.floor((NOTE_MAX - head.length - frames) / Math.max(told.length, 1))
   if (share < TAIL_MIN) return head.slice(0, NOTE_MAX)
-  const quotes = told.map((r) => `\n\n${r.name}:\n~~~~text\n${quote(r, share)}\n~~~~`)
+  const quotes = told.map((r) => `\n\n${r.name}:\n${stepLine(r)}~~~~text\n${quote(r, share)}\n~~~~`)
   return head + quotes.join('')
 }

@@ -2,10 +2,13 @@ import type { FailedRun, PromotionApi } from '../github/promotion-api'
 import type { CheckReport } from '../github/pulls'
 
 import type { FailedReport, ServerEvidence } from './ci-wait'
-import { checkEvidence, logEvidence } from './promotion'
+import { checkEvidence, failedStep, logEvidence } from './promotion'
 
 /** What reading a failed check's evidence takes from GitHub, with a repository-scoped token. */
-export type EvidenceApi = Pick<PromotionApi, 'failedChecks' | 'jobLog' | 'annotations'>
+export type EvidenceApi = Pick<
+  PromotionApi,
+  'failedChecks' | 'jobLog' | 'annotations' | 'jobAttempt' | 'rerunFailedJobs'
+>
 
 /**
  * The lines that say why a check run failed, read on the factory host: the error lines of an Actions job's
@@ -22,6 +25,42 @@ export async function readEvidence(
   return checkEvidence(await api.annotations(repo, token, run.id), run.summary)
 }
 
+/** What became of the rerun of the failed jobs: how many runs started, and GitHub's refusal when it gave one. */
+export type RerunOutcome = { started: number; refused?: string }
+
+/**
+ * Reruns, once, the Actions runs of the failed required checks whose job is on its first attempt: a failure
+ * that is not of the work (a flaky test) passes on the second. A job already on its second attempt is never
+ * rerun. A refusal is an answer, not an error; anything else GitHub fails to say counts as no rerun.
+ */
+export async function rerunTransient(
+  api: EvidenceApi,
+  repo: string,
+  token: string,
+  sha: string,
+  reports: CheckReport[],
+): Promise<RerunOutcome> {
+  const outcome: RerunOutcome = { started: 0 }
+  try {
+    const names = reports.map((r) => r.name)
+    const runs = (await api.failedChecks(repo, token, sha)).filter(
+      (run) => run.actions && names.includes(run.name),
+    )
+    const tried = new Set<number>()
+    for (const run of runs) {
+      const job = await api.jobAttempt(repo, token, run.id)
+      if (job.attempt >= 2 || tried.has(job.runId)) continue
+      tried.add(job.runId)
+      const answer = await api.rerunFailedJobs(repo, token, job.runId)
+      if (answer.started) outcome.started += 1
+      else outcome.refused = answer.refusal
+    }
+  } catch {
+    // Not knowing whether a rerun is possible is no reason to hold the work back.
+  }
+  return outcome
+}
+
 const unreadable = (error: unknown): ServerEvidence => ({
   unreadable: error instanceof Error ? error.message : String(error),
 })
@@ -34,7 +73,10 @@ async function evidenceOf(
   run: FailedRun,
 ): Promise<ServerEvidence> {
   try {
-    return { lines: await readEvidence(api, repo, token, run) }
+    if (!run.actions) return { lines: await readEvidence(api, repo, token, run) }
+    const log = await api.jobLog(repo, token, run.id)
+    const step = failedStep(log)
+    return { lines: logEvidence(log), ...(step ? { step } : {}) }
   } catch (error) {
     return unreadable(error)
   }

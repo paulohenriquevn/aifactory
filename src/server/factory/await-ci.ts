@@ -7,7 +7,7 @@ import type { GithubApi } from '../github/pulls'
 import { automaticRunsSincePerson } from '../panel/queries'
 
 import { integrationBranch } from './branches'
-import { attachEvidence, type EvidenceApi } from './check-evidence'
+import { attachEvidence, rerunTransient, type EvidenceApi } from './check-evidence'
 import { checksFeedback, decideWaitingIntegration, type WaitingStep } from './ci-wait'
 import { createPreRelease, type ReleaseMode } from './deliver'
 import {
@@ -37,6 +37,8 @@ export type AwaitCiDeps = {
 export type AwaitCiResult = {
   merged: number[]
   sentBack: number[]
+  /** Tasks whose failed jobs were rerun once, in case the failure was not of the work. */
+  rerun: number[]
   startedOver: number[]
   toPerson: number[]
   waiting: number
@@ -212,6 +214,19 @@ async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: Aw
       if (await finish(deps, w, step.mergedSha)) result.merged.push(row.id)
       return
     case 'send_back': {
+      // A failure that is not of the work passes on a rerun: nothing goes back before that.
+      const rerun = await rerunTransient(
+        deps.checks,
+        row.repository,
+        token,
+        verifiedSha,
+        step.reports,
+      )
+      if (rerun.started > 0) {
+        result.rerun.push(row.id)
+        return
+      }
+      if (rerun.refused) result.errors.push(`task ${row.id}: ${rerun.refused}`)
       const failed = await attachEvidence(
         deps.checks,
         row.repository,
@@ -226,7 +241,7 @@ async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: Aw
       }
       // Off first: the new commit the agent pushes must not merge before the factory verifies it.
       await deps.api.disableAutoMerge(row.repository, token, number)
-      await deps.sendBack(row.id, checksFeedback(verifiedSha, failed))
+      await deps.sendBack(row.id, checksFeedback(verifiedSha, failed, rerun.refused))
       result.sentBack.push(row.id)
       return
     }
@@ -249,6 +264,7 @@ export async function pollAwaitingIntegrations(deps: AwaitCiDeps): Promise<Await
   const result: AwaitCiResult = {
     merged: [],
     sentBack: [],
+    rerun: [],
     startedOver: [],
     toPerson: [],
     waiting: 0,

@@ -1790,12 +1790,17 @@ describe('runTask continuing from a branch a person sent back', () => {
       id,
       undefined,
       {
-        feedback: 'CI failed',
+        feedback:
+          'CI failed:\n- CI: u\n\nCI:\nStep that exited: quality:loc\n~~~~text\nERROR: "quality:loc" exited with 1.\n~~~~',
         fromChecks: true,
       },
     )
 
-    expect(result).toMatchObject({ status: 'handoff', pullRequestUrl: PR_URL })
+    expect(result).toMatchObject({
+      status: 'handoff',
+      pullRequestUrl: PR_URL,
+      reason: expect.stringContaining('ERROR: "quality:loc" exited with 1.'),
+    })
     expect(seen.comments).toEqual([
       expect.stringMatching(/required checks failed[\s\S]*broken on workspace too/),
     ])

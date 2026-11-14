@@ -35,6 +35,9 @@ const gh = {
   logs: {} as Record<number, string>,
   annotations: {} as Record<number, string[]>,
   logFails: false,
+  attempts: {} as Record<number, number>,
+  rerunRefusal: undefined as string | undefined,
+  reruns: [] as number[],
 }
 const sentBack: { taskId: number; note: string }[] = []
 const startedOver: number[] = []
@@ -69,7 +72,15 @@ beforeEach(async () => {
   repo().prepare().required.set('workspace', ['CI'])
   pull()
   reports({ name: 'CI', state: 'pending', detail: '', url: 'u' })
-  Object.assign(gh, { failedRuns: [], logs: {}, annotations: {}, logFails: false })
+  Object.assign(gh, {
+    failedRuns: [],
+    logs: {},
+    annotations: {},
+    logFails: false,
+    attempts: {},
+    rerunRefusal: undefined,
+    reruns: [],
+  })
   sentBack.length = 0
   startedOver.length = 0
 })
@@ -81,6 +92,15 @@ const checks: EvidenceApi = {
     return gh.logs[jobId] ?? ''
   },
   annotations: async (_repo, _token, checkRunId) => gh.annotations[checkRunId] ?? [],
+  jobAttempt: async (_repo, _token, jobId) => ({
+    runId: jobId * 10,
+    attempt: gh.attempts[jobId] ?? 2,
+  }),
+  rerunFailedJobs: async (_repo, _token, runId) => {
+    if (gh.rerunRefusal) return { started: false, refusal: gh.rerunRefusal }
+    gh.reruns.push(runId)
+    return { started: true }
+  },
 }
 
 const deps = (over: Partial<AwaitCiDeps> = {}): AwaitCiDeps => ({
@@ -276,6 +296,60 @@ describe('pollAwaitingIntegrations', () => {
     expect(sentBack[0].note).toContain(
       'CI:\n~~~~text\n[doc-coverage] FAIL 99.7% is below the 100% floor\n~~~~',
     )
+  })
+
+  it('names the step that exited and the line that says why', async () => {
+    const link = 'https://github.com/paulo/app/actions/runs/431/job/1308'
+    reports({ name: 'CI', state: 'failure', detail: '', url: link })
+    gh.failedRuns = [{ id: 1308, name: 'CI', url: link, summary: '', actions: true }]
+    gh.logs = {
+      1308: [
+        '2026-11-12T10:00:00.0000000Z ##[group]Run pnpm quality',
+        'error types-dont-import-runtime: packages/sdk/src/types/agent.ts → packages/sdk/src/builtin-tools.ts',
+        'ERROR: "quality:depcruise" exited with 1.',
+        '2026-11-12T10:00:02.0000000Z ##[error]Process completed with exit code 1.',
+      ].join('\n'),
+    }
+    const id = await waitingTask()
+
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ sentBack: [id] })
+
+    const { note } = sentBack[0]
+    expect(note).toContain('Step that exited: quality:depcruise (ran: pnpm quality)')
+    expect(note).toContain('error types-dont-import-runtime: packages/sdk/src/types/agent.ts')
+  })
+
+  it('reruns a failed job on its first attempt and sends nothing back', async () => {
+    const link = 'https://github.com/paulo/app/actions/runs/431/job/1308'
+    reports({ name: 'CI', state: 'failure', detail: '', url: link })
+    gh.failedRuns = [{ id: 1308, name: 'CI', url: link, summary: '', actions: true }]
+    gh.attempts = { 1308: 1 }
+    const id = await waitingTask()
+
+    const result = await pollAwaitingIntegrations(deps())
+
+    expect(result).toMatchObject({ rerun: [id], sentBack: [], toPerson: [], errors: [] })
+    expect(gh.reruns).toEqual([13080])
+    expect(sentBack).toEqual([])
+    expect(autoMergeOff()).toEqual([])
+    expect((await row(id)).awaitingCiSha).toBe(VERIFIED)
+  })
+
+  it('says the rerun was refused instead of blaming the work', async () => {
+    const link = 'https://github.com/paulo/app/actions/runs/431/job/1308'
+    reports({ name: 'CI', state: 'failure', detail: '', url: link })
+    gh.failedRuns = [{ id: 1308, name: 'CI', url: link, summary: '', actions: true }]
+    gh.attempts = { 1308: 1 }
+    gh.rerunRefusal = 'GitHub answered 403 rerunning'
+    const id = await waitingTask()
+
+    const result = await pollAwaitingIntegrations(deps())
+
+    expect(result).toMatchObject({
+      sentBack: [id],
+      errors: [`task ${id}: GitHub answered 403 rerunning`],
+    })
+    expect(sentBack[0].note).toContain('could not rerun the failed jobs')
   })
 
   it('puts the error of the job a required aggregate check depends on in the note', async () => {
