@@ -57,7 +57,27 @@ describe('parseCodexResult', () => {
       ok: true,
       summary: 'Added truncate.',
       sessionId: '019a0000-0000-7000-8000-000000000001',
+      tokensIn: 10,
+      tokensOut: 5,
     })
+  })
+
+  it('adds up the tokens of every turn, and reports none when the stream gave none', () => {
+    const turns = [
+      line({ type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } }),
+      line({ type: 'turn.completed', usage: { input_tokens: 4, output_tokens: 1 } }),
+    ].join('\n')
+    expect(parseCodexResult(0, turns, '')).toMatchObject({ tokensIn: 14, tokensOut: 6 })
+    const bare = parseCodexResult(0, line({ type: 'turn.completed' }), '')
+    expect(bare).not.toHaveProperty('tokensIn')
+    expect(bare).not.toHaveProperty('tokensOut')
+  })
+
+  it('says which model and effort the agent was told to use', () => {
+    const credential = { kind: 'api-key', secret: 'sk-x' } as const
+    const told = codexHarness(credential, {}, { model: 'gpt-6.1-sol', effort: 'high' })
+    expect(told).toMatchObject({ model: 'gpt-6.1-sol', effort: 'high' })
+    expect(codexHarness(credential)).not.toHaveProperty('model')
   })
 
   it('reads a quota stop as a wait, with the time it ends', () => {

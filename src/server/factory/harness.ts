@@ -14,6 +14,22 @@ export type HarnessInput = {
   onEvent?: (event: AgentEvent) => void
 }
 
+const count = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0
+
+/** The sum of the counts that are numbers, or undefined when none is. */
+export function sum(...parts: unknown[]): number | undefined {
+  const given = parts.filter(count)
+  return given.length === 0 ? undefined : given.reduce((a, b) => a + b, 0)
+}
+
+/** The token fields of a result, only for the counts the agent gave. */
+export function tokenCounts(tokensIn: unknown, tokensOut: unknown): Partial<HarnessResult> {
+  return {
+    ...(count(tokensIn) ? { tokensIn } : {}),
+    ...(count(tokensOut) ? { tokensOut } : {}),
+  }
+}
+
 /** The agent stopped because its account's quota ran out: a wait, not a flaw in the work. */
 export type QuotaStop = { message: string; resetsAt?: string }
 
@@ -21,6 +37,9 @@ export type HarnessResult = {
   ok: boolean
   summary: string
   costUsd?: number
+  /** Tokens the agent says it read and wrote, when it says. */
+  tokensIn?: number
+  tokensOut?: number
   /** What `resume` needs to continue this conversation. */
   sessionId?: string
   quota?: QuotaStop
@@ -32,6 +51,9 @@ export type HarnessResult = {
  */
 export interface CodingHarness {
   readonly name: string
+  /** The model and effort this agent was told to use; absent when it runs on its own default. */
+  readonly model?: string
+  readonly effort?: string
   /**
    * The firewall rules that sign this agent's calls. The secret lives here, on the factory host,
    * and the sandbox only ever gets a placeholder, so this is the one place a credential is read.

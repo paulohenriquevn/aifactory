@@ -329,3 +329,34 @@ describe('metricsReport', () => {
     expect(report.signals).toEqual([])
   })
 })
+
+describe('first-review approval by agent', () => {
+  it('gives one series for each agent that reviewed, so a change of reviewer can be compared', async () => {
+    const db = getDb()
+    const reviewed = async (reviewer: string, verdict: 'approve' | 'changes') => {
+      const taskId = await delivered(10, 1)
+      await db.insert(review).values({
+        taskId,
+        round: 1,
+        sha: 'a1',
+        reviewer,
+        verdict,
+        summary: '',
+        findings: [],
+        at: dayAt(10, 20),
+      })
+    }
+    await reviewed('claude-code', 'changes')
+    await reviewed('claude-code', 'approve')
+    await reviewed('codex', 'approve')
+
+    expect((await metricsReport(db, NOW)).byAgent.approval).toEqual([
+      { reviewer: 'claude-code', reviews: 2, approved: 1, share: 0.5 },
+      { reviewer: 'codex', reviews: 1, approved: 1, share: 1 },
+    ])
+    expect((await metricsReport(db, NOW)).byAgent.reviewerRework).toEqual([
+      { reviewer: 'claude-code', reviews: 2, reworkRounds: 0, perReview: 0 },
+      { reviewer: 'codex', reviews: 1, reworkRounds: 0, perReview: 0 },
+    ])
+  })
+})

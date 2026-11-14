@@ -7,6 +7,8 @@ import {
   executeAgent,
   PROMPT_FILE,
   SUMMARY_MAX,
+  sum,
+  tokenCounts,
   type CodingHarness,
   type HarnessInput,
   type HarnessResult,
@@ -100,6 +102,8 @@ export function claudeCodeHarness(
 
   return {
     name: 'claude-code',
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.effort ? { effort: options.effort } : {}),
     egress: async () => [anthropicEgress(credential)],
 
     async prepare(backend) {
@@ -150,6 +154,12 @@ export function parseClaudeResult(exitCode: number, stdout: string, stderr: stri
       is_error?: boolean
       result?: string
       total_cost_usd?: number
+      usage?: {
+        input_tokens?: number
+        cache_creation_input_tokens?: number
+        cache_read_input_tokens?: number
+        output_tokens?: number
+      }
       session_id?: string
     }
     const summary = String(parsed.result ?? '').slice(0, SUMMARY_MAX)
@@ -161,6 +171,15 @@ export function parseClaudeResult(exitCode: number, stdout: string, stderr: stri
       ok,
       summary,
       costUsd: parsed.total_cost_usd,
+      ...tokenCounts(
+        // Input counts what the agent read, cached or not.
+        sum(
+          parsed.usage?.input_tokens,
+          parsed.usage?.cache_creation_input_tokens,
+          parsed.usage?.cache_read_input_tokens,
+        ),
+        parsed.usage?.output_tokens,
+      ),
       ...(parsed.session_id ? { sessionId: parsed.session_id } : {}),
       ...(quota ? { quota } : {}),
     }

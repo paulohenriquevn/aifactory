@@ -18,7 +18,7 @@ export type TaskHistory = {
 /** One measurement, dated when the run it describes ended. */
 export type Observation = { metric: MetricName; repository: string; at: Date; value: number }
 
-type Run = { start: Date; end: number; events: HistoryEvent[] }
+export type Run = { start: Date; end: number; events: HistoryEvent[] }
 
 /** How a run ends. A cancelled run ended too, but it is not a delivery and not a delivery coming back. */
 const TERMINAL: TaskStage[] = ['done', 'failed', 'handoff', 'cancelled']
@@ -27,7 +27,7 @@ const CAME_BACK: TaskStage[] = ['failed', 'handoff']
 const MINUTE = 60_000
 
 /** A task's runs: one starts at each intake (the first at the first event) and lasts until the next. */
-function runsOf(events: HistoryEvent[]): Run[] {
+export function runsOf(events: HistoryEvent[]): Run[] {
   const runs: Run[] = []
   for (const event of events) {
     if (runs.length === 0 || event.stage === 'intake') {
@@ -41,7 +41,7 @@ function runsOf(events: HistoryEvent[]): Run[] {
   return runs
 }
 
-const inRun = (run: Run, at: Date) => at >= run.start && at.getTime() < run.end
+export const inRun = (run: Run, at: Date) => at >= run.start && at.getTime() < run.end
 
 /** Whether every check of the run's first verification passed, or undefined when none was recorded. */
 function firstPass(run: Run, evidence: TaskHistory['evidence']): number | undefined {
@@ -84,6 +84,15 @@ function measureRun(run: Run, h: TaskHistory, cameBackLater: boolean) {
 }
 
 /**
+ * The event that ended a run, or undefined while it is still going or when it only waited for another
+ * issue: such a run measures nothing.
+ */
+export function terminalOf(run: Run): HistoryEvent | undefined {
+  const terminal = run.events.find((e) => TERMINAL.includes(e.stage))
+  return terminal && !Array.isArray(terminal.detail?.blockedBy) ? terminal : undefined
+}
+
+/**
  * The observations one task gives: one set per finished run, and the hours to its first release. A run that
  * only waited for another issue measures nothing, and neither does a run still going.
  */
@@ -91,9 +100,8 @@ export function observe(h: TaskHistory): Observation[] {
   const out: Observation[] = []
   const runs = runsOf(h.events)
   runs.forEach((run, i) => {
-    const terminal = run.events.find((e) => TERMINAL.includes(e.stage))
+    const terminal = terminalOf(run)
     if (!terminal) return
-    if (Array.isArray(terminal.detail?.blockedBy)) return
     const values = measureRun(run, h, i + 1 < runs.length)
     for (const [metric, value] of Object.entries(values)) {
       if (value === undefined) continue

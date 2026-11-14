@@ -1,8 +1,8 @@
-import { eq, inArray } from 'drizzle-orm'
+import { asc, eq, inArray, sql } from 'drizzle-orm'
 
-import type { AgentRole, AgentSettings, EngineOption } from '../../shared/panel'
+import type { AgentRole, AgentSettingChange, AgentSettings, EngineOption } from '../../shared/panel'
 import type { Database } from '../db'
-import { repository, setting } from '../db/schema'
+import { agentSettingChange, repository, setting } from '../db/schema'
 
 import { EFFORT_ENV, engineModels, isSafeName, MODEL_ENV, tagged, untag } from './engine-models'
 import { withClaudeToken } from './claude-token'
@@ -20,13 +20,23 @@ const ENGINE_KEY = (role: AgentRole) => `agent.${role}`
 const MODEL_KEY = (role: AgentRole) => `agent.${role}.model`
 const EFFORT_KEY = (role: AgentRole) => `agent.${role}.effort`
 
+type Write = {
+  key: string
+  value: string | null
+  role: AgentRole
+  field: AgentSettingChange['field']
+}
+
+/** The advisory lock that serializes saves of the agent settings. */
+export const SETTINGS_LOCK = 81_001
+
 export type Chosen = Record<AgentRole, string | null>
 type Stored = { engine: Chosen; model: Chosen; effort: Chosen }
 
 const nobody = (): Chosen => ({ builder: null, planner: null, reviewer: null })
 
 /** What the owner saved, the model and the effort still tagged with the agent they were chosen for. */
-async function loadStored(db: Database): Promise<Stored> {
+async function loadStored(db: Pick<Database, 'select'>): Promise<Stored> {
   const keys = ROLES.flatMap((role) => [ENGINE_KEY(role), MODEL_KEY(role), EFFORT_KEY(role)])
   const rows = await db.select().from(setting).where(inArray(setting.key, keys))
   const stored: Stored = { engine: nobody(), model: nobody(), effort: nobody() }
@@ -104,6 +114,64 @@ const known = (what: 'model' | 'effort', value: string, list: string[], agent: s
 }
 
 /**
+ * What saving the patch writes, given what is stored now: the agent each role will use once it is saved is
+ * the list a model and an effort come from. Throws a `SettingRefused` for what the agent does not offer.
+ */
+function planWrites(
+  stored: Stored,
+  patch: AgentSettingsPatch,
+  env: NodeJS.ProcessEnv,
+  read?: (path: string) => string,
+): Write[] {
+  const overlay: NodeJS.ProcessEnv = {}
+  for (const role of ROLES) {
+    const engine = patch[role] === undefined ? stored.engine[role] : patch[role]
+    if (engine) overlay[ROLE_ENV[role]] = engine
+  }
+  const after = effectiveOf({ ...env, ...overlay })
+  const catalog = engineModels(env, read)
+
+  const writes: Write[] = []
+  for (const role of ROLES) {
+    const engine = after[role]
+    const offered = catalog[engine] ?? { models: [], efforts: [] }
+    const model = patch.models?.[role]
+    const effort = patch.efforts?.[role]
+    if (model) {
+      if (!isSafeName(model)) throw new SettingRefused(`"${model}" is not a plain model name`)
+      known(
+        'model',
+        model,
+        offered.models.map((m) => m.id),
+        engine,
+      )
+    }
+    if (effort) {
+      const chosenModel = model ?? untag(stored.model[role] ?? undefined, engine)
+      const levels = offered.models.find((m) => m.id === chosenModel)?.efforts ?? offered.efforts
+      known('effort', effort, levels, engine)
+    }
+    if (patch[role] !== undefined)
+      writes.push({ key: ENGINE_KEY(role), value: patch[role] ?? null, role, field: 'engine' })
+    if (model !== undefined)
+      writes.push({
+        key: MODEL_KEY(role),
+        value: model ? tagged(engine, model) : null,
+        role,
+        field: 'model',
+      })
+    if (effort !== undefined)
+      writes.push({
+        key: EFFORT_KEY(role),
+        value: effort ? tagged(engine, effort) : null,
+        role,
+        field: 'effort',
+      })
+  }
+  return writes
+}
+
+/**
  * Saves the choice of agent, model and effort for one or more roles; a null goes back to the default. An
  * agent the factory does not know, or one that could not start because its credential is missing, is
  * refused, and so is a model or an effort the agent chosen does not offer: a choice that breaks every run is
@@ -128,51 +196,32 @@ export async function saveChosen(
     if (!option.ready) throw new SettingRefused(`${value} cannot start: ${option.problem}`)
   }
 
-  // The agent each role will use once this is saved: that is the list a model and an effort come from.
-  const stored = await loadStored(db)
-  const overlay: NodeJS.ProcessEnv = {}
-  for (const role of ROLES) {
-    const engine = patch[role] === undefined ? stored.engine[role] : patch[role]
-    if (engine) overlay[ROLE_ENV[role]] = engine
-  }
-  const after = effectiveOf({ ...env, ...overlay })
-  const catalog = engineModels(env, read)
-
-  const writes: [string, string | null][] = []
-  for (const role of ROLES) {
-    const engine = after[role]
-    const offered = catalog[engine] ?? { models: [], efforts: [] }
-    const model = patch.models?.[role]
-    const effort = patch.efforts?.[role]
-    if (model) {
-      if (!isSafeName(model)) throw new SettingRefused(`"${model}" is not a plain model name`)
-      known(
-        'model',
-        model,
-        offered.models.map((m) => m.id),
-        engine,
-      )
+  // One save at a time: what is stored is read and the writes are derived and checked only once the lock is
+  // held, so a save that changed the agent a moment ago is what this one is checked against. The writes and
+  // their history commit together, so a refusal or a failed write leaves no change on record.
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(${SETTINGS_LOCK})`)
+    // The time is read now that the lock is held: `now()` is fixed when the transaction starts, so a save that
+    // waited here would otherwise be dated before the change it follows.
+    const [{ at }] = (await tx.execute(sql`select clock_timestamp() as at`)).rows as { at: Date }[]
+    const current = await loadStored(tx)
+    const writes = planWrites(current, patch, env, read)
+    for (const { key, value, role, field } of writes) {
+      const before = current[field][role]
+      if (before !== value) {
+        await tx
+          .insert(agentSettingChange)
+          .values({ role, field, oldValue: before, newValue: value, at })
+      }
+      if (value === null) await tx.delete(setting).where(eq(setting.key, key))
+      else {
+        await tx
+          .insert(setting)
+          .values({ key, value })
+          .onConflictDoUpdate({ target: setting.key, set: { value, updatedAt: at } })
+      }
     }
-    if (effort) {
-      const chosenModel = model ?? untag(stored.model[role] ?? undefined, engine)
-      const levels = offered.models.find((m) => m.id === chosenModel)?.efforts ?? offered.efforts
-      known('effort', effort, levels, engine)
-    }
-    if (patch[role] !== undefined) writes.push([ENGINE_KEY(role), patch[role] ?? null])
-    if (model !== undefined) writes.push([MODEL_KEY(role), model ? tagged(engine, model) : null])
-    if (effort !== undefined)
-      writes.push([EFFORT_KEY(role), effort ? tagged(engine, effort) : null])
-  }
-
-  for (const [key, value] of writes) {
-    if (value === null) await db.delete(setting).where(eq(setting.key, key))
-    else {
-      await db
-        .insert(setting)
-        .values({ key, value })
-        .onConflictDoUpdate({ target: setting.key, set: { value, updatedAt: new Date() } })
-    }
-  }
+  })
   return loadChosen(db)
 }
 
@@ -200,4 +249,18 @@ export async function agentSettings(
       .filter((r) => r.harness || r.reviewer)
       .map((r) => ({ repository: r.fullName, builder: r.harness, reviewer: r.reviewer })),
   }
+}
+
+/** Every change of the agent settings, oldest first, each with when it was made. */
+export async function listSettingChanges(db: Database): Promise<AgentSettingChange[]> {
+  const rows = await db.select().from(agentSettingChange).orderBy(asc(agentSettingChange.id))
+  return rows.map((r) => ({
+    id: r.id,
+    role: r.role,
+    field: r.field,
+    oldValue: r.oldValue,
+    newValue: r.newValue,
+    actor: r.actor,
+    at: r.at.toISOString(),
+  }))
 }

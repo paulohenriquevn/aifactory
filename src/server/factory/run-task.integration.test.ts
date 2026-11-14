@@ -976,6 +976,36 @@ describe('runTask review loop', () => {
     expect(seen.drafts).toEqual([false])
   })
 
+  it('records the model, the effort and the tokens of the reviewer pass on its agent_run row', async () => {
+    const id = await seedTask()
+    const reviewer = {
+      ...reviewerSaying(verdictJson('approve')),
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+    }
+    const run = reviewer.run
+    reviewer.run = async (backend, input) => ({
+      ...(await run(backend, input)),
+      tokensIn: 900,
+      tokensOut: 40,
+    })
+
+    await runTask(deps(new FakeSandbox(changed()), { reviewer }), id)
+
+    const rows = await getDb().select().from(agentRun).where(eq(agentRun.taskId, id))
+    expect(rows.find((r) => r.role === 'reviewer')).toMatchObject({
+      harness: 'fake-reviewer',
+      model: 'gpt-6.1-sol',
+      effort: 'high',
+      tokensIn: 900,
+      tokensOut: 40,
+    })
+    expect(rows.find((r) => r.role === 'builder')).toMatchObject({
+      model: 'default',
+      effort: 'default',
+    })
+  })
+
   it('sends the work back to the same session, then opens the pull request on the next approval', async () => {
     const id = await seedTask()
     const builder = resumableBuilder()
@@ -1353,6 +1383,24 @@ describe('runTask planning before it builds', () => {
           : undefined,
       ),
     )
+
+  it('records the planning pass as its own execution, apart from the build', async () => {
+    const id = await seedTask()
+    const builder = planningBuilder([`Read it.\n${JSON.stringify(plan)}`])
+
+    await runTask(deps(twoFiles(), { harness: builder, planFirst: true }), id)
+
+    const runs = await getDb()
+      .select()
+      .from(agentRun)
+      .where(eq(agentRun.taskId, id))
+      .orderBy(agentRun.id)
+    expect(runs.map((r) => [r.role, r.harness])).toEqual([
+      ['planner', 'fake-agent'],
+      ['builder', 'fake-agent'],
+      ['reviewer', 'fake-reviewer'],
+    ])
+  })
 
   it('stores the plan and builds in the session that wrote it', async () => {
     const id = await seedTask()
