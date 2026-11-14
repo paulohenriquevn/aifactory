@@ -298,10 +298,17 @@ class CaseRun {
       })
       const blocking = guards.filter((g) => g.severity !== 'minor')
       const read = await this.review(sha, unplanned, required)
+      // A file outside the plan is on record; whether it was needed is the reviewer's call.
+      const outside: Finding[] = unplanned.map((file) => ({
+        severity: 'minor',
+        file,
+        issue: OUTSIDE_THE_PLAN,
+      }))
+      // The same findings `Run.review` stores, so the rounds are counted as the factory counts them.
+      this.blockingCounts.push(blockingCount([...guards, ...outside, ...read.findings]))
       if (read.verdict === 'approve' && blocking.length === 0) {
         return { checksPassed: true, verdict: 'approve', blockingGuards: [] }
       }
-      if (read.verdict !== 'approve') this.blockingCounts.push(blockingCount(read.findings))
       if (
         read.verdict === 'invalid' ||
         !this.canResume() ||
@@ -313,12 +320,6 @@ class CaseRun {
           blockingGuards: blocking.map((g) => g.issue),
         }
       }
-      // A file outside the plan is on record; whether it was needed is the reviewer's call.
-      const outside: Finding[] = unplanned.map((file) => ({
-        severity: 'minor',
-        file,
-        issue: OUTSIDE_THE_PLAN,
-      }))
       await this.rework([...guards, ...outside, ...read.findings], [])
     }
   }

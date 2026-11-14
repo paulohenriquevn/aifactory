@@ -72,6 +72,8 @@ type World = {
   checkExits?: number[]
   /** `git diff --name-status` between the base and the commit. */
   nameStatus?: string
+  /** `git diff --name-status` for each commit in turn, when it changes from round to round. */
+  nameStatusPerCommit?: string[]
   /** `git diff -U0` of the test files between the base and the commit. */
   testPatch?: string
 }
@@ -79,7 +81,9 @@ type World = {
 function sandbox(world: World = {}) {
   const exits = [...(world.checkExits ?? [0])]
   let statuses = 0
+  let commits = 0
   return new FakeSandbox((command): Reply | undefined => {
+    if (command.includes('commit -F')) commits += 1
     if (command.includes('status --porcelain')) {
       const afterPlan = statuses++ === 0
       const changed = afterPlan ? world.plannedEdits === true : world.dirty !== false
@@ -87,7 +91,12 @@ function sandbox(world: World = {}) {
     }
     if (command.includes('pnpm test')) return { exitCode: exits.shift() ?? 0, stdout: 'ran' }
     if (command.includes('diff --name-status'))
-      return { stdout: world.nameStatus ?? 'M\tsrc/cli.ts\n' }
+      return {
+        stdout:
+          world.nameStatusPerCommit?.[Math.max(commits, 1) - 1] ??
+          world.nameStatus ??
+          'M\tsrc/cli.ts\n',
+      }
     if (command.includes('diff -U0')) return { stdout: world.testPatch ?? '' }
     if (command.includes('rev-parse HEAD')) return { stdout: 'b'.repeat(40) }
     return undefined
@@ -329,6 +338,53 @@ describe('runCase', () => {
     const result = await runCase(deps(sandbox(), builder, reviewer), evalCase)
 
     expect(result).toMatchObject({ passed: false, reviewRounds: 6 })
+  })
+
+  const deletedTests = (n: number) =>
+    'M\tsrc/cli.ts\n' + Array.from({ length: n }, (_, i) => `D\tsrc/old${i}.test.ts\n`).join('')
+
+  it('counts the factory\'s own guards: blocking guards that fall give another round, 4, 3, 2', async () => {
+    const provider = sandbox({
+      nameStatusPerCommit: [deletedTests(4), deletedTests(3), deletedTests(2), deletedTests(0)],
+    })
+    const builder = agent('builder', planned(built(), built(), built(), built()))
+    const reviewer = agent('reviewer', [
+      ...[0, 0, 0].map((n): HarnessResult => ({ ok: true, summary: changesWith(n) })),
+      { ok: true, summary: APPROVE },
+    ])
+
+    const result = await runCase(deps(provider, builder, reviewer), evalCase)
+
+    expect(result).toMatchObject({ passed: true, reviewRounds: 4 })
+  })
+
+  it('counts guards that block an approval, and stops when they do not fall', async () => {
+    const approving = (): HarnessResult => ({ ok: true, summary: APPROVE })
+    const rising = sandbox({
+      nameStatusPerCommit: [deletedTests(5), deletedTests(6), deletedTests(7)],
+    })
+    const stopped = await runCase(
+      deps(
+        rising,
+        agent('builder', planned(built(), built(), built())),
+        agent('reviewer', [approving(), approving(), approving()]),
+      ),
+      evalCase,
+    )
+    expect(stopped).toMatchObject({ passed: false, reviewRounds: 3 })
+
+    const falling = sandbox({
+      nameStatusPerCommit: [deletedTests(4), deletedTests(3), deletedTests(2), deletedTests(0)],
+    })
+    const continued = await runCase(
+      deps(
+        falling,
+        agent('builder', planned(built(), built(), built(), built())),
+        agent('reviewer', [approving(), approving(), approving(), approving()]),
+      ),
+      evalCase,
+    )
+    expect(continued).toMatchObject({ passed: true, reviewRounds: 4 })
   })
 
   it('says nothing to the reviewer about the checks when none failed', async () => {

@@ -2102,6 +2102,42 @@ describe('runTask waiting for an answer', () => {
     expect(asked[1]).toContain('No, drop it.')
   })
 
+  it('remembers the blocking counts of earlier rounds when a question parks the third rework', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(changed())
+    const builder: CodingHarness & { n: number } = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      n: 0,
+      run: async () => {
+        dirty = true
+        return { ok: true, summary: 'first pass', sessionId: 'sess-r' }
+      },
+      resume: async (_b, _id) => {
+        dirty = true
+        builder.n += 1
+        return builder.n === 2
+          ? { ok: true, summary: 'hmm\nQUESTION: Keep the old export too?', sessionId: 'sess-r' }
+          : { ok: true, summary: 'reworked', sessionId: 'sess-r' }
+      },
+    }
+    const many = (n: number) =>
+      verdictJson(
+        'changes',
+        Array.from({ length: n }, (_, i) => ({ ...finding, issue: `problem ${i}` })),
+      )
+    const reviewer = reviewerSaying(many(4), many(3), many(2), verdictJson('approve'))
+
+    const parked = await runTask(deps(sandbox, { harness: builder, reviewer }), id)
+    expect(parked.status).toBe('waiting')
+    replies(owner({ body: 'No, drop it.' }))
+    await poll(sandbox)
+    const result = await resumeTask(deps(sandbox, { harness: builder, reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(reviewer.prompts).toHaveLength(4)
+  })
+
   it('lets a question that nobody answered fail its task and frees the snapshot', async () => {
     const id = await seedTask()
     const sandbox = new FakeSandbox(changed())

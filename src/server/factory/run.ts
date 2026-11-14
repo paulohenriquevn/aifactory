@@ -1408,13 +1408,37 @@ export class Run {
   }
 
   /**
+   * The blocking findings of the review rounds before the one a resumed run starts at, read from what
+   * the earlier part of the run stored. The review of the claim that the issue is resolved is not one.
+   */
+  private async priorCounts(): Promise<number[]> {
+    const { deps, taskId, resuming } = this.c
+    if (!resuming) return []
+    const rows = await deps.db
+      .select()
+      .from(reviewTable)
+      .where(eq(reviewTable.taskId, taskId))
+      .orderBy(asc(reviewTable.id))
+    const byRound = new Map<number, number>()
+    for (const r of rows) {
+      if (r.sha !== this.baseSha) byRound.set(r.round, blockingCount(r.findings as Finding[]))
+    }
+    const counts: number[] = []
+    for (let round = 1; round < resuming.attempt; round++) {
+      const count = byRound.get(round)
+      if (count !== undefined) counts.push(count)
+    }
+    return counts
+  }
+
+  /**
    * Checks the commit and has it reviewed, up to three attempts, or six while the blocking findings fall. Failing checks and a review that
    * asks for changes send the work back to the same agent session; an approval opens the pull request,
    * and running out of attempts after green checks hands the work to a person.
    */
   async loop(pushed: string): Promise<RunResult> {
     let sha = pushed
-    const counts: number[] = []
+    const counts = await this.priorCounts()
     for (let attempt = this.c.resuming?.attempt ?? 1; ; attempt++) {
       const canRework =
         attempt < MAX_ATTEMPTS && this.builder.resume !== undefined && !!this.sessionId
