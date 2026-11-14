@@ -316,7 +316,7 @@ const words = (name: string) => name.toLowerCase().match(/[a-z0-9]+/g) ?? []
  * Whether a required check is the same thing as a check of the factory, by name: every word of the
  * factory's name is a word of the required one, so `lint` answers for `CI / Lint (node 22)`.
  */
-function counterpart(required: string, check: string): boolean {
+export function counterpart(required: string, check: string): boolean {
   const have = new Set(words(required))
   const named = words(check)
   return named.length > 0 && named.every((word) => have.has(word))

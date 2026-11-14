@@ -1802,7 +1802,9 @@ describe('runTask continuing from a branch a person sent back', () => {
       reason: expect.stringContaining('ERROR: "quality:loc" exited with 1.'),
     })
     expect(seen.comments).toEqual([
-      expect.stringMatching(/required checks failed[\s\S]*broken on workspace too/),
+      expect.stringMatching(
+        /required checks failed[\s\S]*broken on workspace too[\s\S]*ERROR: "quality:loc" exited with 1\./,
+      ),
     ])
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
     expect(row.stage).toBe('handoff')

@@ -5,10 +5,8 @@ import type { FailedReport, ServerEvidence } from './ci-wait'
 import { checkEvidence, failedStep, logEvidence } from './promotion'
 
 /** What reading a failed check's evidence takes from GitHub, with a repository-scoped token. */
-export type EvidenceApi = Pick<
-  PromotionApi,
-  'failedChecks' | 'jobLog' | 'annotations' | 'jobAttempt' | 'rerunFailedJobs'
->
+export type EvidenceApi = Pick<PromotionApi, 'failedChecks' | 'jobLog' | 'annotations'> &
+  Partial<Pick<PromotionApi, 'jobAttempt' | 'rerunFailedJobs'>>
 
 /**
  * The lines that say why a check run failed, read on the factory host: the error lines of an Actions job's
@@ -25,38 +23,46 @@ export async function readEvidence(
   return checkEvidence(await api.annotations(repo, token, run.id), run.summary)
 }
 
-/** What became of the rerun of the failed jobs: how many runs started, and GitHub's refusal when it gave one. */
-export type RerunOutcome = { started: number; refused?: string }
+/** What became of the rerun of the failed jobs: how many runs started, and what kept the others from it. */
+export type RerunOutcome = { started: number; problems: string[] }
+
+const said = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /**
- * Reruns, once, the Actions runs of the failed required checks whose job is on its first attempt: a failure
- * that is not of the work (a flaky test) passes on the second. A job already on its second attempt is never
- * rerun. A refusal is an answer, not an error; anything else GitHub fails to say counts as no rerun.
+ * Reruns, once, every failed Actions run of the commit whose job is on its first attempt: a required check
+ * that only aggregates (`checks-pass`) fails because a job of another workflow failed, and a failure that is
+ * not of the work (a flaky test) passes on the second attempt. A job already on its second attempt is never
+ * rerun. What GitHub refuses or fails to answer is a problem the caller reports, per run, so one failure does
+ * not keep the others from being rerun. An API without the rerun calls reruns nothing and says nothing.
  */
 export async function rerunTransient(
   api: EvidenceApi,
   repo: string,
   token: string,
   sha: string,
-  reports: CheckReport[],
 ): Promise<RerunOutcome> {
-  const outcome: RerunOutcome = { started: 0 }
+  const outcome: RerunOutcome = { started: 0, problems: [] }
+  const { jobAttempt, rerunFailedJobs } = api
+  if (!jobAttempt || !rerunFailedJobs) return outcome
+  let runs: FailedRun[]
   try {
-    const names = reports.map((r) => r.name)
-    const runs = (await api.failedChecks(repo, token, sha)).filter(
-      (run) => run.actions && names.includes(run.name),
-    )
-    const tried = new Set<number>()
-    for (const run of runs) {
-      const job = await api.jobAttempt(repo, token, run.id)
+    runs = await api.failedChecks(repo, token, sha)
+  } catch (error) {
+    outcome.problems.push(`listing the failed jobs: ${said(error)}`)
+    return outcome
+  }
+  const tried = new Set<number>()
+  for (const run of runs.filter((candidate) => candidate.actions)) {
+    try {
+      const job = await jobAttempt.call(api, repo, token, run.id)
       if (job.attempt >= 2 || tried.has(job.runId)) continue
       tried.add(job.runId)
-      const answer = await api.rerunFailedJobs(repo, token, job.runId)
+      const answer = await rerunFailedJobs.call(api, repo, token, job.runId)
       if (answer.started) outcome.started += 1
-      else outcome.refused = answer.refusal
+      else outcome.problems.push(answer.refusal)
+    } catch (error) {
+      outcome.problems.push(`rerunning ${run.name}: ${said(error)}`)
     }
-  } catch {
-    // Not knowing whether a rerun is possible is no reason to hold the work back.
   }
   return outcome
 }

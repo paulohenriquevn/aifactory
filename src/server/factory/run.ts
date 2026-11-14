@@ -802,7 +802,7 @@ export class Run {
       row.repository,
       this.c.token,
       row.issueNumber,
-      `The repository's required checks failed on ${row.pullRequestUrl}, and the agent left it as it is:\n\n${said}`,
+      `The repository's required checks failed on ${row.pullRequestUrl}, and the agent left it as it is:\n\n${said}${evidence ? `\n\nWhat the failed checks reported:\n\n${evidence}` : ''}`,
     )
     await enterStage(deps.db, taskId, 'handoff', {
       branch,

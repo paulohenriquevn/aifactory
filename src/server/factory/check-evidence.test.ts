@@ -66,8 +66,6 @@ function fakeApi(
       calls.push(`annotations ${repo} ${token} ${checkRunId}`)
       return options.annotations?.[checkRunId] ?? []
     },
-    jobAttempt: async (_repo, _token, jobId) => ({ runId: jobId, attempt: 2 }),
-    rerunFailedJobs: async () => ({ started: false, refusal: 'not used here' }),
   }
   return { api, calls }
 }

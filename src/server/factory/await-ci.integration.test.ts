@@ -38,6 +38,7 @@ const gh = {
   attempts: {} as Record<number, number>,
   rerunRefusal: undefined as string | undefined,
   reruns: [] as number[],
+  attemptFails: [] as number[],
 }
 const sentBack: { taskId: number; note: string }[] = []
 const startedOver: number[] = []
@@ -80,6 +81,7 @@ beforeEach(async () => {
     attempts: {},
     rerunRefusal: undefined,
     reruns: [],
+    attemptFails: [],
   })
   sentBack.length = 0
   startedOver.length = 0
@@ -92,10 +94,10 @@ const checks: EvidenceApi = {
     return gh.logs[jobId] ?? ''
   },
   annotations: async (_repo, _token, checkRunId) => gh.annotations[checkRunId] ?? [],
-  jobAttempt: async (_repo, _token, jobId) => ({
-    runId: jobId * 10,
-    attempt: gh.attempts[jobId] ?? 2,
-  }),
+  jobAttempt: async (_repo, _token, jobId) => {
+    if (gh.attemptFails.includes(jobId)) throw new Error(`GitHub answered 502 reading job ${jobId}`)
+    return { runId: jobId * 10, attempt: gh.attempts[jobId] ?? 2 }
+  },
   rerunFailedJobs: async (_repo, _token, runId) => {
     if (gh.rerunRefusal) return { started: false, refusal: gh.rerunRefusal }
     gh.reruns.push(runId)
@@ -333,6 +335,81 @@ describe('pollAwaitingIntegrations', () => {
     expect(sentBack).toEqual([])
     expect(autoMergeOff()).toEqual([])
     expect((await row(id)).awaitingCiSha).toBe(VERIFIED)
+
+    // The rerun passes: GitHub merges the verified commit, and the next pass integrates it.
+    gh.failedRuns = []
+    reports({ name: 'CI', state: 'success', detail: '', url: link })
+    pull({ state: 'closed', merged: true, mergeCommitSha: 'merge0001' })
+
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ merged: [id], sentBack: [] })
+    expect(sentBack).toEqual([])
+    expect(await row(id)).toMatchObject({ mergedSha: 'merge0001', awaitingCiSha: null })
+  })
+
+  it('reruns the job of another workflow that a required aggregate check depends on', async () => {
+    const ci = 'https://github.com/paulo/app/actions/runs/500/job/1'
+    const types = 'https://github.com/paulo/app/actions/runs/501/job/2'
+    reports({ name: 'CI', state: 'failure', detail: '', url: ci })
+    gh.failedRuns = [
+      { id: 1, name: 'CI', url: ci, summary: '', actions: true },
+      { id: 2, name: 'Type tests', url: types, summary: '', actions: true },
+    ]
+    gh.attempts = { 1: 1, 2: 1 }
+    const id = await waitingTask()
+
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ rerun: [id], sentBack: [] })
+    expect(gh.reruns).toEqual([10, 20])
+  })
+
+  it('names the step alone when the log has no error line, and a check the factory does not run', async () => {
+    const link = 'https://github.com/paulo/app/actions/runs/431/job/1308'
+    reports({ name: 'no re-consumed changesets', state: 'failure', detail: '', url: link })
+    repo().required.set('workspace', ['no re-consumed changesets'])
+    gh.failedRuns = [
+      { id: 1308, name: 'no re-consumed changesets', url: link, summary: '', actions: true },
+    ]
+    gh.logs = { 1308: '##[group]Run node scripts/check-changesets.mjs\nsome plain output' }
+    const id = await waitingTask()
+
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ sentBack: [id] })
+
+    const { note } = sentBack[0]
+    expect(note).toContain('no check of the factory matches it')
+    expect(note).toContain('Step that exited: node scripts/check-changesets.mjs')
+  })
+
+  it('reports a rerun that failed and goes on with the others, saying so in the note', async () => {
+    const a = 'https://github.com/paulo/app/actions/runs/500/job/1'
+    reports({ name: 'CI', state: 'failure', detail: '', url: a })
+    gh.failedRuns = [
+      { id: 1, name: 'CI', url: a, summary: '', actions: true },
+      { id: 2, name: 'Other', url: a, summary: '', actions: true },
+    ]
+    gh.attempts = { 1: 1, 2: 1 }
+    gh.attemptFails = [1]
+    const id = await waitingTask()
+
+    const result = await pollAwaitingIntegrations(deps())
+
+    expect(gh.reruns).toEqual([20])
+    expect(result).toMatchObject({ rerun: [id], sentBack: [] })
+    expect(result.errors).toEqual([`task ${id}: rerunning CI: GitHub answered 502 reading job 1`])
+  })
+
+  it('does not hide a rerun that could not be tried when everything else failed', async () => {
+    const a = 'https://github.com/paulo/app/actions/runs/500/job/1'
+    reports({ name: 'CI', state: 'failure', detail: '', url: a })
+    gh.failedRuns = [{ id: 1, name: 'CI', url: a, summary: '', actions: true }]
+    gh.attempts = { 1: 1 }
+    gh.attemptFails = [1]
+    const id = await waitingTask()
+
+    const result = await pollAwaitingIntegrations(deps())
+
+    expect(result).toMatchObject({ sentBack: [id] })
+    expect(sentBack[0].note).toContain(
+      'could not rerun the failed jobs (rerunning CI: GitHub answered 502',
+    )
   })
 
   it('says the rerun was refused instead of blaming the work', async () => {

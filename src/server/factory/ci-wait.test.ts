@@ -431,4 +431,21 @@ describe('checksFeedback step and refused rerun', () => {
       'could not rerun the failed jobs (403)',
     )
   })
+
+  it('renders the step alone when nothing else was read, and marks a check the factory lacks', () => {
+    const only = [
+      {
+        name: 'changesets',
+        state: 'failure' as const,
+        detail: '',
+        url: 'u',
+        alone: true as const,
+        evidence: { lines: [], step: { name: 'node check.mjs' } },
+      },
+    ]
+    const note = checksFeedback('abc1234', only)
+    expect(note).toContain('no check of the factory matches it')
+    expect(note).toContain('changesets:\nStep that exited: node check.mjs')
+    expect(note).not.toContain('~~~~')
+  })
 })

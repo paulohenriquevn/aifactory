@@ -8,8 +8,15 @@ import { automaticRunsSincePerson } from '../panel/queries'
 
 import { integrationBranch } from './branches'
 import { attachEvidence, rerunTransient, type EvidenceApi } from './check-evidence'
-import { checksFeedback, decideWaitingIntegration, type WaitingStep } from './ci-wait'
+import {
+  checksFeedback,
+  decideWaitingIntegration,
+  type FailedReport,
+  type WaitingStep,
+} from './ci-wait'
 import { createPreRelease, type ReleaseMode } from './deliver'
+import { counterpart } from './doctor'
+import { DEFAULT_CHECKS, type CheckSpec } from './evidence'
 import {
   advancePreRelease,
   describeDelivery,
@@ -173,6 +180,14 @@ async function toPerson(
   return true
 }
 
+/** The failed required checks no check of the factory's answers for, marked so the note says it. */
+function aloneAmong(failed: FailedReport[], checks: CheckSpec[] | undefined): FailedReport[] {
+  const names = (checks ?? DEFAULT_CHECKS).map((check) => check.name)
+  return failed.map((r) =>
+    r.notRequired || names.some((name) => counterpart(r.name, name)) ? r : { ...r, alone: true },
+  )
+}
+
 async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: AwaitCiResult) {
   const verifiedSha = row.awaitingCiSha!
   const [done] = await deps.db
@@ -215,18 +230,12 @@ async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: Aw
       return
     case 'send_back': {
       // A failure that is not of the work passes on a rerun: nothing goes back before that.
-      const rerun = await rerunTransient(
-        deps.checks,
-        row.repository,
-        token,
-        verifiedSha,
-        step.reports,
-      )
+      const rerun = await rerunTransient(deps.checks, row.repository, token, verifiedSha)
       if (rerun.started > 0) {
         result.rerun.push(row.id)
         return
       }
-      if (rerun.refused) result.errors.push(`task ${row.id}: ${rerun.refused}`)
+      for (const problem of rerun.problems) result.errors.push(`task ${row.id}: ${problem}`)
       const failed = await attachEvidence(
         deps.checks,
         row.repository,
@@ -241,7 +250,10 @@ async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: Aw
       }
       // Off first: the new commit the agent pushes must not merge before the factory verifies it.
       await deps.api.disableAutoMerge(row.repository, token, number)
-      await deps.sendBack(row.id, checksFeedback(verifiedSha, failed, rerun.refused))
+      await deps.sendBack(
+        row.id,
+        checksFeedback(verifiedSha, aloneAmong(failed, repo.checks), rerun.problems.join('; ')),
+      )
       result.sentBack.push(row.id)
       return
     }
