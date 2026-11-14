@@ -377,6 +377,8 @@ export async function runCase(deps: EvalDeps, c: EvalCase): Promise<CaseResult> 
     const feed = await KnowledgeFeed.open(deps.knowledge, sandbox.backend, c.repository, {})
     sandbox = feed.attachTo(sandbox)
     const run = new CaseRun(deps, c, sandbox, repoDir, feed.dir)
+    // Before the builder's first pass, so it can run the check it is told to run.
+    await uploadChangesetCheck(sandbox.backend, c.checks)
     try {
       await run.build()
       return run.result(await run.loop())
