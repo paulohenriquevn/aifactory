@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -168,6 +169,116 @@ export async function freshCodexLogin(deps: CodexAuthDeps = {}): Promise<CodexLo
   return loginOf(current, env)
 }
 
+const hashOf = (token: string) => createHash('sha256').update(token).digest('hex')
+
+/** Beside the store: the hash of the access token the provider refused, never the token. */
+const refusalFile = (env: Env) => `${codexAuthFile(env)}.refused`
+
+function refusedHash(env: Env): string | undefined {
+  try {
+    return readFileSync(refusalFile(env), 'utf8').trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The login in the store, or the CLI's old file, as it is now. Read, never migrated, so it is safe under the
+ * lock a renewal takes.
+ */
+function readLogin(env: Env): StoredOAuthCredential | undefined {
+  const stored = readStoredOAuth(CODEX_STORE, env)
+  if (stored) return stored
+  return existsSync(legacyAuthFile(env))
+    ? fromCliAuth(readFileSync(legacyAuthFile(env), 'utf8'))
+    : undefined
+}
+
+/**
+ * Records that the provider refused this access token, whatever its `exp` says. Only when it is the token the
+ * store holds now, decided under the store's lock: a refusal that reaches us late, for a token already
+ * replaced, says nothing about the login in use and must not hide a refusal of that one.
+ */
+export function markCodexRefused(token: string, env: Env = process.env): Promise<void> {
+  return withFileLock(codexAuthFile(env), async () => {
+    if (readLogin(env)?.access !== token) return
+    writeFileSync(refusalFile(env), hashOf(token), { mode: 0o600 })
+  })
+}
+
+/** Renews whatever `exp` says. Its margin is so large that the stored token always counts as stale. */
+const forced = new AuthProvider(CODEX_PROVIDER.oauth, CODEX_STORE, {
+  refreshBeforeMs: Number.MAX_SAFE_INTEGER,
+})
+
+/**
+ * The login after the provider refused `refused`, the access token the sandbox holds. When the store no
+ * longer holds it, another run or a new sign-in replaced it and that login is used as it is. Otherwise it is
+ * renewed at once. That is decided inside the lock the renewal takes: the provider calls `fetch` only after it
+ * re-read the store under the lock, so a `fetch` that looks at the store again sees what the renewal would
+ * spend, and refuses to go on when it is not the refused token. The refusal marker is cleared only when it is
+ * about the token this replaced: a refusal of the replacement, written meanwhile, stays.
+ */
+export async function renewCodexLogin(
+  refused: string,
+  deps: CodexAuthDeps = {},
+): Promise<CodexLogin> {
+  const env = deps.env ?? process.env
+  const stored = await storedOrMigrated(env)
+  if (!stored) {
+    throw new CodexLoginError(
+      `there is no Codex login in ${codexHomeOf(env)}: connect Codex from the Setup page`,
+    )
+  }
+  let replaced = false
+  let renewed = false
+  const send = deps.fetch ?? fetch
+  const guarded = (async (...args: Parameters<typeof fetch>) => {
+    if (readStoredOAuth(CODEX_STORE, env)?.access !== refused) {
+      replaced = true
+      throw new Error('stopped: the login was replaced')
+    }
+    renewed = true
+    return send(...args)
+  }) as typeof fetch
+  if (stored.access === refused) {
+    try {
+      await forced.ensureFresh(
+        {
+          kind: 'oauth',
+          provider: stored.provider,
+          apiKey: stored.access,
+          source: codexAuthFile(env),
+          inferred: false,
+          expiresAt: stored.expires,
+        },
+        { fetch: guarded, now: deps.now ?? Date.now },
+        env,
+      )
+    } catch (error) {
+      if (!replaced) {
+        throw new CodexLoginError(
+          `the Codex login in ${codexHomeOf(env)} was refused and could not be renewed (${reason(error)}): connect Codex again from the Setup page`,
+          { cause: error },
+        )
+      }
+    }
+    if (renewed) {
+      await withFileLock(codexAuthFile(env), async () => {
+        if (refusedHash(env) === hashOf(refused)) rmSync(refusalFile(env), { force: true })
+      })
+    }
+  }
+  const current = readStoredOAuth(CODEX_STORE, env)
+  if (!current) throw new CodexLoginError('the renewed Codex login was not found in its store')
+  if (current.access === refused) {
+    throw new CodexLoginError(
+      `the Codex login in ${codexHomeOf(env)} was refused and could not be renewed (another renewal was running): connect Codex again from the Setup page`,
+    )
+  }
+  return loginOf(current, env)
+}
+
 /** Keeps a new login, under the lock a renewal takes, so the two can never interleave. */
 export function saveCodexLogin(tokens: OAuthTokens, env: Env = process.env): Promise<void> {
   if (!tokens.idToken) {
@@ -185,15 +296,18 @@ export type CodexAccount =
 export function codexAccount(env: Env = process.env): CodexAccount {
   let stored: StoredOAuthCredential | undefined
   try {
-    stored = readStoredOAuth(CODEX_STORE, env)
-    if (!stored && existsSync(legacyAuthFile(env))) {
-      stored = fromCliAuth(readFileSync(legacyAuthFile(env), 'utf8'))
-    }
+    stored = readLogin(env)
   } catch (error) {
     // A file the store refuses (wrong mode, wrong shape) is a login the factory cannot use: say why.
     return { connected: false, problem: reason(error) }
   }
   if (!stored) return { connected: false }
+  if (refusedHash(env) === hashOf(stored.access)) {
+    return {
+      connected: false,
+      problem: 'the provider refused the Codex login: connect Codex again from the Setup page',
+    }
+  }
   const claims = stored.id_token ? claimsOf(stored.id_token) : {}
   const auth = claims['https://api.openai.com/auth'] as { chatgpt_plan_type?: unknown } | undefined
   return {

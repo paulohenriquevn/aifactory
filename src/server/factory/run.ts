@@ -95,6 +95,7 @@ import {
   createIsolatedSandbox,
   restoreIsolatedSandbox,
   type IsolatedSandbox,
+  type EgressRule,
   type SandboxSpec,
 } from './sandbox'
 import { enterStage } from './stages'
@@ -143,6 +144,9 @@ export const PLAN_MS = 15 * 60_000
 
 /** The result of running the checks on a commit: what ran, what it adds up to, and what to show. */
 type Checked = { results: CheckResult[]; here: StoredCheck[]; verdict: Verdict }
+
+/** Per run, keyed by its egress rules: puts one rule in the firewall through the run's queue of changes. */
+const refreshers = new WeakMap<EgressRule[], (rule: EgressRule) => Promise<void>>()
 
 /**
  * One run of a task, from the sandbox to the pull request. It holds what changes as the run goes
@@ -246,12 +250,11 @@ export class Run {
     const minutes = Math.floor((Date.now() - this.sessionStartedAt) / 60_000)
     state.current = 'sandbox'
     // The same rules, with the token the run holds now rather than the one it started with.
-    const spec = {
-      ...this.spec,
-      egress: this.spec.egress.map((rule) =>
-        rule.domain === 'github.com' ? githubEgress(this.c.token) : rule,
-      ),
-    }
+    // In place, so the renewal of the new session and a later refusal both work on these rules.
+    this.spec.egress.forEach((rule, i) => {
+      if (rule.domain === 'github.com') this.spec.egress[i] = githubEgress(this.c.token)
+    })
+    const spec = this.spec
     this.feed?.stop()
     const snapshotId = await this.sandbox.snapshot!()
     let restored: IsolatedSandbox
@@ -262,7 +265,7 @@ export class Run {
       throw error
     }
     this.sessionStartedAt = Date.now()
-    const sandbox = Run.withCredentials(this.c, restored, spec.egress)
+    const sandbox = Run.withCredentials(this.c, restored, this.spec.egress)
     state.sandbox = sandbox
     // The snapshot did its job; keeping it only costs storage.
     await deps.sandbox.deleteSnapshot?.(snapshotId).catch(() => {})
@@ -278,13 +281,47 @@ export class Run {
     })
   }
 
-  /** The sandbox with its GitHub token renewed while the run works, since a run may outlast a token. */
+  /**
+   * The sandbox with its GitHub token renewed while the run works, since a run may outlast a token. Every
+   * change of the firewall goes through one queue and is built from `egress` as it is when it is sent, so a
+   * GitHub renewal never puts back an old Codex token and a Codex renewal never puts back an old GitHub one.
+   */
   private static withCredentials(
     c: RunContext,
     started: IsolatedSandbox,
     egress: SandboxSpec['egress'],
   ): IsolatedSandbox {
-    return renewGithubCredential(started, egress, {
+    let queue: Promise<unknown> = Promise.resolve()
+    const serial = <T>(step: () => Promise<T>): Promise<T> => {
+      const done = queue.then(step)
+      queue = done.catch(() => {})
+      return done
+    }
+    const put = (rule: EgressRule) => {
+      const i = egress.findIndex((known) => known.domain === rule.domain)
+      if (i >= 0) egress[i] = rule
+    }
+    const update = started.updateEgress?.bind(started)
+    const serialized: IsolatedSandbox = update
+      ? {
+          ...started,
+          updateEgress: (rules) =>
+            serial(async () => {
+              const github = rules.find((rule) => rule.domain === 'github.com')
+              if (github) put(github)
+              await update([...egress])
+            }),
+        }
+      : started
+    if (update) {
+      refreshers.set(egress, (rule) =>
+        serial(async () => {
+          put(rule)
+          await update([...egress])
+        }),
+      )
+    }
+    return renewGithubCredential(serialized, egress, {
       mint: async () => (await c.deps.github.installationToken(c.row.repository)).token,
       onToken: (token) => {
         c.token = token
@@ -455,6 +492,10 @@ export class Run {
       })
       throw error
     }
+    if (result.unauthorized && who.reauthorize) {
+      await this.transcript.drain()
+      result = await this.afterRefusal(who, role, attempt, call)
+    }
     await this.transcript.flush()
     this.cost += result.costUsd ?? 0
     await db.update(task).set({ costUsd: this.cost }).where(eq(task.id, taskId))
@@ -477,6 +518,50 @@ export class Run {
       )
     }
     return result
+  }
+
+  /**
+   * The provider refused the agent's login. Renews it once for the token the sandbox signs with, gives the
+   * firewall the new one, and runs the pass again. A login that cannot be renewed, or is refused again, is a
+   * fault of the environment, not of the work: the task waits to retry, and the owner connects Codex again.
+   */
+  private async afterRefusal(
+    who: CodingHarness,
+    role: 'builder' | 'reviewer',
+    attempt: number,
+    call: (onEvent: (event: AgentEvent) => void) => Promise<HarnessResult>,
+  ): Promise<HarnessResult> {
+    const refused = `the ${who.name} login was refused by the provider`
+    const rules = this.spec.egress
+    const at = rules.findIndex((rule) => rule.domain === 'chatgpt.com')
+    const installed = rules[at]?.headers?.authorization?.replace(/^Bearer /, '')
+    if (!who.reauthorize || at < 0 || !installed) {
+      throw new StageFailure(`${refused}: connect Codex again from the Setup page`)
+    }
+    try {
+      const push = refreshers.get(rules)
+      for (const rule of await who.reauthorize(this.backend, installed)) {
+        if (push) await push(rule)
+        else {
+          const i = rules.findIndex((known) => known.domain === rule.domain)
+          if (i >= 0) rules[i] = rule
+          await this.sandbox.updateEgress?.(rules)
+        }
+      }
+    } catch (error) {
+      throw new StageFailure(
+        `Codex login was refused and could not be renewed (${error instanceof Error ? error.message : String(error)}): connect Codex again from the Setup page`,
+      )
+    }
+    const again = await call(this.transcript!.sink(role, attempt))
+    if (again.unauthorized) {
+      const now = rules[at]?.headers?.authorization?.replace(/^Bearer /, '')
+      if (now) await who.markRefused?.(now).catch(() => {})
+      throw new StageFailure(
+        'Codex login was refused again after it was renewed: connect Codex again from the Setup page',
+      )
+    }
+    return again
   }
 
   /**
