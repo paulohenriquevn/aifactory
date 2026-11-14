@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -168,6 +169,77 @@ export async function freshCodexLogin(deps: CodexAuthDeps = {}): Promise<CodexLo
   return loginOf(current, env)
 }
 
+const hashOf = (token: string) => createHash('sha256').update(token).digest('hex')
+
+/** Beside the store: the hash of the access token the provider refused, never the token. */
+const refusalFile = (env: Env) => `${codexAuthFile(env)}.refused`
+
+function refusedHash(env: Env): string | undefined {
+  try {
+    return readFileSync(refusalFile(env), 'utf8').trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Records that the provider refused this access token, whatever its `exp` says. */
+export function markCodexRefused(token: string, env: Env = process.env): Promise<void> {
+  return withFileLock(codexAuthFile(env), async () => {
+    writeFileSync(refusalFile(env), hashOf(token), { mode: 0o600 })
+  })
+}
+
+/** Renews whatever `exp` says. Its margin is so large that the stored token always counts as stale. */
+const forced = new AuthProvider(CODEX_PROVIDER.oauth, CODEX_STORE, {
+  refreshBeforeMs: Number.MAX_SAFE_INTEGER,
+})
+
+/**
+ * The login after the provider refused `refused`, the access token the sandbox holds. When the store no
+ * longer holds it, another run or a new sign-in replaced it and that login is used as it is. Otherwise it is
+ * renewed at once. The refusal marker is cleared only when it is about the token this replaced: a refusal of
+ * the replacement, written meanwhile, stays.
+ */
+export async function renewCodexLogin(
+  refused: string,
+  deps: CodexAuthDeps = {},
+): Promise<CodexLogin> {
+  const env = deps.env ?? process.env
+  const stored = await storedOrMigrated(env)
+  if (!stored) {
+    throw new CodexLoginError(
+      `there is no Codex login in ${codexHomeOf(env)}: connect Codex from the Setup page`,
+    )
+  }
+  if (stored.access === refused) {
+    try {
+      await forced.ensureFresh(
+        {
+          kind: 'oauth',
+          provider: stored.provider,
+          apiKey: stored.access,
+          source: codexAuthFile(env),
+          inferred: false,
+          expiresAt: stored.expires,
+        },
+        { fetch: deps.fetch ?? fetch, now: deps.now ?? Date.now },
+        env,
+      )
+    } catch (error) {
+      throw new CodexLoginError(
+        `the Codex login in ${codexHomeOf(env)} was refused and could not be renewed (${reason(error)}): connect Codex again from the Setup page`,
+        { cause: error },
+      )
+    }
+    await withFileLock(codexAuthFile(env), async () => {
+      if (refusedHash(env) === hashOf(refused)) rmSync(refusalFile(env), { force: true })
+    })
+  }
+  const current = readStoredOAuth(CODEX_STORE, env)
+  if (!current) throw new CodexLoginError('the renewed Codex login was not found in its store')
+  return loginOf(current, env)
+}
+
 /** Keeps a new login, under the lock a renewal takes, so the two can never interleave. */
 export function saveCodexLogin(tokens: OAuthTokens, env: Env = process.env): Promise<void> {
   if (!tokens.idToken) {
@@ -194,6 +266,12 @@ export function codexAccount(env: Env = process.env): CodexAccount {
     return { connected: false, problem: reason(error) }
   }
   if (!stored) return { connected: false }
+  if (refusedHash(env) === hashOf(stored.access)) {
+    return {
+      connected: false,
+      problem: 'the provider refused the Codex login: connect Codex again from the Setup page',
+    }
+  }
   const claims = stored.id_token ? claimsOf(stored.id_token) : {}
   const auth = claims['https://api.openai.com/auth'] as { chatgpt_plan_type?: unknown } | undefined
   return {

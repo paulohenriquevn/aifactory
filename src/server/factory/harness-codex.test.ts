@@ -8,6 +8,7 @@ import { retryableFailure } from '../../shared/panel'
 // @ts-expect-error the feeder is a script, not a typed module
 import { isInfraFailure } from '../../../scripts/backlog.mjs'
 
+import { codexAccount, saveCodexLogin } from './codex-auth'
 import { FakeSandbox } from './fake-sandbox'
 import {
   CODEX_VERSION,
@@ -313,5 +314,51 @@ describe('a watched Codex run', () => {
       { kind: 'message', content: 'Added it.' },
       { kind: 'cost', content: '10 tokens in, 5 out' },
     ])
+  })
+})
+
+describe('a login the provider refused', () => {
+  const refusal = line({
+    type: 'turn.failed',
+    error: { message: 'HTTP 401 "code": "token_expired"' },
+  })
+
+  it('reads a 401 as a refusal of the login, not as a quota stop or a plain failure', () => {
+    expect(parseCodexResult(1, refusal, '')).toMatchObject({ ok: false, unauthorized: true })
+    expect(
+      parseCodexResult(1, line({ type: 'turn.failed', error: { message: 'boom' } }), ''),
+    ).not.toHaveProperty('unauthorized')
+  })
+
+  it('classifies a refused or unrenewable Codex login as an environment failure that retries', () => {
+    const error =
+      'Codex login was refused and could not be renewed (invalid_grant): connect Codex again'
+    expect(retryableFailure({ error })).toBe('environment')
+  })
+
+  it('renews the token the sandbox holds, puts the new one there, and does not trust a replaced store blindly', async () => {
+    const home = loginDir(66 * 3600)
+    const env = { FACTORY_CODEX_HOME: home }
+    const harness = codexHarness({ kind: 'subscription', home }, { now: () => NOW })
+    const installed = SECRET_ACCESS(NOW / 1000 + 66 * 3600)
+    await saveCodexLogin(
+      {
+        access: 'replacement-access',
+        refresh: 'r2',
+        expires: NOW + 9 * 86_400_000,
+        idToken: jwt({ email: 'a@b.c' }),
+      },
+      env,
+    )
+    const sandbox = new FakeSandbox()
+    const { backend } = await sandbox.create({ timeoutMs: 1, egress: [{ domain: 'github.com' }] })
+
+    // A separate instance, with no cached login: the store was replaced, so no renewal is needed.
+    const rules = await harness.reauthorize!(backend, installed)
+
+    expect(rules).toEqual([
+      { domain: 'chatgpt.com', headers: { authorization: 'Bearer replacement-access' } },
+    ])
+    expect(codexAccount(env)).toMatchObject({ connected: true })
   })
 })
