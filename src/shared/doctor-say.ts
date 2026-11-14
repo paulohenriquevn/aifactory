@@ -5,6 +5,7 @@
  */
 export const DOCTOR_SAY_CODES = [
   'unknown',
+  'unknown_unanswered',
   'issues_off',
   'app_unreachable',
   'app_lacks',
@@ -19,7 +20,104 @@ export const DOCTOR_SAY_CODES = [
   'recipe_problem',
   'recipe_pending',
   'sandbox_refused',
+  'ok_issues',
+  'ok_app_access',
+  'ok_app_events',
+  'ok_branches',
+  'ok_label',
+  'ok_auto_merge_free',
+  'ok_auto_merge_allowed',
+  'ok_ci_free',
+  'ok_ci_reported',
+  'ok_checks_parity',
+  'ok_tag',
+  'ok_changesets',
+  'ok_none',
+  'ok_recipe',
+  'ok_sandbox',
 ] as const
+
+/** Every thing the doctor tries to read; an item it could not read says which, so the panel can name it. */
+export const DOCTOR_TRIED_CODES = [
+  'settings',
+  'branches',
+  'labels',
+  'required',
+  'recent',
+  'publish',
+  'recipe',
+  'installation',
+  'events',
+  'runs',
+  'token',
+  'merge_settings',
+] as const
+
+export type DoctorTriedCode = (typeof DOCTOR_TRIED_CODES)[number]
+
+export type DoctorTried = { code: DoctorTriedCode; values: DoctorSayValues }
+
+/** What was tried, as a phrase that follows "Not known:", for each code. */
+export type DoctorTriedSentences = Record<DoctorTriedCode, (v: DoctorSayValues) => string>
+
+export const DOCTOR_TRIED_EN: DoctorTriedSentences = {
+  settings: (v) => `reading the settings of ${v.repo}`,
+  branches: (v) => `reading the branches of ${v.repo}`,
+  labels: (v) => `reading the labels of ${v.repo}`,
+  required: (v) => `reading the checks ${v.integration} requires on ${v.repo}`,
+  recent: (v) => `reading the checks of the recent commits of ${v.integration} on ${v.repo}`,
+  publish: (v) => `reading how ${v.repo} publishes`,
+  recipe: (v) => `reading ${v.path} of ${v.repo}`,
+  installation: (v) => `reading the installation of the GitHub App on ${v.repo}`,
+  events: () => 'reading the events the GitHub App subscribes to',
+  runs: (v) => `reading the failed runs of ${v.repo}`,
+  token: (v) => `minting a token for ${v.repo}`,
+  merge_settings: (v) => `reading the merge settings of ${v.repo}`,
+}
+
+/** Why a recipe cannot be used, as the three ways `RecipeError` has of saying it. */
+export const RECIPE_WHY_KINDS = ['not_json', 'invalid', 'status'] as const
+export type RecipeWhyKind = (typeof RECIPE_WHY_KINDS)[number]
+
+/** The rule an invalid recipe broke, which a reader says in its own language. */
+export const RECIPE_RULES = ['type', 'too_small', 'too_big', 'unknown_keys', 'hostname'] as const
+
+/** A recipe that cannot be used, as parts: the kind, where, and for `invalid`, the rule with its numbers. */
+export type RecipeWhy = {
+  kind: RecipeWhyKind
+  repo: string
+  path: string
+  /** The English reason, for a rule this list does not know. */
+  detail: string
+  /** The field that broke the rule, as a dotted path; empty for the whole file. */
+  at?: string
+  rule?: (typeof RECIPE_RULES)[number]
+  /** The type a value should have, the limit it crossed, what the limit counts, the fields not known. */
+  expected?: string
+  limit?: string
+  origin?: string
+  keys?: string
+  /** Where a text that is not JSON breaks: the character, and the line and column when the parser says. */
+  position?: string
+  line?: string
+  column?: string
+}
+
+/** How a read failed, from the words of the error: GitHub's status, a connection that broke, or anything else. */
+export type DoctorFailure =
+  | { kind: 'github_status'; status: string; detail: string }
+  | { kind: 'network' }
+  | { kind: 'other' }
+
+/** The merge settings a repository has turned off, by the values the doctor sends. */
+export const MERGE_SETTINGS = [
+  ['autoMerge', '"Allow auto-merge"'],
+  ['mergeCommit', '"Allow merge commits"'],
+] as const
+
+/** The names of the merge settings that are off, to be joined in the language of the reader. */
+export const settingsOff = (v: DoctorSayValues) =>
+  MERGE_SETTINGS.filter(([key]) => v[key] === 'off').map(([, name]) => name)
 
 export type DoctorSayCode = (typeof DOCTOR_SAY_CODES)[number]
 
@@ -39,6 +137,11 @@ export type DoctorSentences = Record<DoctorSayCode, DoctorSentence>
 export const DOCTOR_SAY_EN: DoctorSentences = {
   unknown: {
     cause: (v) => `Not known: ${v.tried} failed (${v.error}). Nothing is assumed to be fine.`,
+    repair: () => 'Check again in a moment.',
+  },
+  unknown_unanswered: {
+    cause: (v) =>
+      `Not known: ${v.tried} failed (GitHub left them out of its answer). Nothing is assumed to be fine.`,
     repair: () => 'Check again in a moment.',
   },
   issues_off: {
@@ -76,8 +179,9 @@ export const DOCTOR_SAY_EN: DoctorSentences = {
   },
   auto_merge_off: {
     cause: (v) =>
-      `${v.integration} requires status checks, so the factory waits for them through auto-merge, and ${v.repo} has ${v.off} turned off.`,
-    repair: (v) => `Turn on ${v.turnOn} under Settings, General, Pull Requests.`,
+      `${v.integration} requires status checks, so the factory waits for them through auto-merge, and ${v.repo} has ${settingsOff(v).join(', ')} turned off.`,
+    repair: (v) =>
+      `Turn on ${settingsOff(v).join(' and ')} under Settings, General, Pull Requests.`,
   },
   ci_silent: {
     cause: (v) =>
@@ -118,5 +222,64 @@ export const DOCTOR_SAY_EN: DoctorSentences = {
       `The sandbox provider refused the last run of this repository (task ${v.taskId}, ${v.at}): ${v.error}`,
     repair: () =>
       'Add credit to the sandbox provider, or fix its key on the server. The task retries itself once the provider accepts.',
+  },
+  ok_issues: { cause: () => 'Issues are on.', repair: () => '' },
+  ok_app_access: {
+    cause: (v) => `The GitHub App reaches ${v.repo} with every permission it needs.`,
+    repair: () => '',
+  },
+  ok_app_events: {
+    cause: () => 'The App subscribes to every event the factory reads.',
+    repair: () => '',
+  },
+  ok_branches: {
+    cause: () => 'The integration and pre-release branches exist.',
+    repair: () => '',
+  },
+  ok_label: { cause: () => 'The "factory" label exists.', repair: () => '' },
+  ok_auto_merge_free: {
+    cause: (v) =>
+      `${v.integration} requires no status check, so the factory merges its pull requests itself.`,
+    repair: () => '',
+  },
+  ok_auto_merge_allowed: {
+    cause: (v) =>
+      `${v.integration} requires status checks, and ${v.repo} allows auto-merge and merge commits.`,
+    repair: () => '',
+  },
+  ok_ci_free: {
+    cause: (v) => `${v.integration} requires no check of the repository.`,
+    repair: () => '',
+  },
+  ok_ci_reported: {
+    cause: (v) => `Every required check of ${v.integration} reported on a recent commit.`,
+    repair: () => '',
+  },
+  ok_checks_parity: {
+    cause: (v) => `Every required check of ${v.integration} has a check of the factory.`,
+    repair: () => '',
+  },
+  ok_tag: {
+    cause: (v) =>
+      `tag: ${v.workflow} runs on a tag, and package.json on ${v.ref} is at ${v.version}, a version the next tag may have.`,
+    repair: () => '',
+  },
+  ok_changesets: {
+    cause: (v) =>
+      `changesets: .changeset/config.json is on ${v.ref}, so the release workflow of ${v.repo} tags its own releases.`,
+    repair: () => '',
+  },
+  ok_none: {
+    cause: (v) =>
+      `none: ${v.repo} has no .changeset/config.json and no workflow that runs on a tag, so the factory tags its releases and nothing else is published.`,
+    repair: () => '',
+  },
+  ok_recipe: {
+    cause: () => 'The recipe has no problem and no domain waiting for approval.',
+    repair: () => '',
+  },
+  ok_sandbox: {
+    cause: () => 'The sandbox provider has not refused the latest run.',
+    repair: () => '',
   },
 }

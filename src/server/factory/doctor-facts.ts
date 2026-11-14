@@ -8,11 +8,14 @@ import { FACTORY_LABEL } from '../ingest/decide'
 
 import { integrationBranch, PRE_RELEASE_BRANCH } from './branches'
 import { usesChangesets, withChangesetCheck } from './changesets'
+import type { DoctorTried, RecipeWhy } from '../../shared/doctor-say'
 import {
   manifestVersion,
   providerRefusal,
   readOf,
   runsOnTag,
+  triedOf,
+  triedText,
   unread,
   type AccessFacts,
   type DoctorFacts,
@@ -67,20 +70,20 @@ const MAX_WORKFLOWS = 20
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-async function attempt<T>(tried: string, work: () => Promise<T>): Promise<Read<T>> {
+async function attempt<T>(what: DoctorTried, work: () => Promise<T>): Promise<Read<T>> {
   try {
     return readOf(await work())
   } catch (error) {
-    return unread(tried, message(error))
+    return unread(triedText(what), message(error), what)
   }
 }
 
 /** A fact that is read from another: when the other was not read, neither is this one, for the same reason. */
 const after = async <A, T>(
   needed: Read<A>,
-  tried: string,
+  what: DoctorTried,
   work: (value: A) => Promise<T>,
-): Promise<Read<T>> => (needed.read ? attempt(tried, () => work(needed.value)) : needed)
+): Promise<Read<T>> => (needed.read ? attempt(what, () => work(needed.value)) : needed)
 
 /** A fact made of another with no further reading. */
 const mapRead = <A, T>(read: Read<A>, map: (value: A) => T): Read<T> =>
@@ -185,14 +188,14 @@ async function readPublish(reader: Reader, defaultBranch: string): Promise<Publi
 async function readRecipe(
   { api, name, token }: Reader,
   defaultBranch: string,
-): Promise<{ recipe?: Recipe; problem?: string }> {
+): Promise<{ recipe?: Recipe; problem?: string; why?: RecipeWhy }> {
   const text = await api.readFile(name, token, RECIPE_PATH, defaultBranch)
   if (text === undefined) return {}
   try {
     return { recipe: parseRecipe(name, text) }
   } catch (error) {
     if (!(error instanceof RecipeError)) throw error
-    return { problem: error.message }
+    return { problem: error.message, why: error.why }
   }
 }
 
@@ -206,22 +209,22 @@ type RepositoryFacts = Omit<DoctorFacts, 'repo' | 'integration' | 'access' | 'ev
 
 async function readRepository(reader: Reader): Promise<RepositoryFacts> {
   const { api, name, token, config, integration } = reader
-  const settings = await attempt(`reading the settings of ${name}`, () =>
+  const settings = await attempt(triedOf('settings', { repo: name }), () =>
     api.repositorySettings(name, token),
   )
   const [branches, label, required, recent, publish, recipe] = await Promise.all([
-    attempt(`reading the branches of ${name}`, async () => ({
+    attempt(triedOf('branches', { repo: name }), async () => ({
       missing: await missingBranches(reader),
     })),
-    attempt(`reading the labels of ${name}`, () => api.labelExists(name, token, FACTORY_LABEL)),
-    attempt(`reading the checks ${integration} requires on ${name}`, () =>
+    attempt(triedOf('labels', { repo: name }), () => api.labelExists(name, token, FACTORY_LABEL)),
+    attempt(triedOf('required', { repo: name, integration }), () =>
       api.requiredChecks(name, token, integration),
     ),
-    attempt(`reading the checks of the recent commits of ${integration} on ${name}`, () =>
-      readRecent(reader),
+    attempt(triedOf('recent', { repo: name, integration }), () => readRecent(reader)),
+    after(settings, triedOf('publish', { repo: name }), (s) =>
+      readPublish(reader, s.defaultBranch),
     ),
-    after(settings, `reading how ${name} publishes`, (s) => readPublish(reader, s.defaultBranch)),
-    after(settings, `reading ${RECIPE_PATH} of ${name}`, async (s) => ({
+    after(settings, triedOf('recipe', { repo: name, path: RECIPE_PATH }), async (s) => ({
       ...(await readRecipe(reader, s.defaultBranch)),
       url: `https://github.com/${name}/blob/${s.defaultBranch}/${RECIPE_PATH}`,
     })),
@@ -233,8 +236,9 @@ async function readRepository(reader: Reader): Promise<RepositoryFacts> {
     required,
     recent,
     publish,
-    recipe: mapRead(recipe, ({ recipe: read, problem, url }) => ({
+    recipe: mapRead(recipe, ({ recipe: read, problem, why, url }) => ({
       problem,
+      why,
       pending: pendingEgress(config, read),
       url,
     })),
@@ -250,13 +254,11 @@ export async function collectFacts(sources: DoctorSources, name: string): Promis
   const config = await loadRepoConfig(db, name)
   const integration = integrationBranch(config)
   const [access, events, sandbox, token] = await Promise.all([
-    attempt(`reading the installation of the GitHub App on ${name}`, () =>
-      readAccess(github, name),
-    ),
-    attempt('reading the events the GitHub App subscribes to', () => github.subscriptions()),
-    attempt(`reading the failed runs of ${name}`, () => readSandbox(db, name)),
+    attempt(triedOf('installation', { repo: name }), () => readAccess(github, name)),
+    attempt(triedOf('events'), () => github.subscriptions()),
+    attempt(triedOf('runs', { repo: name }), () => readSandbox(db, name)),
     attempt(
-      `minting a token for ${name}`,
+      triedOf('token', { repo: name }),
       async () => (await github.installationToken(name)).token,
     ),
   ])

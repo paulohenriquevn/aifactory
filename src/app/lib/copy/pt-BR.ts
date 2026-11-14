@@ -1,4 +1,73 @@
+import { settingsOff, type DoctorTriedSentences } from '../../../shared/doctor-say'
+
 import type { Copy } from './en'
+
+/** What the doctor tried to read, after "Não sei:". */
+const TRIED: DoctorTriedSentences = {
+  settings: (v) => `ler as configurações de ${v.repo}`,
+  branches: (v) => `ler as branches de ${v.repo}`,
+  labels: (v) => `ler os labels de ${v.repo}`,
+  required: (v) => `ler os checks que ${v.integration} exige em ${v.repo}`,
+  recent: (v) => `ler os checks dos commits recentes de ${v.integration} em ${v.repo}`,
+  publish: (v) => `ler como ${v.repo} publica`,
+  recipe: (v) => `ler ${v.path} de ${v.repo}`,
+  installation: (v) => `ler a instalação do GitHub App em ${v.repo}`,
+  events: () => 'ler os eventos que o GitHub App assina',
+  runs: (v) => `ler as execuções que falharam em ${v.repo}`,
+  token: (v) => `gerar um token para ${v.repo}`,
+  merge_settings: (v) => `ler as configurações de merge de ${v.repo}`,
+}
+
+/** What was tried, in Portuguese when the code is one this panel knows, and as the server said it otherwise. */
+const tried = (v: Record<string, string>) => TRIED[v.what as keyof typeof TRIED]?.(v) ?? v.tried
+
+/** How a read failed, in Portuguese; the raw error stays in it when the kind is not one this panel knows. */
+const failure = (v: Record<string, string>) => {
+  if (v.errorKind === 'github_status') {
+    return `o GitHub respondeu ${v.errorStatus}${v.errorDetail ? `: ${v.errorDetail}` : ''}`
+  }
+  if (v.errorKind === 'network') return `a conexão falhou: ${v.error}`
+  return v.error ?? ''
+}
+
+/** Why a recipe cannot be used, by kind. */
+const TYPES: Record<string, string> = {
+  string: 'um texto',
+  array: 'uma lista',
+  object: 'um objeto',
+  number: 'um número',
+  boolean: 'verdadeiro ou falso',
+}
+/** What a field has too few or too many of: the characters of a text, the items of a list. */
+const unitOf = (v: Record<string, string>, n: string) =>
+  v.origin === 'array'
+    ? `${n} ${n === '1' ? 'item' : 'itens'}`
+    : `${n} ${n === '1' ? 'caractere' : 'caracteres'}`
+
+/** The rule an invalid recipe broke, in Portuguese; the English reason for a rule not listed. */
+const RULES: Record<string, (v: Record<string, string>) => string> = {
+  type: (v) => `deve ser ${TYPES[v.expected ?? ''] ?? v.expected ?? 'de outro tipo'}`,
+  too_small: (v) => `deve ter ao menos ${unitOf(v, v.limit ?? '')}`,
+  too_big: (v) => `deve ter no máximo ${unitOf(v, v.limit ?? '')}`,
+  unknown_keys: (v) => `tem campos que a receita não conhece: ${v.keys}`,
+  hostname: () => 'não é um nome de host',
+}
+
+const RECIPE_WHY: Record<string, (v: Record<string, string>) => string> = {
+  not_json: (v) => {
+    const place = v.line
+      ? ` (linha ${v.line}, coluna ${v.column})`
+      : v.position
+        ? ` (posição ${v.position})`
+        : ''
+    return `ele não é um JSON válido${place}`
+  },
+  invalid: (v) => {
+    const rule = RULES[v.rule ?? '']
+    return rule ? `${v.at || 'o arquivo'} ${rule(v)}` : (v.detail ?? '')
+  },
+  status: (v) => `o GitHub respondeu ${v.detail} ao lê-lo`,
+}
 
 /** The panel's text in Brazilian Portuguese. Typed against English: a missing or extra key does not compile. */
 export const ptBR: Copy = {
@@ -255,7 +324,12 @@ export const ptBR: Copy = {
     say: {
       unknown: {
         cause: (v) =>
-          `Não sei: ${v.tried} falhou (${v.error}). Nada é dado como certo sem ter sido lido.`,
+          `Não sei: ${tried(v)} falhou (${failure(v)}). Nada é dado como certo sem ter sido lido.`,
+        repair: () => 'Verifique de novo daqui a pouco.',
+      },
+      unknown_unanswered: {
+        cause: (v) =>
+          `Não sei: ${tried(v)} falhou (o GitHub deixou isso de fora da resposta). Nada é dado como certo sem ter sido lido.`,
         repair: () => 'Verifique de novo daqui a pouco.',
       },
       issues_off: {
@@ -293,8 +367,8 @@ export const ptBR: Copy = {
       },
       auto_merge_off: {
         cause: (v) =>
-          `${v.integration} exige checks, então a fábrica espera por eles com o auto-merge, e ${v.repo} está com ${v.off} desligado.`,
-        repair: (v) => `Ligue ${v.turnOn} em Settings, General, Pull Requests.`,
+          `${v.integration} exige checks, então a fábrica espera por eles com o auto-merge, e ${v.repo} está com ${settingsOff(v).join(', ')} desligado.`,
+        repair: (v) => `Ligue ${settingsOff(v).join(' e ')} em Settings, General, Pull Requests.`,
       },
       ci_silent: {
         cause: (v) =>
@@ -321,7 +395,12 @@ export const ptBR: Copy = {
           'Antes de promover, ponha no package.json a versão que a release vai ter, ou publique com changesets.',
       },
       recipe_problem: {
-        cause: (v) => v.problem,
+        cause: (v) => {
+          const why = RECIPE_WHY[v.kind ?? '']
+          return why
+            ? `${v.repo}: ${v.path} na branch padrão não pode ser usado: ${why(v)}`
+            : (v.problem ?? '')
+        },
         repair: () =>
           'Corrija o .factory/setup.json na branch padrão: uma execução para pelo mesmo motivo.',
       },
@@ -336,7 +415,67 @@ export const ptBR: Copy = {
         repair: () =>
           'Ponha crédito no provedor de sandbox, ou corrija a chave dele no servidor. A tarefa tenta de novo sozinha quando o provedor aceitar.',
       },
+      ok_issues: { cause: () => 'As Issues estão ligadas.', repair: () => '' },
+      ok_app_access: {
+        cause: (v) => `O GitHub App alcança ${v.repo} com todas as permissões de que precisa.`,
+        repair: () => '',
+      },
+      ok_app_events: {
+        cause: () => 'O App assina todos os eventos que a fábrica lê.',
+        repair: () => '',
+      },
+      ok_branches: {
+        cause: () => 'As branches de integração e de pré-release existem.',
+        repair: () => '',
+      },
+      ok_label: { cause: () => 'O label "factory" existe.', repair: () => '' },
+      ok_auto_merge_free: {
+        cause: (v) =>
+          `${v.integration} não exige checks, então a fábrica faz o merge dos próprios pull requests.`,
+        repair: () => '',
+      },
+      ok_auto_merge_allowed: {
+        cause: (v) =>
+          `${v.integration} exige checks, e ${v.repo} permite auto-merge e commits de merge.`,
+        repair: () => '',
+      },
+      ok_ci_free: {
+        cause: (v) => `${v.integration} não exige nenhum check do repositório.`,
+        repair: () => '',
+      },
+      ok_ci_reported: {
+        cause: (v) => `Todo check exigido por ${v.integration} apareceu em um commit recente.`,
+        repair: () => '',
+      },
+      ok_checks_parity: {
+        cause: (v) => `Todo check exigido por ${v.integration} tem um check da fábrica.`,
+        repair: () => '',
+      },
+      ok_tag: {
+        cause: (v) =>
+          `tag: ${v.workflow} roda quando uma tag é criada, e o package.json em ${v.ref} está em ${v.version}, uma versão que a próxima tag pode ter.`,
+        repair: () => '',
+      },
+      ok_changesets: {
+        cause: (v) =>
+          `changesets: .changeset/config.json está em ${v.ref}, então o workflow de release de ${v.repo} cria as próprias tags.`,
+        repair: () => '',
+      },
+      ok_none: {
+        cause: (v) =>
+          `none: ${v.repo} não tem .changeset/config.json nem workflow que rode numa tag, então a fábrica cria as tags de release e nada mais é publicado.`,
+        repair: () => '',
+      },
+      ok_recipe: {
+        cause: () => 'A receita não tem problema nem domínio esperando aprovação.',
+        repair: () => '',
+      },
+      ok_sandbox: {
+        cause: () => 'O provedor de sandbox não recusou a última execução.',
+        repair: () => '',
+      },
     },
+    tried: TRIED,
   },
   assist: {
     label: {

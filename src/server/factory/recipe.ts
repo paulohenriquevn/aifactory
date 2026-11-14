@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import type { RecipeWhy } from '../../shared/doctor-say'
 import type { FetchLike } from '../github/app'
 
 import type { CheckSpec } from './evidence'
@@ -37,9 +38,41 @@ const schema = z
 
 /** The recipe of a project could not be used. The run stops and says why, so the file gets fixed. */
 export class RecipeError extends Error {
-  constructor(repo: string, reason: string) {
+  /** The reason as parts, for a reader that says it in another language. */
+  readonly why: RecipeWhy
+
+  constructor(repo: string, reason: string, why: Omit<RecipeWhy, 'repo' | 'path'>) {
     super(`${repo}: ${RECIPE_PATH} on the default branch cannot be used: ${reason}`)
     this.name = 'RecipeError'
+    this.why = { ...why, repo, path: RECIPE_PATH }
+  }
+}
+
+/** Where the parser says the text breaks, when it says: `position 1`, and `(line 1 column 2)` on newer Node. */
+function jsonPosition(detail: string): Partial<RecipeWhy> {
+  const position = /position (\d+)/.exec(detail)?.[1]
+  const place = /line (\d+) column (\d+)/.exec(detail)
+  return {
+    ...(position ? { position } : {}),
+    ...(place ? { line: place[1], column: place[2] } : {}),
+  }
+}
+
+/** The rule a Zod issue says was broken, with the numbers and names the sentence needs. */
+function ruleOf(issue: z.core.$ZodIssue): Partial<RecipeWhy> {
+  switch (issue.code) {
+    case 'invalid_type':
+      return { rule: 'type', expected: issue.expected }
+    case 'too_small':
+      return { rule: 'too_small', limit: String(issue.minimum), origin: issue.origin }
+    case 'too_big':
+      return { rule: 'too_big', limit: String(issue.maximum), origin: issue.origin }
+    case 'unrecognized_keys':
+      return { rule: 'unknown_keys', keys: issue.keys.join(', ') }
+    case 'invalid_format':
+      return { rule: 'hostname' }
+    default:
+      return {}
   }
 }
 
@@ -48,12 +81,23 @@ export function parseRecipe(repo: string, text: string): Recipe {
   try {
     value = JSON.parse(text)
   } catch (error) {
-    throw new RecipeError(repo, `it is not JSON (${(error as Error).message})`)
+    const detail = (error as Error).message
+    throw new RecipeError(repo, `it is not JSON (${detail})`, {
+      kind: 'not_json',
+      detail,
+      ...jsonPosition(detail),
+    })
   }
   const parsed = schema.safeParse(value)
   if (!parsed.success) {
     const issue = parsed.error.issues[0]
-    throw new RecipeError(repo, `${issue.path.join('.') || 'the file'} ${issue.message}`)
+    const at = issue.path.join('.')
+    throw new RecipeError(repo, `${at || 'the file'} ${issue.message}`, {
+      kind: 'invalid',
+      detail: at ? `${at} ${issue.message}` : issue.message,
+      at,
+      ...ruleOf(issue),
+    })
   }
   return parsed.data
 }
@@ -73,7 +117,10 @@ export async function readRecipe(
   })
   if (response.status === 404) return undefined
   if (response.status !== 200) {
-    throw new RecipeError(repo, `GitHub answered ${response.status} reading it`)
+    throw new RecipeError(repo, `GitHub answered ${response.status} reading it`, {
+      kind: 'status',
+      detail: String(response.status),
+    })
   }
   return parseRecipe(repo, await response.text())
 }

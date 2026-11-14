@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { ptBR } from '../../app/lib/copy/pt-BR'
+import { DOCTOR_SAY_CODES, DOCTOR_SAY_EN, DOCTOR_TRIED_CODES } from '../../shared/doctor-say'
+
 import {
   appAccessItem,
   appEventsItem,
@@ -8,6 +11,7 @@ import {
   checksParityItem,
   ciSilentItem,
   diagnose,
+  failureOf,
   DOCTOR_ITEMS,
   issuesItem,
   labelItem,
@@ -20,10 +24,13 @@ import {
   repairRefusal,
   runsOnTag,
   sandboxItem,
+  triedOf,
+  triedText,
   unread,
   type DoctorFacts,
   type PublishFacts,
 } from './doctor'
+import { parseRecipe, type RecipeError } from './recipe'
 
 const REPO = 'o/r'
 const down = unread('reading o/r', 'GitHub answered 502 reading o/r: ')
@@ -66,6 +73,7 @@ describe('issues_disabled', () => {
       cause: 'Issues are on.',
       repair: '',
       canRepair: false,
+      say: { code: 'ok_issues', values: {} },
     })
   })
 
@@ -159,6 +167,7 @@ describe('app_events', () => {
       cause: 'The App subscribes to every event the factory reads.',
       repair: '',
       canRepair: false,
+      say: { code: 'ok_app_events', values: {} },
     })
   })
 
@@ -260,8 +269,7 @@ describe('auto_merge', () => {
         values: {
           integration: 'workspace',
           repo: 'o/r',
-          off: '"Allow auto-merge"',
-          turnOn: '"Allow auto-merge"',
+          autoMerge: 'off',
         },
       },
     })
@@ -283,6 +291,16 @@ describe('auto_merge', () => {
       settings({ allowAutoMerge: false, allowMergeCommit: false }),
     )
     expect(both.cause).toContain('has "Allow auto-merge", "Allow merge commits" turned off.')
+    // Each setting is sent apart, so a language joins them with its own word.
+    expect(both.say?.values).toEqual({
+      integration: 'workspace',
+      repo: 'o/r',
+      autoMerge: 'off',
+      mergeCommit: 'off',
+    })
+    expect(ptBR.doctor.say.auto_merge_off.repair(both.say!.values)).toBe(
+      'Ligue "Allow auto-merge" e "Allow merge commits" em Settings, General, Pull Requests.',
+    )
   })
 
   it('is fine when checks are required and both settings are on', () => {
@@ -482,6 +500,7 @@ describe('publish_mode', () => {
         'changesets: .changeset/config.json is on develop, so the release workflow of o/r tags its own releases.',
       repair: '',
       canRepair: false,
+      say: { code: 'ok_changesets', values: { ref: 'develop', repo: 'o/r' } },
     })
   })
 
@@ -549,6 +568,67 @@ describe('publish_mode', () => {
 
   it('is unknown when the repository could not be read', () => {
     expectUnknown(publishItem(REPO, down))
+  })
+})
+
+describe('a recipe that is invalid, said in Portuguese from what the validator found', () => {
+  const url = 'https://github.com/o/r/blob/main/.factory/setup.json'
+  const cause = (recipe: unknown) => {
+    try {
+      parseRecipe(REPO, JSON.stringify(recipe))
+    } catch (error) {
+      const item = recipeItem(
+        readOf({
+          problem: (error as Error).message,
+          why: (error as RecipeError).why,
+          pending: [],
+          url,
+        }),
+      )
+      return ptBR.doctor.say.recipe_problem.cause(item.say!.values)
+    }
+    throw new Error('the recipe was accepted')
+  }
+  const at = 'o/r: .factory/setup.json na branch padrão não pode ser usado:'
+
+  it('names the field and the rule with no English from the validator', () => {
+    expect(cause({ install: 5 })).toBe(`${at} install deve ser um texto`)
+    expect(cause({ install: '' })).toBe(`${at} install deve ter ao menos 1 caractere`)
+    expect(cause({ install: 'x'.repeat(601) })).toBe(
+      `${at} install deve ter no máximo 600 caracteres`,
+    )
+    expect(cause({ checks: [] })).toBe(`${at} checks deve ter ao menos 1 item`)
+    expect(cause({ egress: ['https://x.org'] })).toBe(`${at} egress.0 não é um nome de host`)
+    expect(cause({ network: 'all' })).toBe(
+      `${at} o arquivo tem campos que a receita não conhece: network`,
+    )
+    expect(cause([])).toBe(`${at} o arquivo deve ser um objeto`)
+  })
+})
+
+describe('how a read failed', () => {
+  it('tells a status from GitHub, a broken connection and anything else apart', () => {
+    expect(failureOf('GitHub answered 502 reading the App')).toEqual({
+      kind: 'github_status',
+      status: '502',
+      detail: '',
+    })
+    expect(failureOf('GitHub answered 403 listing o/r: Resource not accessible')).toEqual({
+      kind: 'github_status',
+      status: '403',
+      detail: 'Resource not accessible',
+    })
+    expect(failureOf('fetch failed')).toEqual({ kind: 'network' })
+    expect(failureOf('relation "x" does not exist')).toEqual({ kind: 'other' })
+  })
+
+  it('sends the kind and the status with an item it could not read, and keeps the raw error', () => {
+    const item = labelItem(REPO, unread('reading the labels of o/r', 'GitHub answered 502 reading'))
+    expect(item.say?.values).toMatchObject({
+      errorKind: 'github_status',
+      errorStatus: '502',
+      error: 'GitHub answered 502 reading',
+    })
   })
 })
 
@@ -709,6 +789,12 @@ describe('the report', () => {
       'sandbox',
     ])
     expect(items.map((i) => i.status)).toEqual(items.map(() => 'ok'))
+    // The sentence of a fine item has a code too, and the code makes the same English sentence.
+    for (const item of items) {
+      expect(item.say).toBeDefined()
+      expect(DOCTOR_SAY_CODES).toContain(item.say?.code)
+      expect(DOCTOR_SAY_EN[item.say!.code].cause(item.say!.values)).toBe(item.cause)
+    }
   })
 
   it('gives each item the facts that are its own', () => {
@@ -796,7 +882,13 @@ describe('the sentences of an item that is not fine', () => {
     const item = labelItem(REPO, unread('reading the labels of o/r', 'GitHub answered 502'))
     expect(item.say).toEqual({
       code: 'unknown',
-      values: { tried: 'reading the labels of o/r', error: 'GitHub answered 502' },
+      values: {
+        tried: 'reading the labels of o/r',
+        error: 'GitHub answered 502',
+        errorKind: 'github_status',
+        errorStatus: '502',
+        errorDetail: '',
+      },
     })
     expect(item.cause).toBe(
       'Not known: reading the labels of o/r failed (GitHub answered 502). Nothing is assumed to be fine.',
@@ -823,7 +915,45 @@ describe('the sentences of an item that is not fine', () => {
     )
   })
 
-  it('sends no code with an item that is fine', () => {
-    expect(labelItem(REPO, readOf(true)).say).toBeUndefined()
+  it('sends a code, and no repair, with an item that is fine', () => {
+    expect(labelItem(REPO, readOf(true))).toMatchObject({
+      repair: '',
+      say: { code: 'ok_label', values: {} },
+    })
+  })
+
+  it('names what was tried by a code and its values, so the panel can say it in its language', () => {
+    const what = triedOf('labels', { repo: 'o/r' })
+    const item = labelItem(REPO, unread(triedText(what), 'GitHub answered 502', what))
+    expect(item.say).toEqual({
+      code: 'unknown',
+      values: {
+        tried: 'reading the labels of o/r',
+        what: 'labels',
+        repo: 'o/r',
+        error: 'GitHub answered 502',
+        errorKind: 'github_status',
+        errorStatus: '502',
+        errorDetail: '',
+      },
+    })
+  })
+
+  it('has an English phrase for every thing it tries to read', () => {
+    const values = { repo: 'o/r', integration: 'develop', path: '.factory/setup.json' }
+    for (const code of DOCTOR_TRIED_CODES) {
+      expect(triedText(triedOf(code, values))).toMatch(/^(reading|minting)/)
+    }
+  })
+
+  it('sends the kind and the parts of a recipe that cannot be used', () => {
+    const why = { kind: 'status' as const, repo: 'o/r', path: '.factory/setup.json', detail: '502' }
+    const item = recipeItem(
+      readOf({ problem: 'o/r: it failed', why, pending: [], url: 'https://x' }),
+    )
+    expect(item.say).toEqual({
+      code: 'recipe_problem',
+      values: { problem: 'o/r: it failed', ...why },
+    })
   })
 })
