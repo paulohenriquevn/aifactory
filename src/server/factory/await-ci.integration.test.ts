@@ -70,6 +70,7 @@ beforeEach(async () => {
     'truncate table publication, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
   )
   api = new FakeGithub()
+  asked = new Map()
   repo().prepare().required.set('workspace', ['CI'])
   pull()
   reports({ name: 'CI', state: 'pending', detail: '', url: 'u' })
@@ -105,8 +106,10 @@ const checks: EvidenceApi = {
   },
 }
 
+let asked = new Map<string, number>()
 const deps = (over: Partial<AwaitCiDeps> = {}): AwaitCiDeps => ({
   db: getDb(),
+  reruns: asked,
   github: {
     installationToken: async () => ({ token: 't', expiresAt: new Date() }),
   } as unknown as GithubApp,
@@ -361,7 +364,7 @@ describe('pollAwaitingIntegrations', () => {
     expect(gh.reruns).toEqual([10, 20])
   })
 
-  it('names the step alone when the log has no error line, and a check the factory does not run', async () => {
+  it('names the step alone when the log has no error line', async () => {
     const link = 'https://github.com/paulo/app/actions/runs/431/job/1308'
     reports({ name: 'no re-consumed changesets', state: 'failure', detail: '', url: link })
     repo().required.set('workspace', ['no re-consumed changesets'])
@@ -374,7 +377,8 @@ describe('pollAwaitingIntegrations', () => {
     expect(await pollAwaitingIntegrations(deps())).toMatchObject({ sentBack: [id] })
 
     const { note } = sentBack[0]
-    expect(note).toContain('no check of the factory matches it')
+    // The factory's checks are not known here (no owner checks set), so nothing is claimed about them.
+    expect(note).not.toContain('no check of the factory matches it')
     expect(note).toContain('Step that exited: node scripts/check-changesets.mjs')
   })
 
@@ -517,6 +521,56 @@ describe('pollAwaitingIntegrations', () => {
         body: expect.stringMatching(/still fail after 3 automatic runs: CI[\s\S]*pull\/12/),
       },
     ])
+  })
+
+  it('reruns a flaky job before handing to a person, and hands over with the log line when it fails again', async () => {
+    const link = 'https://github.com/paulo/app/actions/runs/431/job/1308'
+    reports({ name: 'CI', state: 'failure', detail: '', url: link })
+    gh.failedRuns = [{ id: 1308, name: 'CI', url: link, summary: '', actions: true }]
+    gh.logs = { 1308: 'ERROR: "quality:loc" exited with 1.' }
+    gh.attempts = { 1308: 1 }
+    const id = await waitingTask({ automaticRuns: 3 })
+
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ rerun: [id], toPerson: [] })
+    expect(gh.reruns).toEqual([13080])
+
+    gh.attempts = { 1308: 2 }
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ toPerson: [id] })
+    expect((await events(id)).at(-1)!.detail).toMatchObject({
+      reason: expect.stringContaining('ERROR: "quality:loc" exited with 1.'),
+    })
+  })
+
+  it('waits for a rerun it asked for instead of asking again, and keeps what failed for others', async () => {
+    const a = 'https://github.com/paulo/app/actions/runs/500/job/1'
+    reports({ name: 'CI', state: 'failure', detail: '', url: a })
+    gh.failedRuns = [{ id: 1, name: 'CI', url: a, summary: '', actions: true }]
+    gh.attempts = { 1: 1 }
+    const id = await waitingTask()
+
+    await pollAwaitingIntegrations(deps())
+    // The old failure is still what GitHub reports while the rerun is queued.
+    gh.rerunRefusal = 'GitHub answered 403 rerunning'
+    const again = await pollAwaitingIntegrations(deps())
+
+    expect(again).toMatchObject({ rerun: [id], sentBack: [], errors: [] })
+    expect(gh.reruns).toEqual([10])
+  })
+
+  it('leaves an unrelated failed workflow alone', async () => {
+    const a = 'https://github.com/paulo/app/actions/runs/500/job/1'
+    reports({ name: 'CI', state: 'failure', detail: '', url: a })
+    gh.failedRuns = [
+      { id: 1, name: 'CI', url: a, summary: '', actions: true },
+      { id: 2, name: 'Deploy docs', url: a, summary: '', actions: true },
+    ]
+    gh.logs = { 1: 'FAIL src/a.test.ts', 2: 'FAIL docs' }
+    gh.attempts = { 1: 1, 2: 1 }
+    await waitingTask()
+
+    await pollAwaitingIntegrations(deps())
+
+    expect(gh.reruns).toEqual([10])
   })
 
   it('stops auto-merge and hands to a person a pull request someone pushed to', async () => {

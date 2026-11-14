@@ -3,20 +3,21 @@ import { and, desc, eq, isNotNull } from 'drizzle-orm'
 import type { Database } from '../db'
 import { review, stageEvent, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
-import type { GithubApi } from '../github/pulls'
+import type { CheckReport, GithubApi } from '../github/pulls'
 import { automaticRunsSincePerson } from '../panel/queries'
 
 import { integrationBranch } from './branches'
-import { attachEvidence, rerunTransient, type EvidenceApi } from './check-evidence'
+import { attachEvidence, rerunTransient, type EvidenceApi, type RerunMemo } from './check-evidence'
 import {
   checksFeedback,
   decideWaitingIntegration,
+  evidenceOfNote,
   type FailedReport,
   type WaitingStep,
 } from './ci-wait'
 import { createPreRelease, type ReleaseMode } from './deliver'
 import { counterpart } from './doctor'
-import { DEFAULT_CHECKS, type CheckSpec } from './evidence'
+import type { CheckSpec } from './evidence'
 import {
   advancePreRelease,
   describeDelivery,
@@ -35,6 +36,8 @@ export type AwaitCiDeps = {
   /** The factory's release mode, for a repository that sets none. */
   releaseMode: ReleaseMode | undefined
   now?: () => Date
+  /** The reruns already asked for, so the next pass waits for them; the process's own by default. */
+  reruns?: RerunMemo
   /** Runs the task again on its branch with the note as feedback (the panel's `sendBackAutomatically`). */
   sendBack: (taskId: number, note: string) => Promise<void>
   /** Runs the task again from the new base (the panel's `retryAutomatically`). */
@@ -180,12 +183,56 @@ async function toPerson(
   return true
 }
 
-/** The failed required checks no check of the factory's answers for, marked so the note says it. */
+/**
+ * The failed required checks no check of the factory's answers for, marked so the note says it. Only the
+ * owner's own checks are known here: a repository that leaves them to its recipe is not claimed about, and the
+ * changeset check and the install step are the factory's too.
+ */
 function aloneAmong(failed: FailedReport[], checks: CheckSpec[] | undefined): FailedReport[] {
-  const names = (checks ?? DEFAULT_CHECKS).map((check) => check.name)
+  if (!checks) return failed
+  const names = [...checks.map((check) => check.name), 'changeset', 'install']
   return failed.map((r) =>
     r.notRequired || names.some((name) => counterpart(r.name, name)) ? r : { ...r, alone: true },
   )
+}
+
+/** The reruns this process asked for, which the next pass waits for. */
+const requestedReruns: RerunMemo = new Map()
+
+/**
+ * What a failed required check says when it is not of the work, or is: nothing when its failed jobs were
+ * rerun (the next pass sees the second attempt), otherwise the note with what the log says and the step that
+ * exited, and what kept a rerun from being tried.
+ */
+async function readFailure(
+  deps: AwaitCiDeps,
+  w: Waiting,
+  reports: CheckReport[],
+  checks: CheckSpec[] | undefined,
+  result: AwaitCiResult,
+): Promise<string | undefined> {
+  const { row, token, verifiedSha } = w
+  const rerun = await rerunTransient(
+    deps.checks,
+    row.repository,
+    token,
+    verifiedSha,
+    reports,
+    deps.reruns ?? requestedReruns,
+    deps.now?.(),
+  )
+  for (const problem of rerun.problems) result.errors.push(`task ${row.id}: ${problem}`)
+  if (rerun.started > 0) {
+    result.rerun.push(row.id)
+    return undefined
+  }
+  const failed = await attachEvidence(deps.checks, row.repository, token, verifiedSha, reports)
+  for (const check of failed) {
+    if (check.evidence && 'unreadable' in check.evidence) {
+      result.unreadEvidence.push(`task ${row.id}: ${check.name}: ${check.evidence.unreadable}`)
+    }
+  }
+  return checksFeedback(verifiedSha, aloneAmong(failed, checks), rerun.problems.join('; '))
 }
 
 async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: AwaitCiResult) {
@@ -229,31 +276,11 @@ async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: Aw
       if (await finish(deps, w, step.mergedSha)) result.merged.push(row.id)
       return
     case 'send_back': {
-      // A failure that is not of the work passes on a rerun: nothing goes back before that.
-      const rerun = await rerunTransient(deps.checks, row.repository, token, verifiedSha)
-      if (rerun.started > 0) {
-        result.rerun.push(row.id)
-        return
-      }
-      for (const problem of rerun.problems) result.errors.push(`task ${row.id}: ${problem}`)
-      const failed = await attachEvidence(
-        deps.checks,
-        row.repository,
-        token,
-        verifiedSha,
-        step.reports,
-      )
-      for (const check of failed) {
-        if (check.evidence && 'unreadable' in check.evidence) {
-          result.unreadEvidence.push(`task ${row.id}: ${check.name}: ${check.evidence.unreadable}`)
-        }
-      }
+      const note = await readFailure(deps, w, step.reports, repo.checks, result)
+      if (note === undefined) return
       // Off first: the new commit the agent pushes must not merge before the factory verifies it.
       await deps.api.disableAutoMerge(row.repository, token, number)
-      await deps.sendBack(
-        row.id,
-        checksFeedback(verifiedSha, aloneAmong(failed, repo.checks), rerun.problems.join('; ')),
-      )
+      await deps.sendBack(row.id, note)
       result.sentBack.push(row.id)
       return
     }
@@ -262,8 +289,16 @@ async function look(deps: AwaitCiDeps, row: typeof task.$inferSelect, result: Aw
       await deps.startOver(row.id)
       result.startedOver.push(row.id)
       return
-    case 'person':
-      if (await toPerson(deps, w, step)) result.toPerson.push(row.id)
+    case 'person': {
+      let said = step
+      if (step.reports) {
+        // Checks that still fail get the same rerun and evidence before a person is told.
+        const note = await readFailure(deps, w, step.reports, repo.checks, result)
+        if (note === undefined) return
+        said = { ...step, reason: `${step.reason}\n\n${evidenceOfNote(note)}`.slice(0, 3_000) }
+      }
+      if (await toPerson(deps, w, said)) result.toPerson.push(row.id)
+    }
   }
 }
 

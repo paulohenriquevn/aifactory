@@ -146,6 +146,7 @@ describe('decideWaitingIntegration', () => {
       kind: 'person',
       reason: expect.stringMatching(/required checks still fail after 3 automatic runs: CI/),
       stopAutoMerge: true,
+      reports: [report('CI', 'failure')],
     })
   })
 

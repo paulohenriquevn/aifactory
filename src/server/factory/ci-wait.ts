@@ -47,7 +47,7 @@ export type WaitingStep =
   | { kind: 'send_back'; failed: string[]; reports: CheckReport[] }
   /** The pull request conflicts with its base: the task starts again from the new base. */
   | { kind: 'start_over'; reason: string }
-  | { kind: 'person'; reason: string; stopAutoMerge: boolean }
+  | { kind: 'person'; reason: string; stopAutoMerge: boolean; reports?: CheckReport[] }
 
 export type WaitingIntegration = {
   /** The commit the factory verified and reviewed: the only one it lets merge. */
@@ -151,6 +151,7 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
         kind: 'person',
         reason: `the required checks still fail after ${runs}: ${failed.join(', ')}`,
         stopAutoMerge: true,
+        reports: failed.map((name) => failedRun(input.reports, name)!),
       }
     }
     const reports = failed.map((name) => failedRun(input.reports, name)!)
