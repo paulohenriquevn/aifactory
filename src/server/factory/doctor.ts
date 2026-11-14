@@ -6,7 +6,14 @@ import {
   type DoctorItemId,
   type PublishMode,
 } from '../../shared/panel'
-import { DOCTOR_SAY_EN, type DoctorSayCode, type DoctorSayValues } from '../../shared/doctor-say'
+import {
+  DOCTOR_SAY_EN,
+  DOCTOR_TRIED_EN,
+  type DoctorSayCode,
+  type DoctorSayValues,
+  type DoctorTried,
+  type RecipeWhyKind,
+} from '../../shared/doctor-say'
 import type { RepositorySettings } from '../github/pulls'
 import { missingRoutedEvents } from '../ingest/decide'
 
@@ -20,12 +27,25 @@ import { highestVersion, nextVersion } from './release'
  */
 
 /** Something the collector tried to read and could not, with what was being done and what came back. */
-export type Unread = { read: false; tried: string; error: string }
+export type Unread = { read: false; tried: string; error: string; what?: DoctorTried }
 /** A fact as the collector hands it over: read, or not. */
 export type Read<T> = { read: true; value: T } | Unread
 
 export const readOf = <T>(value: T): Read<T> => ({ read: true, value })
-export const unread = (tried: string, error: string): Unread => ({ read: false, tried, error })
+export const unread = (tried: string, error: string, what?: DoctorTried): Unread => ({
+  read: false,
+  tried,
+  error,
+  ...(what ? { what } : {}),
+})
+
+/** Something to read, named by a code so the panel can say it in the owner's language. */
+export const triedOf = (code: DoctorTried['code'], values: DoctorSayValues = {}): DoctorTried => ({
+  code,
+  values,
+})
+/** What was tried, in English: what the API says in `cause`. */
+export const triedText = (what: DoctorTried) => DOCTOR_TRIED_EN[what.code](what.values)
 
 /** The check run the factory reports on a commit it verified. */
 export const FACTORY_CHECK_RUN = 'aifactory/verify'
@@ -78,6 +98,8 @@ export type EventsFacts = { events: string[]; settingsUrl: string; owner?: strin
 export type RecipeFacts = {
   /** Why the recipe cannot be used. */
   problem?: string
+  /** The same reason as a kind and its parts, so the panel can say it in the owner's language. */
+  why?: { kind: RecipeWhyKind; repo: string; path: string; detail: string }
   /** Domains the recipe asks for that the owner has not approved. */
   pending: string[]
   /** The recipe file on GitHub. */
@@ -132,20 +154,26 @@ const problem = (
   say: { code, values },
 })
 
-const unknownItem = (id: DoctorItemId, { tried, error }: Unread): DoctorItem =>
-  problem(id, 'unknown', 'unknown', { tried, error })
+const unknownItem = (id: DoctorItemId, { tried, error, what }: Unread): DoctorItem =>
+  problem(id, 'unknown', 'unknown', {
+    tried,
+    error,
+    ...(what ? { what: what.code, ...what.values } : {}),
+  })
 
-const fine = (id: DoctorItemId, cause: string): DoctorItem => ({
+/** An item that is fine: its sentence has a code too, though the panel shows nothing for it. */
+const fine = (id: DoctorItemId, code: DoctorSayCode, values: DoctorSayValues = {}): DoctorItem => ({
   id,
   status: 'ok',
-  cause,
+  cause: DOCTOR_SAY_EN[code].cause(values),
   repair: '',
   canRepair: false,
+  say: { code, values },
 })
 
 export function issuesItem(repo: string, settings: Read<RepositorySettings>): DoctorItem {
   if (!settings.read) return unknownItem('issues_disabled', settings)
-  if (settings.value.hasIssues) return fine('issues_disabled', 'Issues are on.')
+  if (settings.value.hasIssues) return fine('issues_disabled', 'ok_issues')
   return problem(
     'issues_disabled',
     'blocked',
@@ -173,7 +201,7 @@ export function appAccessItem(repo: string, access: Read<AccessFacts>): DoctorIt
     .filter(([name, level]) => !covers(granted[name], level))
     .map(([name, level]) => `${name}: ${level}`)
   if (lacking.length === 0) {
-    return fine('app_access', `The GitHub App reaches ${repo} with every permission it needs.`)
+    return fine('app_access', 'ok_app_access', { repo })
   }
   return problem(
     'app_access',
@@ -188,7 +216,7 @@ export function appEventsItem(events: Read<EventsFacts>): DoctorItem {
   if (!events.read) return unknownItem('app_events', events)
   const missing = missingRoutedEvents(events.value.events)
   if (missing.length === 0) {
-    return fine('app_events', 'The App subscribes to every event the factory reads.')
+    return fine('app_events', 'ok_app_events')
   }
   return problem(
     'app_events',
@@ -203,7 +231,7 @@ export function branchesItem(repo: string, branches: Read<{ missing: string[] }>
   if (!branches.read) return unknownItem('branches', branches)
   const { missing } = branches.value
   if (missing.length === 0) {
-    return fine('branches', 'The integration and pre-release branches exist.')
+    return fine('branches', 'ok_branches')
   }
   return problem(
     'branches',
@@ -216,7 +244,7 @@ export function branchesItem(repo: string, branches: Read<{ missing: string[] }>
 
 export function labelItem(repo: string, label: Read<boolean>): DoctorItem {
   if (!label.read) return unknownItem('label', label)
-  if (label.value) return fine('label', 'The "factory" label exists.')
+  if (label.value) return fine('label', 'ok_label')
   return problem(
     'label',
     'warn',
@@ -242,10 +270,7 @@ export function autoMergeItem(
   if (!required.read) return unknownItem('auto_merge', required)
   if (!settings.read) return unknownItem('auto_merge', settings)
   if (required.value.length === 0) {
-    return fine(
-      'auto_merge',
-      `${integration} requires no status check, so the factory merges its pull requests itself.`,
-    )
+    return fine('auto_merge', 'ok_auto_merge_free', { integration })
   }
   const { allowAutoMerge, allowMergeCommit } = settings.value
   const off = [
@@ -262,15 +287,14 @@ export function autoMergeItem(
     )
   }
   if (allowAutoMerge === undefined || allowMergeCommit === undefined) {
-    return unknownItem(
-      'auto_merge',
-      unread(`reading the merge settings of ${repo}`, 'GitHub left them out of its answer'),
-    )
+    const what = triedOf('merge_settings', { repo })
+    return problem('auto_merge', 'unknown', 'unknown_unanswered', {
+      tried: triedText(what),
+      what: what.code,
+      ...what.values,
+    })
   }
-  return fine(
-    'auto_merge',
-    `${integration} requires status checks, and ${repo} allows auto-merge and merge commits.`,
-  )
+  return fine('auto_merge', 'ok_auto_merge_allowed', { integration, repo })
 }
 
 /** The required checks that are the repository's own: the factory reports its own check itself. */
@@ -293,12 +317,12 @@ export function ciSilentItem(
   if (!recent.read) return unknownItem('ci_silent', recent)
   const wanted = ofTheRepository(required.value)
   if (wanted.length === 0) {
-    return fine('ci_silent', `${integration} requires no check of the repository.`)
+    return fine('ci_silent', 'ok_ci_free', { integration })
   }
   const { commits, pullRequests } = recent.value
   const silent = wanted.filter((name) => !commits.some((commit) => commit.checks.includes(name)))
   if (silent.length === 0) {
-    return fine('ci_silent', `Every required check of ${integration} reported on a recent commit.`)
+    return fine('ci_silent', 'ok_ci_reported', { integration })
   }
   // With no pull request to look at, a workflow that runs only on pull requests looks silent too.
   return problem(
@@ -337,10 +361,7 @@ export function checksParityItem(
     (name) => !factoryChecks.value.some((check) => counterpart(name, check)),
   )
   if (alone.length === 0) {
-    return fine(
-      'checks_parity',
-      `Every required check of ${integration} has a check of the factory.`,
-    )
+    return fine('checks_parity', 'ok_checks_parity', { integration })
   }
   return problem(
     'checks_parity',
@@ -408,10 +429,7 @@ function tagItem(repo: string, publish: PublishFacts): DoctorItem {
   }
   const next = nextTags(publish.versionTags)
   if (next.includes(`v${version}`)) {
-    return fine(
-      'publish_mode',
-      `tag: ${workflow} runs on a tag, and package.json on ${publish.ref} is at ${version}, a version the next tag may have.`,
-    )
+    return fine('publish_mode', 'ok_tag', { workflow, ref: publish.ref, version })
   }
   return problem(
     'publish_mode',
@@ -426,26 +444,26 @@ export function publishItem(repo: string, publish: Read<PublishFacts>): DoctorIt
   if (!publish.read) return unknownItem('publish_mode', publish)
   const mode = publishMode(publish.value)
   if (mode === 'changesets') {
-    return fine(
-      'publish_mode',
-      `changesets: .changeset/config.json is on ${publish.value.ref}, so the release workflow of ${repo} tags its own releases.`,
-    )
+    return fine('publish_mode', 'ok_changesets', { ref: publish.value.ref, repo })
   }
   if (mode === 'tag') return tagItem(repo, publish.value)
-  return fine(
-    'publish_mode',
-    `none: ${repo} has no .changeset/config.json and no workflow that runs on a tag, so the factory tags its releases and nothing else is published.`,
-  )
+  return fine('publish_mode', 'ok_none', { repo })
 }
 
 export function recipeItem(recipe: Read<RecipeFacts>): DoctorItem {
   if (!recipe.read) return unknownItem('recipe', recipe)
-  const { problem: reason, pending, url } = recipe.value
+  const { problem: reason, why, pending, url } = recipe.value
   if (reason !== undefined) {
-    return problem('recipe', 'blocked', 'recipe_problem', { problem: reason }, { link: url })
+    return problem(
+      'recipe',
+      'blocked',
+      'recipe_problem',
+      { problem: reason, ...why },
+      { link: url },
+    )
   }
   if (pending.length === 0) {
-    return fine('recipe', 'The recipe has no problem and no domain waiting for approval.')
+    return fine('recipe', 'ok_recipe')
   }
   return problem(
     'recipe',
@@ -474,7 +492,7 @@ export function sandboxItem(sandbox: Read<SandboxFacts>): DoctorItem {
   const { refusal, lastStartedAt } = sandbox.value
   // With no start to compare, the date is not a number and nothing is at or after the refusal.
   if (!refusal || Date.parse(lastStartedAt ?? '') >= Date.parse(refusal.at)) {
-    return fine('sandbox', 'The sandbox provider has not refused the latest run.')
+    return fine('sandbox', 'ok_sandbox')
   }
   return problem(
     'sandbox',

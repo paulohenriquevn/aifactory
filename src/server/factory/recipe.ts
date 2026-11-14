@@ -37,9 +37,22 @@ const schema = z
 
 /** The recipe of a project could not be used. The run stops and says why, so the file gets fixed. */
 export class RecipeError extends Error {
-  constructor(repo: string, reason: string) {
+  /** The reason as a kind and its detail, for a reader that says it in another language. */
+  readonly why: {
+    kind: 'not_json' | 'invalid' | 'status'
+    repo: string
+    path: string
+    detail: string
+  }
+
+  constructor(
+    repo: string,
+    reason: string,
+    why: { kind: 'not_json' | 'invalid' | 'status'; detail: string },
+  ) {
     super(`${repo}: ${RECIPE_PATH} on the default branch cannot be used: ${reason}`)
     this.name = 'RecipeError'
+    this.why = { ...why, repo, path: RECIPE_PATH }
   }
 }
 
@@ -48,12 +61,19 @@ export function parseRecipe(repo: string, text: string): Recipe {
   try {
     value = JSON.parse(text)
   } catch (error) {
-    throw new RecipeError(repo, `it is not JSON (${(error as Error).message})`)
+    throw new RecipeError(repo, `it is not JSON (${(error as Error).message})`, {
+      kind: 'not_json',
+      detail: (error as Error).message,
+    })
   }
   const parsed = schema.safeParse(value)
   if (!parsed.success) {
     const issue = parsed.error.issues[0]
-    throw new RecipeError(repo, `${issue.path.join('.') || 'the file'} ${issue.message}`)
+    const at = issue.path.join('.')
+    throw new RecipeError(repo, `${at || 'the file'} ${issue.message}`, {
+      kind: 'invalid',
+      detail: at ? `${at} ${issue.message}` : issue.message,
+    })
   }
   return parsed.data
 }
@@ -73,7 +93,10 @@ export async function readRecipe(
   })
   if (response.status === 404) return undefined
   if (response.status !== 200) {
-    throw new RecipeError(repo, `GitHub answered ${response.status} reading it`)
+    throw new RecipeError(repo, `GitHub answered ${response.status} reading it`, {
+      kind: 'status',
+      detail: String(response.status),
+    })
   }
   return parseRecipe(repo, await response.text())
 }

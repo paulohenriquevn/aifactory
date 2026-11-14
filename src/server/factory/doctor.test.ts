@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import { DOCTOR_SAY_CODES, DOCTOR_SAY_EN, DOCTOR_TRIED_CODES } from '../../shared/doctor-say'
+
 import {
   appAccessItem,
   appEventsItem,
@@ -20,6 +22,8 @@ import {
   repairRefusal,
   runsOnTag,
   sandboxItem,
+  triedOf,
+  triedText,
   unread,
   type DoctorFacts,
   type PublishFacts,
@@ -66,6 +70,7 @@ describe('issues_disabled', () => {
       cause: 'Issues are on.',
       repair: '',
       canRepair: false,
+      say: { code: 'ok_issues', values: {} },
     })
   })
 
@@ -159,6 +164,7 @@ describe('app_events', () => {
       cause: 'The App subscribes to every event the factory reads.',
       repair: '',
       canRepair: false,
+      say: { code: 'ok_app_events', values: {} },
     })
   })
 
@@ -482,6 +488,7 @@ describe('publish_mode', () => {
         'changesets: .changeset/config.json is on develop, so the release workflow of o/r tags its own releases.',
       repair: '',
       canRepair: false,
+      say: { code: 'ok_changesets', values: { ref: 'develop', repo: 'o/r' } },
     })
   })
 
@@ -709,6 +716,12 @@ describe('the report', () => {
       'sandbox',
     ])
     expect(items.map((i) => i.status)).toEqual(items.map(() => 'ok'))
+    // The sentence of a fine item has a code too, and the code makes the same English sentence.
+    for (const item of items) {
+      expect(item.say).toBeDefined()
+      expect(DOCTOR_SAY_CODES).toContain(item.say?.code)
+      expect(DOCTOR_SAY_EN[item.say!.code].cause(item.say!.values)).toBe(item.cause)
+    }
   })
 
   it('gives each item the facts that are its own', () => {
@@ -823,7 +836,42 @@ describe('the sentences of an item that is not fine', () => {
     )
   })
 
-  it('sends no code with an item that is fine', () => {
-    expect(labelItem(REPO, readOf(true)).say).toBeUndefined()
+  it('sends a code, and no repair, with an item that is fine', () => {
+    expect(labelItem(REPO, readOf(true))).toMatchObject({
+      repair: '',
+      say: { code: 'ok_label', values: {} },
+    })
+  })
+
+  it('names what was tried by a code and its values, so the panel can say it in its language', () => {
+    const what = triedOf('labels', { repo: 'o/r' })
+    const item = labelItem(REPO, unread(triedText(what), 'GitHub answered 502', what))
+    expect(item.say).toEqual({
+      code: 'unknown',
+      values: {
+        tried: 'reading the labels of o/r',
+        what: 'labels',
+        repo: 'o/r',
+        error: 'GitHub answered 502',
+      },
+    })
+  })
+
+  it('has an English phrase for every thing it tries to read', () => {
+    const values = { repo: 'o/r', integration: 'develop', path: '.factory/setup.json' }
+    for (const code of DOCTOR_TRIED_CODES) {
+      expect(triedText(triedOf(code, values))).toMatch(/^(reading|minting)/)
+    }
+  })
+
+  it('sends the kind and the parts of a recipe that cannot be used', () => {
+    const why = { kind: 'status' as const, repo: 'o/r', path: '.factory/setup.json', detail: '502' }
+    const item = recipeItem(
+      readOf({ problem: 'o/r: it failed', why, pending: [], url: 'https://x' }),
+    )
+    expect(item.say).toEqual({
+      code: 'recipe_problem',
+      values: { problem: 'o/r: it failed', ...why },
+    })
   })
 })

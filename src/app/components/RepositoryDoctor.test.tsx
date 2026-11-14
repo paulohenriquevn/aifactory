@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DoctorReport, RepositoryView } from '../../shared/panel'
-import { DOCTOR_SAY_CODES } from '../../shared/doctor-say'
+import { DOCTOR_SAY_CODES, DOCTOR_TRIED_CODES } from '../../shared/doctor-say'
 import { CopyProvider, LANGUAGE_KEY } from '../lib/copy'
 import { en } from '../lib/copy/en'
 import { ptBR } from '../lib/copy/pt-BR'
@@ -178,7 +178,15 @@ describe('the doctor in the language of the panel', () => {
         cause: 'Not known: reading the labels failed (502). Nothing is assumed to be fine.',
         repair: 'Check again in a moment.',
         canRepair: false,
-        say: { code: 'unknown', values: { tried: 'reading the labels', error: '502' } },
+        say: {
+          code: 'unknown',
+          values: {
+            tried: 'reading the labels of me/app',
+            what: 'labels',
+            repo: 'me/app',
+            error: '502',
+          },
+        },
       },
     ],
   }
@@ -196,9 +204,13 @@ describe('the doctor in the language of the panel', () => {
         exact: false,
       }),
     ).toBeTruthy()
+    // What was tried is said in Portuguese too, not copied from the server's English.
     expect(
-      screen.getByText(say.unknown.cause({ tried: 'reading the labels', error: '502' })),
+      screen.getByText(
+        'Não sei: ler os labels de me/app falhou (502). Nada é dado como certo sem ter sido lido.',
+      ),
     ).toBeTruthy()
+    expect(screen.queryByText(/reading the labels/)).toBeNull()
     expect(screen.queryByText(events.items[0]!.cause)).toBeNull()
     expect(say.app_events.cause({ missing: 'check_run' })).toContain('check_run')
     expect(say.app_events.repair({ owner: 'paulo' })).toContain('paulo')
@@ -214,15 +226,60 @@ describe('the doctor in the language of the panel', () => {
     expect(await screen.findByText(events.items[0]!.cause)).toBeTruthy()
   })
 
+  it('says why a blocked recipe cannot be used in Portuguese, with the parts in it', async () => {
+    window.localStorage.setItem(LANGUAGE_KEY, 'pt-BR')
+    api.get.mockResolvedValue({
+      ...events,
+      items: [
+        {
+          id: 'recipe',
+          status: 'blocked',
+          cause:
+            'me/app: .factory/setup.json on the default branch cannot be used: GitHub answered 502 reading it',
+          repair:
+            'Fix .factory/setup.json on the default branch: a run stops with the same reason.',
+          canRepair: false,
+          say: {
+            code: 'recipe_problem',
+            values: {
+              problem:
+                'me/app: .factory/setup.json on the default branch cannot be used: GitHub answered 502 reading it',
+              kind: 'status',
+              repo: 'me/app',
+              path: '.factory/setup.json',
+              detail: '502',
+            },
+          },
+        },
+      ],
+    })
+    mount()
+    expect(
+      await screen.findByText(
+        'me/app: .factory/setup.json na branch padrão não pode ser usado: o GitHub respondeu 502 ao lê-lo',
+      ),
+    ).toBeTruthy()
+  })
+
+  it('has a Portuguese sentence of its own for every thing the doctor tries to read', () => {
+    const values = new Proxy({}, { get: (_, key) => `<${String(key)}>` }) as Record<string, string>
+    for (const code of DOCTOR_TRIED_CODES) {
+      expect(ptBR.doctor.tried[code](values)).not.toBe(en.doctor.tried[code](values))
+    }
+  })
+
   it('has a Portuguese sentence of its own for every code', () => {
     for (const code of DOCTOR_SAY_CODES) {
-      const values = new Proxy({}, { get: (_, key) => `<${String(key)}>` }) as Record<
-        string,
-        string
-      >
-      if (code === 'recipe_problem') continue
+      const values = new Proxy(
+        { kind: 'status' },
+        { get: (target, key) => (key in target ? (target as never)[key] : `<${String(key)}>`) },
+      ) as Record<string, string>
+      // Nothing to repair says nothing in either language.
+      const noRepair = en.doctor.say[code].repair(values) === ''
       expect(ptBR.doctor.say[code].cause(values)).not.toBe(en.doctor.say[code].cause(values))
-      expect(ptBR.doctor.say[code].repair(values)).not.toBe(en.doctor.say[code].repair(values))
+      if (!noRepair) {
+        expect(ptBR.doctor.say[code].repair(values)).not.toBe(en.doctor.say[code].repair(values))
+      }
     }
   })
 })

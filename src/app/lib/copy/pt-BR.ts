@@ -1,4 +1,32 @@
+import type { DoctorTriedSentences } from '../../../shared/doctor-say'
+
 import type { Copy } from './en'
+
+/** What the doctor tried to read, after "Não sei:". */
+const TRIED: DoctorTriedSentences = {
+  settings: (v) => `ler as configurações de ${v.repo}`,
+  branches: (v) => `ler as branches de ${v.repo}`,
+  labels: (v) => `ler os labels de ${v.repo}`,
+  required: (v) => `ler os checks que ${v.integration} exige em ${v.repo}`,
+  recent: (v) => `ler os checks dos commits recentes de ${v.integration} em ${v.repo}`,
+  publish: (v) => `ler como ${v.repo} publica`,
+  recipe: (v) => `ler ${v.path} de ${v.repo}`,
+  installation: (v) => `ler a instalação do GitHub App em ${v.repo}`,
+  events: () => 'ler os eventos que o GitHub App assina',
+  runs: (v) => `ler as execuções que falharam em ${v.repo}`,
+  token: (v) => `gerar um token para ${v.repo}`,
+  merge_settings: (v) => `ler as configurações de merge de ${v.repo}`,
+}
+
+/** What was tried, in Portuguese when the code is one this panel knows, and as the server said it otherwise. */
+const tried = (v: Record<string, string>) => TRIED[v.what as keyof typeof TRIED]?.(v) ?? v.tried
+
+/** Why a recipe cannot be used, by kind. */
+const RECIPE_WHY: Record<string, (detail: string) => string> = {
+  not_json: (d) => `ele não é JSON (${d})`,
+  invalid: (d) => d,
+  status: (d) => `o GitHub respondeu ${d} ao lê-lo`,
+}
 
 /** The panel's text in Brazilian Portuguese. Typed against English: a missing or extra key does not compile. */
 export const ptBR: Copy = {
@@ -255,7 +283,12 @@ export const ptBR: Copy = {
     say: {
       unknown: {
         cause: (v) =>
-          `Não sei: ${v.tried} falhou (${v.error}). Nada é dado como certo sem ter sido lido.`,
+          `Não sei: ${tried(v)} falhou (${v.error}). Nada é dado como certo sem ter sido lido.`,
+        repair: () => 'Verifique de novo daqui a pouco.',
+      },
+      unknown_unanswered: {
+        cause: (v) =>
+          `Não sei: ${tried(v)} falhou (o GitHub deixou isso de fora da resposta). Nada é dado como certo sem ter sido lido.`,
         repair: () => 'Verifique de novo daqui a pouco.',
       },
       issues_off: {
@@ -321,7 +354,12 @@ export const ptBR: Copy = {
           'Antes de promover, ponha no package.json a versão que a release vai ter, ou publique com changesets.',
       },
       recipe_problem: {
-        cause: (v) => v.problem,
+        cause: (v) => {
+          const why = RECIPE_WHY[v.kind ?? '']
+          return why
+            ? `${v.repo}: ${v.path} na branch padrão não pode ser usado: ${why(v.detail ?? '')}`
+            : (v.problem ?? '')
+        },
         repair: () =>
           'Corrija o .factory/setup.json na branch padrão: uma execução para pelo mesmo motivo.',
       },
@@ -336,7 +374,67 @@ export const ptBR: Copy = {
         repair: () =>
           'Ponha crédito no provedor de sandbox, ou corrija a chave dele no servidor. A tarefa tenta de novo sozinha quando o provedor aceitar.',
       },
+      ok_issues: { cause: () => 'As Issues estão ligadas.', repair: () => '' },
+      ok_app_access: {
+        cause: (v) => `O GitHub App alcança ${v.repo} com todas as permissões de que precisa.`,
+        repair: () => '',
+      },
+      ok_app_events: {
+        cause: () => 'O App assina todos os eventos que a fábrica lê.',
+        repair: () => '',
+      },
+      ok_branches: {
+        cause: () => 'As branches de integração e de pré-release existem.',
+        repair: () => '',
+      },
+      ok_label: { cause: () => 'O label "factory" existe.', repair: () => '' },
+      ok_auto_merge_free: {
+        cause: (v) =>
+          `${v.integration} não exige checks, então a fábrica faz o merge dos próprios pull requests.`,
+        repair: () => '',
+      },
+      ok_auto_merge_allowed: {
+        cause: (v) =>
+          `${v.integration} exige checks, e ${v.repo} permite auto-merge e commits de merge.`,
+        repair: () => '',
+      },
+      ok_ci_free: {
+        cause: (v) => `${v.integration} não exige nenhum check do repositório.`,
+        repair: () => '',
+      },
+      ok_ci_reported: {
+        cause: (v) => `Todo check exigido por ${v.integration} apareceu em um commit recente.`,
+        repair: () => '',
+      },
+      ok_checks_parity: {
+        cause: (v) => `Todo check exigido por ${v.integration} tem um check da fábrica.`,
+        repair: () => '',
+      },
+      ok_tag: {
+        cause: (v) =>
+          `tag: ${v.workflow} roda quando uma tag é criada, e o package.json em ${v.ref} está em ${v.version}, uma versão que a próxima tag pode ter.`,
+        repair: () => '',
+      },
+      ok_changesets: {
+        cause: (v) =>
+          `changesets: .changeset/config.json está em ${v.ref}, então o workflow de release de ${v.repo} cria as próprias tags.`,
+        repair: () => '',
+      },
+      ok_none: {
+        cause: (v) =>
+          `none: ${v.repo} não tem .changeset/config.json nem workflow que rode numa tag, então a fábrica cria as tags de release e nada mais é publicado.`,
+        repair: () => '',
+      },
+      ok_recipe: {
+        cause: () => 'A receita não tem problema nem domínio esperando aprovação.',
+        repair: () => '',
+      },
+      ok_sandbox: {
+        cause: () => 'O provedor de sandbox não recusou a última execução.',
+        repair: () => '',
+      },
     },
+    tried: TRIED,
   },
   assist: {
     label: {
