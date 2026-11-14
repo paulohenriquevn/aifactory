@@ -1,5 +1,5 @@
 import { type SandboxBackend } from '@theokit/agents/sandbox'
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 
 import {
   agentRun,
@@ -7,6 +7,7 @@ import {
   evidence,
   question as questionTable,
   review as reviewTable,
+  stageEvent,
   task,
 } from '../db/schema'
 import type { Issue } from '../github/issues'
@@ -53,13 +54,17 @@ import {
 } from './change-plan'
 import { buildPrompt, type CodingHarness, type HarnessResult } from './harness'
 import {
+  blockingCount,
   MAX_ATTEMPTS,
   notResolvedPrompt,
+  OUTSIDE_THE_PLAN,
   parseVerdict,
   renderFindings,
   resolvedPrompt,
+  reviewAllowsRework,
   reviewPrompt,
   reworkPrompt,
+  roundsNote,
   type Finding,
   type ReviewVerdict,
 } from './review'
@@ -136,6 +141,9 @@ type Timeouts = NonNullable<RunTaskDeps['timeouts']>
  * needs, not by the hour a token lasts. A first build that adds a package needs more than 25 minutes, and four
  * were cut at 25 on 2026-11-11 (paulohenriquevn/aifactory#23), so a pass may take 45.
  */
+/** The stages that end a run; a task goes through them again when a person sends it back. */
+const ENDING_STAGES = ['done', 'released', 'handoff', 'failed', 'cancelled'] as const
+
 export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 90 * 60_000, agentMs: 45 * 60_000 }
 
 /** The longest the planning turn may take: it reads and writes a plan, it does not build or test. */
@@ -1129,7 +1137,7 @@ export class Run {
     const outside: Finding[] = unplanned.map((file) => ({
       severity: 'minor',
       file,
-      issue: 'changed outside the plan',
+      issue: OUTSIDE_THE_PLAN,
     }))
     const merged: ReviewVerdict = {
       verdict: blocked ? 'changes' : read.verdict,
@@ -1341,12 +1349,13 @@ export class Run {
     attempt: number,
     here: StoredCheck[],
     outcome: ReviewVerdict,
+    counts: number[] = [],
   ): Promise<RunResult> {
     const { deps, taskId, row, api, branch, state } = this.c
     const reason =
       outcome.verdict === 'invalid'
         ? `the review gave no usable verdict: ${outcome.summary}`
-        : `the reviewer still asked for changes after ${attempt} attempt${attempt === 1 ? '' : 's'}`
+        : `the reviewer still asked for changes after ${attempt} attempt${attempt === 1 ? '' : 's'}${roundsNote(attempt, counts)}`
     state.current = 'pr'
     const pull = await api.openPullRequest(row.repository, this.c.token, {
       head: branch,
@@ -1403,12 +1412,46 @@ export class Run {
   }
 
   /**
-   * Checks the commit and has it reviewed, up to three attempts. Failing checks and a review that
+   * The blocking findings of the review rounds before the one a resumed run starts at, read from what
+   * the earlier part of the run stored. The review of the claim that the issue is resolved is not one.
+   */
+  private async priorCounts(): Promise<number[]> {
+    const { deps, taskId, resuming } = this.c
+    if (!resuming) return []
+    // A run that ended (delivered, handed off, failed, cancelled) is not this one: only what came after
+    // the last such stage belongs to the run that parked, whose rounds a continuation numbers again.
+    const [ended] = await deps.db
+      .select()
+      .from(stageEvent)
+      .where(and(eq(stageEvent.taskId, taskId), inArray(stageEvent.stage, ENDING_STAGES)))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
+    const rows = await deps.db
+      .select()
+      .from(reviewTable)
+      .where(eq(reviewTable.taskId, taskId))
+      .orderBy(asc(reviewTable.id))
+    const byRound = new Map<number, number>()
+    for (const r of rows) {
+      if (ended && r.at <= ended.at) continue
+      if (r.sha !== this.baseSha) byRound.set(r.round, blockingCount(r.findings as Finding[]))
+    }
+    const counts: number[] = []
+    for (let round = 1; round < resuming.attempt; round++) {
+      const count = byRound.get(round)
+      if (count !== undefined) counts.push(count)
+    }
+    return counts
+  }
+
+  /**
+   * Checks the commit and has it reviewed, up to three attempts, or six while the blocking findings fall. Failing checks and a review that
    * asks for changes send the work back to the same agent session; an approval opens the pull request,
    * and running out of attempts after green checks hands the work to a person.
    */
   async loop(pushed: string): Promise<RunResult> {
     let sha = pushed
+    const counts = await this.priorCounts()
     for (let attempt = this.c.resuming?.attempt ?? 1; ; attempt++) {
       const canRework =
         attempt < MAX_ATTEMPTS && this.builder.resume !== undefined && !!this.sessionId
@@ -1425,11 +1468,14 @@ export class Run {
 
       const outcome = await this.review(sha, attempt)
       if (outcome.verdict === 'approve') return this.approved(sha, attempt, checked.here, outcome)
-      if (outcome.verdict === 'changes' && canRework) {
+      counts.push(blockingCount(outcome.findings))
+      const mayRework =
+        this.builder.resume !== undefined && !!this.sessionId && reviewAllowsRework(attempt, counts)
+      if (outcome.verdict === 'changes' && mayRework) {
         sha = await this.rework(attempt + 1, outcome.findings, [])
         continue
       }
-      return this.handOver(sha, attempt, checked.here, outcome)
+      return this.handOver(sha, attempt, checked.here, outcome, counts)
     }
   }
 }

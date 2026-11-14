@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest'
 
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
 import {
+  blockingCount,
   notResolvedPrompt,
   parseVerdict,
   renderFindings,
   resolvedPrompt,
+  reviewAllowsRework,
   reviewPrompt,
   reworkPrompt,
+  roundsNote,
 } from './review'
 
 const answer = (verdict: unknown) => `I read the diff.\n\n${JSON.stringify(verdict)}`
@@ -475,5 +478,40 @@ describe('notResolvedPrompt', () => {
   it('says nothing about findings when the reviewer listed none', () => {
     const prompt = notResolvedPrompt({ summary: 'nothing of it is there', findings: [] })
     expect(prompt.split('\n\n')).toHaveLength(5)
+  })
+})
+
+describe('the rounds a review gets', () => {
+  it("counts major and blocker findings, not minor ones or the factory's outside-the-plan entries", () => {
+    expect(
+      blockingCount([
+        { severity: 'blocker', issue: 'a' },
+        { severity: 'major', issue: 'b' },
+        { severity: 'minor', issue: 'c' },
+        { severity: 'major', issue: 'changed outside the plan' },
+      ]),
+    ).toBe(2)
+  })
+
+  it('always allows the first three rounds', () => {
+    expect(reviewAllowsRework(1, [5])).toBe(true)
+    expect(reviewAllowsRework(2, [5, 6])).toBe(true)
+  })
+
+  it('allows more only while the findings fall, up to six', () => {
+    expect(reviewAllowsRework(3, [4, 3, 2])).toBe(true)
+    expect(reviewAllowsRework(3, [5, 6, 7])).toBe(false)
+    expect(reviewAllowsRework(3, [3, 3, 4])).toBe(false)
+    expect(reviewAllowsRework(3, [3, 3, 3])).toBe(false)
+    expect(reviewAllowsRework(5, [9, 8, 7, 6, 5])).toBe(true)
+    expect(reviewAllowsRework(6, [9, 8, 7, 6, 5, 4])).toBe(false)
+  })
+
+  it('says in the handoff what the rounds were', () => {
+    expect(roundsNote(2, [3, 4])).toBe('')
+    expect(roundsNote(3, [5, 6, 7])).toBe(
+      ' (the review is not converging; blocking findings per round: 5, 6, 7)',
+    )
+    expect(roundsNote(6, [9, 8, 7, 6, 5, 4])).toContain('still converging')
   })
 })

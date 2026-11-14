@@ -16,6 +16,42 @@ export type ReviewVerdict = {
 /** The reviews a task gets before it goes to a person, counting the first one. */
 export const MAX_ATTEMPTS = 3
 
+/** The reviews a task gets while its blocking findings keep going down from one round to the next. */
+export const MAX_CONVERGING_ATTEMPTS = 6
+
+/** The finding the factory adds itself for a file the plan does not cover. */
+export const OUTSIDE_THE_PLAN = 'changed outside the plan'
+
+/** Findings that block: major and above, without the entries the factory adds for files outside the plan. */
+export function blockingCount(findings: Finding[]): number {
+  return findings.filter((f) => f.severity !== 'minor' && f.issue !== OUTSIDE_THE_PLAN).length
+}
+
+/** Did the blocking findings go down from the round before? */
+export function converging(counts: number[]): boolean {
+  const [before, last] = counts.slice(-2)
+  return before !== undefined && last !== undefined && last < before
+}
+
+/**
+ * May a review that asked for changes at `attempt` send the work back for another round? The first
+ * `MAX_ATTEMPTS` always may; after that only while the blocking findings fell in the last round, up to
+ * `MAX_CONVERGING_ATTEMPTS`. `counts` has the blocking findings of each review round so far.
+ */
+export function reviewAllowsRework(attempt: number, counts: number[]): boolean {
+  if (attempt < MAX_ATTEMPTS) return true
+  return attempt < MAX_CONVERGING_ATTEMPTS && converging(counts)
+}
+
+/** What a handoff says about the rounds, once the first limit is passed; empty before that. */
+export function roundsNote(attempt: number, counts: number[]): string {
+  if (attempt < MAX_ATTEMPTS || counts.length === 0) return ''
+  const per = `blocking findings per round: ${counts.join(', ')}`
+  return converging(counts)
+    ? ` (still converging, but this is the limit; ${per})`
+    : ` (the review is not converging; ${per})`
+}
+
 export function reviewPrompt(input: {
   repo: string
   issueNumber: number
