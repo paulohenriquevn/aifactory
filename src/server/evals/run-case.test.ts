@@ -132,6 +132,25 @@ describe('runCase', () => {
     expect(provider.backend.files.get(CHANGESET_CHECK_PATH)).toBe(CHANGESET_CHECK_SCRIPT)
   })
 
+  it('has the script of the changeset check in the sandbox before the builder runs', async () => {
+    const provider = sandbox()
+    const inner = agent('builder', planned(built()))
+    const seen: Array<string | undefined> = []
+    const builder = {
+      ...inner,
+      run: (b: Parameters<typeof inner.run>[0], input: Parameters<typeof inner.run>[1]) => {
+        seen.push(provider.backend.files.get(CHANGESET_CHECK_PATH))
+        return inner.run(b, input)
+      },
+    }
+    const reviewer = agent('reviewer', [{ ok: true, summary: APPROVE }])
+    const checks = withChangesetCheck(evalCase.checks, true, 'workspace')
+
+    await runCase(deps(provider, builder, reviewer), { ...evalCase, checks })
+
+    expect(seen[0]).toBe(CHANGESET_CHECK_SCRIPT)
+  })
+
   it('starts from the base commit of the case, with the same prompt a task gets', async () => {
     const provider = sandbox()
     const builder = agent('builder', planned(built()))

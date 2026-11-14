@@ -3250,6 +3250,28 @@ describe('what the owner set for the repository', () => {
     expect(sandbox.backend.files.get(CHANGESET_CHECK_PATH)).toBe(CHANGESET_CHECK_SCRIPT)
   })
 
+  it('writes the changeset check script into the sandbox before the builder is invoked', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((command) =>
+        command.includes('.changeset/config.json') ? { stdout: 'yes\n' } : undefined,
+      ),
+    )
+    const seen: Array<string | undefined> = []
+    const spying: CodingHarness = {
+      ...okHarness,
+      run: (backend, input) => {
+        seen.push(sandbox.backend.files.get(CHANGESET_CHECK_PATH))
+        return okHarness.run(backend, input)
+      },
+    }
+
+    await runTask(deps(sandbox, { harness: spying }), id)
+
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen[0]).toBe(CHANGESET_CHECK_SCRIPT)
+  })
+
   it('runs no changeset check when the clone has no changesets config', async () => {
     const id = await seedTask()
     const sandbox = new FakeSandbox(

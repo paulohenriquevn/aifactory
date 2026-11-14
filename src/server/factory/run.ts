@@ -369,6 +369,8 @@ export class Run {
     run.feed = feed
     run.remoteHead = await Run.remoteHeadOf(sandbox.backend, repoDir, c.branch)
     run.usesChangesets = await Run.publishesWithChangesets(sandbox.backend, repoDir)
+    // Before the builder's first pass, so it can run the check it is told to run.
+    await uploadChangesetCheck(sandbox.backend, run.checks)
     return run
   }
 
