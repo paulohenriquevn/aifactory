@@ -351,12 +351,12 @@ describe('first-review approval by agent', () => {
     await reviewed('codex', 'approve')
 
     expect((await metricsReport(db, NOW)).byAgent.approval).toEqual([
-      { reviewer: 'claude-code', reviews: 2, approved: 1, share: 0.5 },
-      { reviewer: 'codex', reviews: 1, approved: 1, share: 1 },
+      { reviewer: 'claude-code', model: null, reviews: 2, approved: 1, share: 0.5 },
+      { reviewer: 'codex', model: null, reviews: 1, approved: 1, share: 1 },
     ])
     expect((await metricsReport(db, NOW)).byAgent.reviewerRework).toEqual([
-      { reviewer: 'claude-code', reviews: 2, reworkRounds: 0, perReview: 0 },
-      { reviewer: 'codex', reviews: 1, reworkRounds: 0, perReview: 0 },
+      { reviewer: 'claude-code', model: null, reviews: 2, reworkRounds: 0, perReview: 0 },
+      { reviewer: 'codex', model: null, reviews: 1, reworkRounds: 0, perReview: 0 },
     ])
   })
 })

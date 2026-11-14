@@ -217,7 +217,7 @@ export async function saveChosen(
       else {
         await tx
           .insert(setting)
-          .values({ key, value })
+          .values({ key, value, updatedAt: at })
           .onConflictDoUpdate({ target: setting.key, set: { value, updatedAt: at } })
       }
     }

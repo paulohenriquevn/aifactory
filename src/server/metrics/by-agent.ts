@@ -15,18 +15,26 @@ import { inRun, runsOf, terminalOf, type HistoryEvent } from './history'
 export type ReviewFact = {
   taskId: number
   reviewer: string
+  /** The model the reviewer's pass ran with; null when the pass was not recorded with one. */
+  model: string | null
+  round: number
   verdict: 'approve' | 'changes' | 'invalid'
   at: Date
 }
+
+const keyOf = (reviewer: string, model: string | null) => JSON.stringify([reviewer, model])
+const splitKey = (key: string) => JSON.parse(key) as [string, string | null]
+const byAgentModel = (a: { reviewer: string; model: string | null }, b: typeof a) =>
+  a.reviewer.localeCompare(b.reviewer) || (a.model ?? '').localeCompare(b.model ?? '')
 
 /** The events of each task, in the order they happened. */
 export type EventsByTask = Map<number, HistoryEvent[]>
 
 /**
- * First-review approval for each agent that reviewed. It reads what the factory-wide indicator reads
+ * First-review approval for each agent and model that reviewed. It reads what the factory-wide indicator reads
  * (`history.ts`): a run is what starts at an intake, only a finished run counts (one still going, or one
  * that only waited for another issue, does not), and the first review made while it lasted is the one
- * counted. Reviewers come ordered by name.
+ * counted. Reviewers come ordered by name, then model.
  */
 export function approvalByReviewer(
   reviews: ReviewFact[],
@@ -39,15 +47,19 @@ export function approvalByReviewer(
       if (!terminalOf(run)) continue
       const first = mine.find((r) => inRun(run, r.at))
       if (!first) continue
-      const t = totals.get(first.reviewer) ?? { reviews: 0, approved: 0 }
+      const key = keyOf(first.reviewer, first.model)
+      const t = totals.get(key) ?? { reviews: 0, approved: 0 }
       t.reviews += 1
       if (first.verdict === 'approve') t.approved += 1
-      totals.set(first.reviewer, t)
+      totals.set(key, t)
     }
   }
   return [...totals.entries()]
-    .map(([reviewer, t]) => ({ reviewer, ...t, share: t.approved / t.reviews }))
-    .sort((a, b) => a.reviewer.localeCompare(b.reviewer))
+    .map(([key, t]) => {
+      const [reviewer, model] = splitKey(key)
+      return { reviewer, model, ...t, share: t.approved / t.reviews }
+    })
+    .sort(byAgentModel)
 }
 
 /** One agent pass, as the cost reads it. A null cost is one the agent did not report. */
@@ -124,15 +136,30 @@ async function eventsOf(db: Database): Promise<EventsByTask> {
 }
 
 async function reviewsOf(db: Database): Promise<ReviewFact[]> {
-  return db
-    .select({
-      taskId: review.taskId,
-      reviewer: review.reviewer,
-      verdict: review.verdict,
-      at: review.at,
-    })
-    .from(review)
-    .orderBy(asc(review.id))
+  const [rows, passes] = await Promise.all([
+    db.select().from(review).orderBy(asc(review.id)),
+    db
+      .select({
+        taskId: agentRun.taskId,
+        attempt: agentRun.attempt,
+        model: agentRun.model,
+        at: agentRun.at,
+      })
+      .from(agentRun)
+      .where(eq(agentRun.role, 'reviewer'))
+      .orderBy(asc(agentRun.id)),
+  ])
+  // The model is on the pass: the latest reviewer pass of the same task and attempt made before the review.
+  return rows.map((r) => ({
+    taskId: r.taskId,
+    reviewer: r.reviewer,
+    model:
+      passes.filter((p) => p.taskId === r.taskId && p.attempt === r.round && p.at <= r.at).at(-1)
+        ?.model ?? null,
+    round: r.round,
+    verdict: r.verdict,
+    at: r.at,
+  }))
 }
 
 /** A build event, as the rework count reads it. */
@@ -156,33 +183,49 @@ export function reworkByBuilder(builds: BuildFact[]): BuilderRework[] {
     .sort((a, b) => a.builder.localeCompare(b.builder))
 }
 
-/** A rework build, as the reviewer's rework count reads it. */
-export type ReworkFact = { taskId: number; at: Date }
+/** A rework build, as the reviewer's rework count reads it. `attempt` is the attempt the rework starts. */
+export type ReworkFact = { taskId: number; attempt: number; at: Date }
 
 /**
- * The rework rounds each reviewer's verdicts caused: a rework build is charged to the reviewer of the latest
- * review of the same task made before it, whatever agent builds. A rework with no review before it (a person
- * sent the work back) is charged to nobody. `perReview` is rounds over the reviews that reviewer made.
- * Reviewers come ordered by name.
+ * The rework rounds each reviewer and model caused. A rework starting attempt N answers the review of attempt
+ * N-1 that asked for changes, made in the same run: that review is the one charged. A rework no such review
+ * precedes was started by something else (failing checks) and is charged to nobody, and so is one a person
+ * sent back. `perReview` is rounds over the reviews that agent and model made.
  */
-export function reworkByReviewer(reviews: ReviewFact[], rework: ReworkFact[]): ReviewerRework[] {
+export function reworkByReviewer(
+  reviews: ReviewFact[],
+  rework: ReworkFact[],
+  events: EventsByTask,
+): ReviewerRework[] {
   const totals = new Map<string, { reviews: number; reworkRounds: number }>()
-  const of = (name: string) => {
-    const t = totals.get(name) ?? { reviews: 0, reworkRounds: 0 }
-    totals.set(name, t)
+  const of = (key: string) => {
+    const t = totals.get(key) ?? { reviews: 0, reworkRounds: 0 }
+    totals.set(key, t)
     return t
   }
-  for (const r of reviews) of(r.reviewer).reviews += 1
+  for (const r of reviews) of(keyOf(r.reviewer, r.model)).reviews += 1
   for (const round of rework) {
-    const before = reviews
-      .filter((r) => r.taskId === round.taskId && r.at.getTime() <= round.at.getTime())
+    const run = runsOf(events.get(round.taskId) ?? []).find((r) => inRun(r, round.at))
+    const cause = reviews
+      .filter(
+        (r) =>
+          r.taskId === round.taskId &&
+          r.verdict === 'changes' &&
+          r.round === round.attempt - 1 &&
+          r.at <= round.at &&
+          run !== undefined &&
+          inRun(run, r.at),
+      )
       .sort((a, b) => a.at.getTime() - b.at.getTime())
       .at(-1)
-    if (before) of(before.reviewer).reworkRounds += 1
+    if (cause) of(keyOf(cause.reviewer, cause.model)).reworkRounds += 1
   }
   return [...totals.entries()]
-    .map(([reviewer, t]) => ({ reviewer, ...t, perReview: t.reworkRounds / t.reviews }))
-    .sort((a, b) => a.reviewer.localeCompare(b.reviewer))
+    .map(([key, t]) => {
+      const [reviewer, model] = splitKey(key)
+      return { reviewer, model, ...t, perReview: t.reworkRounds / t.reviews }
+    })
+    .sort(byAgentModel)
 }
 
 async function reworkOf(db: Database): Promise<BuilderRework[]> {
@@ -203,9 +246,12 @@ async function reworkRoundsOf(db: Database): Promise<ReworkFact[]> {
     .from(stageEvent)
     .where(eq(stageEvent.stage, 'build'))
     .orderBy(asc(stageEvent.id))
-  return events
-    .filter((e) => (e.detail as Record<string, unknown> | null)?.rework === true)
-    .map((e) => ({ taskId: e.taskId, at: e.at }))
+  return events.flatMap((e) => {
+    const detail = (e.detail ?? null) as Record<string, unknown> | null
+    return detail?.rework === true && typeof detail.attempt === 'number'
+      ? [{ taskId: e.taskId, attempt: detail.attempt, at: e.at }]
+      : []
+  })
 }
 
 /** Approval, rework and cost, each split by agent. */
@@ -229,7 +275,7 @@ export async function comparisonByAgent(db: Database): Promise<AgentComparison> 
   return {
     approval: approvalByReviewer(reviews, events),
     rework,
-    reviewerRework: reworkByReviewer(reviews, rounds),
+    reviewerRework: reworkByReviewer(reviews, rounds, events),
     cost: costByAgent(passes, events),
   }
 }

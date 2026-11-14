@@ -218,6 +218,7 @@ export type BuilderRework = {
 /** What each reviewer's verdicts caused: the rework rounds that followed their reviews. */
 export type ReviewerRework = {
   reviewer: string
+  model: string | null
   reviews: number
   reworkRounds: number
   /** reworkRounds / reviews. */
@@ -710,6 +711,8 @@ export type AgentSettingChange = {
 /** How the first review of each run went, for the agent that did it. */
 export type ReviewerApproval = {
   reviewer: string
+  /** The model the reviews ran with; null when none was recorded. */
+  model: string | null
   reviews: number
   approved: number
   /** approved / reviews. */
