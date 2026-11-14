@@ -2138,6 +2138,67 @@ describe('runTask waiting for an answer', () => {
     expect(reviewer.prompts).toHaveLength(4)
   })
 
+  it('does not fill a round that had no review with one from a run before the task was sent back', async () => {
+    const id = await seedTask()
+    branchPushed()
+    // The run before: handed off after a round 2 that found six.
+    await getDb().insert(stageEvent).values({ taskId: id, stage: 'handoff' })
+    await getDb()
+      .insert(review)
+      .values({
+        taskId: id,
+        round: 2,
+        sha: 'oldsha',
+        reviewer: 'fake-reviewer',
+        verdict: 'changes',
+        summary: 'before',
+        findings: Array.from({ length: 6 }, (_, i) => ({ ...finding, issue: `old ${i}` })),
+      })
+    let runs = 0
+    const sandbox = new FakeSandbox(
+      changed((c) => {
+        if (!c.endsWith('npm test')) return undefined
+        runs += 1
+        // Round 2 fails its checks, twice, so it has no review.
+        return runs === 2 || runs === 3 ? { exitCode: 1, stdout: 'not ok 1' } : undefined
+      }),
+    )
+    const builder: CodingHarness & { n: number } = {
+      name: 'fake-agent',
+      egress: agentEgress,
+      n: 0,
+      run: async () => {
+        dirty = true
+        return { ok: true, summary: 'adjusted', sessionId: 'sess-c' }
+      },
+      resume: async () => {
+        dirty = true
+        builder.n += 1
+        return builder.n === 2
+          ? { ok: true, summary: 'hmm\nQUESTION: Keep the old export too?', sessionId: 'sess-c' }
+          : { ok: true, summary: 'reworked', sessionId: 'sess-c' }
+      },
+    }
+    const many = (n: number) =>
+      verdictJson(
+        'changes',
+        Array.from({ length: n }, (_, i) => ({ ...finding, issue: `problem ${i}` })),
+      )
+    const reviewer = reviewerSaying(many(4), many(5), verdictJson('approve'))
+
+    const parked = await runTask(deps(sandbox, { harness: builder, reviewer }), id, undefined, {
+      feedback: 'Cut at a word boundary.',
+    })
+    expect(parked.status).toBe('waiting')
+    replies(owner({ body: 'No, drop it.' }))
+    await poll(sandbox)
+    const result = await resumeTask(deps(sandbox, { harness: builder, reviewer }), id)
+
+    expect(result.status).toBe('handoff')
+    expect(reviewer.prompts).toHaveLength(2)
+    expect(result.status === 'handoff' && result.reason).toContain('4, 5')
+  })
+
   it('lets a question that nobody answered fail its task and frees the snapshot', async () => {
     const id = await seedTask()
     const sandbox = new FakeSandbox(changed())

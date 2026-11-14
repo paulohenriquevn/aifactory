@@ -1,5 +1,5 @@
 import { type SandboxBackend } from '@theokit/agents/sandbox'
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 
 import {
   agentRun,
@@ -7,6 +7,7 @@ import {
   evidence,
   question as questionTable,
   review as reviewTable,
+  stageEvent,
   task,
 } from '../db/schema'
 import type { Issue } from '../github/issues'
@@ -140,6 +141,9 @@ type Timeouts = NonNullable<RunTaskDeps['timeouts']>
  * needs, not by the hour a token lasts. A first build that adds a package needs more than 25 minutes, and four
  * were cut at 25 on 2026-11-11 (paulohenriquevn/aifactory#23), so a pass may take 45.
  */
+/** The stages that end a run; a task goes through them again when a person sends it back. */
+const ENDING_STAGES = ['done', 'released', 'handoff', 'failed', 'cancelled'] as const
+
 export const DEFAULT_TIMEOUTS: Timeouts = { sandboxMs: 90 * 60_000, agentMs: 45 * 60_000 }
 
 /** The longest the planning turn may take: it reads and writes a plan, it does not build or test. */
@@ -1414,6 +1418,14 @@ export class Run {
   private async priorCounts(): Promise<number[]> {
     const { deps, taskId, resuming } = this.c
     if (!resuming) return []
+    // A run that ended (delivered, handed off, failed, cancelled) is not this one: only what came after
+    // the last such stage belongs to the run that parked, whose rounds a continuation numbers again.
+    const [ended] = await deps.db
+      .select()
+      .from(stageEvent)
+      .where(and(eq(stageEvent.taskId, taskId), inArray(stageEvent.stage, ENDING_STAGES)))
+      .orderBy(desc(stageEvent.id))
+      .limit(1)
     const rows = await deps.db
       .select()
       .from(reviewTable)
@@ -1421,6 +1433,7 @@ export class Run {
       .orderBy(asc(reviewTable.id))
     const byRound = new Map<number, number>()
     for (const r of rows) {
+      if (ended && r.at <= ended.at) continue
       if (r.sha !== this.baseSha) byRound.set(r.round, blockingCount(r.findings as Finding[]))
     }
     const counts: number[] = []
