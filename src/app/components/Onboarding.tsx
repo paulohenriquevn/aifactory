@@ -19,6 +19,10 @@ import { RepositoryDoctor } from './RepositoryDoctor'
 
 const STEP_IDS = ['connect', 'choose', 'enable'] as const
 
+/** Each step is done only when it and every step before it are. */
+export const inOrder = (done: boolean[]): boolean[] =>
+  done.map((_, i) => done.slice(0, i + 1).every(Boolean))
+
 /** The text and the link of one thing GitHub still needs. */
 function Pending({ item }: { item: SetupItem }) {
   const external = item.link?.href.startsWith('http')
@@ -123,7 +127,9 @@ function Choose({
                   className="flex items-center gap-3 rounded-lg border border-border bg-card p-3"
                 >
                   <span className="font-medium">{repo.fullName}</span>
-                  <Badge variant="default">{repo.private ? 'private' : 'public'}</Badge>
+                  <Badge variant="default">
+                    {repo.private ? t.onboarding.choose.private : t.onboarding.choose.public}
+                  </Badge>
                   <Button
                     size="sm"
                     className="ml-auto"
@@ -178,11 +184,12 @@ export function Onboarding() {
   )
   const blocked = report?.items.some((i) => i.status === 'blocked') ?? true
   const notRead = report?.items.some((i) => i.status === 'unknown') ?? false
-  const complete = [
+  // A step counts only when every step before it does: a step ahead of one still being read is not known.
+  const complete = inOrder([
     setup.data?.ready === true,
     chosen !== undefined,
     chosen !== undefined && report?.fullName === chosen.fullName && !blocked,
-  ]
+  ])
   const current = complete.findIndex((c) => !c)
   const active = current === -1 ? STEP_IDS.length - 1 : current
   const shown = viewing !== undefined && complete[viewing] ? viewing : active
@@ -197,7 +204,12 @@ export function Onboarding() {
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
       <h1 className="text-xl font-semibold">{t.onboarding.title}</h1>
-      <Stepper label={t.onboarding.stepsLabel} steps={steps} orientation="horizontal" />
+      <Stepper
+        label={t.onboarding.stepsLabel}
+        steps={steps}
+        orientation="horizontal"
+        stateLabels={t.onboarding.stepState}
+      />
       <div className="flex gap-2">
         {STEP_IDS.map((id, i) =>
           complete[i] && i !== shown ? (

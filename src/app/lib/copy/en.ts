@@ -1,4 +1,6 @@
 /** The panel's text in English. `pt-BR.ts` is typed against this one, so the two always have the same keys. */
+import { DOCTOR_SAY_EN } from '../../../shared/doctor-say'
+
 export const en = {
   layout: {
     loading: 'Loading…',
@@ -133,11 +135,13 @@ export const en = {
     description:
       'Opens an issue on GitHub. With \u201cStart now\u201d the factory begins as soon as it is created.',
     enableFirst: 'Enable a repository under Repositories first.',
+    loading: 'Reading your repositories…',
     repository: 'Repository',
     titleField: 'Title',
     bodyField: 'What should it do, and how will you know it works?',
     startNow: 'Start now',
     create: 'Create job',
+    close: 'Close',
   },
   task: {
     loading: 'Loading…',
@@ -248,11 +252,32 @@ export const en = {
     tooSlow: 'Too slow',
     seconds: (n: string) => `${n}s`,
     proofFailed: (reason: string) => `The proof could not run: ${reason}`,
+    say: DOCTOR_SAY_EN,
+  },
+  assist: {
+    label: {
+      goal: 'Help me say it',
+      job: 'Help me say it',
+      issue: 'Improve this',
+      changes: 'Help me say it',
+      resolution: 'Help me say it',
+      setup: 'Set this up for me',
+    },
+    working: 'Working on it…',
+    needsWords: 'Write a few words first.',
+    suggestion: 'Suggestion',
+    extraDomains: (domains: string) => `Extra domains: ${domains}`,
+    use: 'Use this',
+    dismiss: 'Dismiss',
+    askChange: 'Ask for a change',
+    changePlaceholder: 'Something different? Say what, in your words',
+    change: 'Change it',
   },
   onboarding: {
     title: 'Get started',
     stepsLabel: 'Steps to turn a repository on',
     reopen: 'Review this step',
+    stepState: { done: 'completed', failed: 'failed', pending: 'not started' },
     steps: {
       connect: 'Connect GitHub',
       choose: 'Choose a repository',
@@ -268,6 +293,8 @@ export const en = {
       search: 'Search repositories',
       none: 'No repository matches.',
       empty: 'The App reaches no repository yet. Install it on GitHub and choose the repositories.',
+      private: 'private',
+      public: 'public',
       pick: 'Turn on',
       picking: 'Turning on…',
       chosen: (name: string) => `${name} is turned on.`,

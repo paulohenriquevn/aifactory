@@ -72,13 +72,17 @@ export function NewJob({
       <Dialog.Trigger asChild>
         <Button size="sm">{label ?? t.newJob.open}</Button>
       </Dialog.Trigger>
-      <Dialog.Content>
+      <Dialog.Content closeLabel={t.newJob.close}>
         <Dialog.Header>
           <Dialog.Title>{t.newJob.title}</Dialog.Title>
           <Dialog.Description>{t.newJob.description}</Dialog.Description>
         </Dialog.Header>
         <Dialog.Body className="space-y-3 text-sm">
-          {enabled.length === 0 ? (
+          {repos === undefined ? (
+            message ? null : (
+              <p className="text-muted-foreground">{t.newJob.loading}</p>
+            )
+          ) : enabled.length === 0 ? (
             <p className="text-muted-foreground">{t.newJob.enableFirst}</p>
           ) : (
             <>

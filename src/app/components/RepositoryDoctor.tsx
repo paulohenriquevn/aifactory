@@ -20,15 +20,19 @@ function Row({
 }) {
   const { t } = useCopy()
   const status = item.status as 'blocked' | 'warn' | 'unknown'
+  // A report stored before the doctor sent codes has only the English sentences.
+  const sentence = item.say ? t.doctor.say[item.say.code] : undefined
+  const cause = sentence && item.say ? sentence.cause(item.say.values) : item.cause
+  const repair = sentence && item.say ? sentence.repair(item.say.values) : item.repair
   return (
     <li className="space-y-1 rounded-lg border border-border p-3" data-item={item.id}>
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant={variant[status]}>{t.doctor[status]}</Badge>
-        <span className="text-foreground">{item.cause}</span>
+        <span className="text-foreground">{cause}</span>
       </div>
-      {item.repair ? (
+      {repair ? (
         <p className="text-muted-foreground">
-          {t.doctor.repair} {item.repair}
+          {t.doctor.repair} {repair}
         </p>
       ) : null}
       <div className="flex gap-2">

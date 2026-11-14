@@ -45,7 +45,7 @@ export const ptBR: Copy = {
   topBar: {
     part: 'Parte do app',
     chat: 'Chat',
-    work: 'Work',
+    work: 'Trabalho',
     guide: 'Guia',
     openGuide: (name) => `Abrir o ${name}`,
     closeGuide: (name) => `Fechar o ${name}`,
@@ -135,11 +135,13 @@ export const ptBR: Copy = {
     description:
       'Abre uma issue no GitHub. Com \u201cComeçar agora\u201d a fábrica começa assim que ela é criada.',
     enableFirst: 'Primeiro, ative um repositório em Repositórios.',
+    loading: 'Lendo os seus repositórios…',
     repository: 'Repositório',
     titleField: 'Título',
     bodyField: 'O que ele deve fazer, e como você vai saber que funcionou?',
     startNow: 'Começar agora',
     create: 'Criar trabalho',
+    close: 'Fechar',
   },
   task: {
     loading: 'Carregando…',
@@ -250,11 +252,116 @@ export const ptBR: Copy = {
     tooSlow: 'Lenta demais',
     seconds: (n: string) => `${n} s`,
     proofFailed: (reason: string) => `A prova não pôde rodar: ${reason}`,
+    say: {
+      unknown: {
+        cause: (v) =>
+          `Não sei: ${v.tried} falhou (${v.error}). Nada é dado como certo sem ter sido lido.`,
+        repair: () => 'Verifique de novo daqui a pouco.',
+      },
+      issues_off: {
+        cause: (v) =>
+          `As Issues estão desligadas em ${v.repo}, então ninguém consegue pedir trabalho à fábrica ali.`,
+        repair: () =>
+          'Ligue as Issues em Settings, General, Features. Um fork começa com as Issues desligadas. Se você não pode mudar as configurações, peça a um administrador do repositório.',
+      },
+      app_unreachable: {
+        cause: (v) => `O GitHub App não alcança ${v.repo}.`,
+        repair: () =>
+          'Adicione o repositório à instalação do App, na página da conta que é dona dele.',
+      },
+      app_lacks: {
+        cause: (v) => `Falta à instalação do GitHub App em ${v.repo}: ${v.lacking}.`,
+        repair: () =>
+          'Aceite as permissões que o App pede na página da instalação; o GitHub mostra o pedido lá.',
+      },
+      app_events: {
+        cause: (v) =>
+          `O App não assina ${v.missing}, então o GitHub nunca avisa a fábrica quando isso acontece.`,
+        repair: (v) =>
+          v.owner
+            ? `Ligue os eventos que faltam em "Subscribe to events", nas configurações do App. A página só abre se você estiver logado no GitHub como ${v.owner}, a conta dona do App.`
+            : 'Ligue os eventos que faltam em "Subscribe to events", nas configurações do App.',
+      },
+      branches_missing: {
+        cause: (v) => `${v.repo} não tem a branch ${v.missing}.`,
+        repair: () => 'A fábrica consegue criar o que falta a partir da branch de release.',
+      },
+      label_missing: {
+        cause: (v) =>
+          `${v.repo} não tem o label "factory", que é o que pede à fábrica para pegar uma issue.`,
+        repair: () => 'A fábrica consegue criar o label.',
+      },
+      auto_merge_off: {
+        cause: (v) =>
+          `${v.integration} exige checks, então a fábrica espera por eles com o auto-merge, e ${v.repo} está com ${v.off} desligado.`,
+        repair: (v) => `Ligue ${v.turnOn} em Settings, General, Pull Requests.`,
+      },
+      ci_silent: {
+        cause: (v) =>
+          `${v.integration} exige ${v.silent}, que não apareceu em nenhum dos ${v.commits} commits e pull requests mais recentes: um workflow está desativado, ou nada o dispara.`,
+        repair: (v) =>
+          `Abra a aba Actions: reative um workflow que o GitHub desligou por inatividade, ou faça o workflow rodar em pull requests para ${v.integration}.`,
+      },
+      checks_alone: {
+        cause: (v) =>
+          `${v.integration} exige ${v.alone}, e nenhum check da fábrica tem esse nome: a fábrica só saberia de uma falha pelo CI, depois de os próprios checks passarem.`,
+        repair: () =>
+          'Adicione um check que rode o mesmo comando aos checks do repositório no painel, ou ao .factory/setup.json.',
+      },
+      tag_no_version: {
+        cause: (v) =>
+          `tag: ${v.workflow} roda quando uma tag é criada, e o package.json em ${v.ref} não tem versão para comparar com a próxima tag.`,
+        repair: () =>
+          'Antes de promover, ponha no package.json a versão que a release vai ter, ou publique com changesets.',
+      },
+      tag_mismatch: {
+        cause: (v) =>
+          `tag: ${v.workflow} roda quando uma tag é criada, e o package.json em ${v.ref} está em ${v.version}, enquanto a próxima tag seria ${v.next}: o que o workflow publica não teria a versão da tag.`,
+        repair: () =>
+          'Antes de promover, ponha no package.json a versão que a release vai ter, ou publique com changesets.',
+      },
+      recipe_problem: {
+        cause: (v) => v.problem,
+        repair: () =>
+          'Corrija o .factory/setup.json na branch padrão: uma execução para pelo mesmo motivo.',
+      },
+      recipe_pending: {
+        cause: (v) =>
+          `A receita pede ${v.pending}, que o sandbox só alcança depois que você aprovar.`,
+        repair: () => 'Aprove os domínios na página do repositório, no painel.',
+      },
+      sandbox_refused: {
+        cause: (v) =>
+          `O provedor de sandbox recusou a última execução deste repositório (tarefa ${v.taskId}, ${v.at}): ${v.error}`,
+        repair: () =>
+          'Ponha crédito no provedor de sandbox, ou corrija a chave dele no servidor. A tarefa tenta de novo sozinha quando o provedor aceitar.',
+      },
+    },
+  },
+  assist: {
+    label: {
+      goal: 'Me ajude a dizer',
+      job: 'Me ajude a dizer',
+      issue: 'Melhorar isto',
+      changes: 'Me ajude a dizer',
+      resolution: 'Me ajude a dizer',
+      setup: 'Configure para mim',
+    },
+    working: 'Trabalhando nisso…',
+    needsWords: 'Escreva algumas palavras primeiro.',
+    suggestion: 'Sugestão',
+    extraDomains: (domains) => `Domínios extras: ${domains}`,
+    use: 'Usar isto',
+    dismiss: 'Descartar',
+    askChange: 'Pedir uma mudança',
+    changePlaceholder: 'Quer diferente? Diga o quê, com as suas palavras',
+    change: 'Mudar',
   },
   onboarding: {
     title: 'Primeiros passos',
     stepsLabel: 'Passos para ligar um repositório',
     reopen: 'Rever este passo',
+    stepState: { done: 'concluído', failed: 'falhou', pending: 'não iniciado' },
     steps: {
       connect: 'Conectar o GitHub',
       choose: 'Escolher um repositório',
@@ -271,6 +378,8 @@ export const ptBR: Copy = {
       none: 'Nenhum repositório corresponde à busca.',
       empty:
         'O App ainda não alcança nenhum repositório. Instale-o no GitHub e escolha os repositórios.',
+      private: 'privado',
+      public: 'público',
       pick: 'Ligar',
       picking: 'Ligando…',
       chosen: (name: string) => `${name} está ligado.`,

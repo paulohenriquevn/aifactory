@@ -36,7 +36,7 @@
     "@theokit/agents": "^16.3.0",
     "@theokit/sdk": "^5.14.0",
     "@theokit/ui": "^1.12.2",
-    "@usetheo/ui": "^0.35.4",
+    "@usetheo/ui": "^0.36.0",
     "@vercel/sandbox": "^3.9.1",
     "drizzle-orm": "0.45.4",
     "e2b": "2.63.0",

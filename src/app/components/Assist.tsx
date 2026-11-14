@@ -10,15 +10,7 @@ import {
   type AssistKind,
   type Proposal,
 } from '../lib/assist'
-
-const LABEL: Record<AssistKind, string> = {
-  goal: 'Help me say it',
-  job: 'Help me say it',
-  issue: 'Improve this',
-  changes: 'Help me say it',
-  resolution: 'Help me say it',
-  setup: 'Set this up for me',
-}
+import { useCopy } from '../lib/copy'
 
 /** A text box with nothing in it is only worth helping with when the assistant can look at the project. */
 const NEEDS_WORDS: Record<AssistKind, boolean> = {
@@ -50,6 +42,7 @@ export function Assist({
   context?: string
   onUse: (proposal: Proposal) => void
 }) {
+  const { t } = useCopy()
   const agent = useAgent<{ message: string }>(agentFor(kind), {
     headers: { 'x-theo-action': '1' },
   })
@@ -74,15 +67,15 @@ export function Assist({
             ask()
           }}
         >
-          {LABEL[kind]}
+          {t.assist.label[kind]}
         </Button>
         {working ? (
           <span role="status" className="text-muted-foreground">
-            Working on it…
+            {t.assist.working}
           </span>
         ) : null}
         {!working && !proposal && !problem && NEEDS_WORDS[kind] && !ready ? (
-          <span className="text-muted-foreground">Write a few words first.</span>
+          <span className="text-muted-foreground">{t.assist.needsWords}</span>
         ) : null}
       </div>
       {problem && !working ? (
@@ -92,13 +85,15 @@ export function Assist({
       ) : null}
       {proposal && !working ? (
         <section
-          aria-label="Suggestion"
+          aria-label={t.assist.suggestion}
           className="space-y-2 rounded-lg border border-border bg-muted p-3"
         >
           {proposal.title ? <p className="font-medium text-foreground">{proposal.title}</p> : null}
           <p className="whitespace-pre-wrap text-foreground">{proposal.text}</p>
           {proposal.domains && proposal.domains.length > 0 ? (
-            <p className="text-muted-foreground">Extra domains: {proposal.domains.join(', ')}</p>
+            <p className="text-muted-foreground">
+              {t.assist.extraDomains(proposal.domains.join(', '))}
+            </p>
           ) : null}
           {proposal.notes ? <p className="text-muted-foreground">{proposal.notes}</p> : null}
           <div className="flex flex-wrap items-center gap-2">
@@ -110,7 +105,7 @@ export function Assist({
                 setInstruction('')
               }}
             >
-              Use this
+              {t.assist.use}
             </Button>
             <Button
               size="sm"
@@ -120,14 +115,14 @@ export function Assist({
                 setInstruction('')
               }}
             >
-              Dismiss
+              {t.assist.dismiss}
             </Button>
           </div>
           <div className="flex items-center gap-2">
             <Input
-              aria-label="Ask for a change"
+              aria-label={t.assist.askChange}
               value={instruction}
-              placeholder="Something different? Say what, in your words"
+              placeholder={t.assist.changePlaceholder}
               onChange={(e) => setInstruction(e.target.value)}
               className="flex-1"
             />
@@ -140,7 +135,7 @@ export function Assist({
                 setInstruction('')
               }}
             >
-              Change it
+              {t.assist.change}
             </Button>
           </div>
         </section>

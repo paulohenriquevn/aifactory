@@ -3,7 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DoctorReport, RepositoryView } from '../../shared/panel'
+import { DOCTOR_SAY_CODES } from '../../shared/doctor-say'
 import { CopyProvider, LANGUAGE_KEY } from '../lib/copy'
+import { en } from '../lib/copy/en'
+import { ptBR } from '../lib/copy/pt-BR'
 
 import { ProveChecks, RepositoryDoctor } from './RepositoryDoctor'
 
@@ -151,5 +154,75 @@ describe('proving the checks', () => {
     expect(api.post).toHaveBeenCalledWith(`${base}/checks/prove`, {
       checks: [{ name: 'unit', command: 'pnpm test' }],
     })
+  })
+})
+
+describe('the doctor in the language of the panel', () => {
+  const events: DoctorReport = {
+    fullName: 'me/app',
+    at: '2026-11-13T12:00:00.000Z',
+    publishMode: null,
+    items: [
+      {
+        id: 'app_events',
+        status: 'warn',
+        cause:
+          'The App does not subscribe to check_run, so GitHub never tells the factory about it.',
+        repair: 'Turn the missing events on under "Subscribe to events" in the App settings.',
+        canRepair: false,
+        say: { code: 'app_events', values: { missing: 'check_run', owner: 'paulo' } },
+      },
+      {
+        id: 'label',
+        status: 'unknown',
+        cause: 'Not known: reading the labels failed (502). Nothing is assumed to be fine.',
+        repair: 'Check again in a moment.',
+        canRepair: false,
+        say: { code: 'unknown', values: { tried: 'reading the labels', error: '502' } },
+      },
+    ],
+  }
+
+  it('writes the cause and the repair in Portuguese from the code, with the values in them', async () => {
+    window.localStorage.setItem(LANGUAGE_KEY, 'pt-BR')
+    api.get.mockResolvedValue(events)
+    mount()
+    const say = ptBR.doctor.say
+    expect(
+      await screen.findByText(say.app_events.cause({ missing: 'check_run', owner: 'paulo' })),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(say.app_events.repair({ missing: 'check_run', owner: 'paulo' }), {
+        exact: false,
+      }),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(say.unknown.cause({ tried: 'reading the labels', error: '502' })),
+    ).toBeTruthy()
+    expect(screen.queryByText(events.items[0]!.cause)).toBeNull()
+    expect(say.app_events.cause({ missing: 'check_run' })).toContain('check_run')
+    expect(say.app_events.repair({ owner: 'paulo' })).toContain('paulo')
+  })
+
+  it('shows the sentences the server sent for a report stored without codes', async () => {
+    window.localStorage.setItem(LANGUAGE_KEY, 'pt-BR')
+    api.get.mockResolvedValue({
+      ...events,
+      items: events.items.map(({ say: _say, ...item }) => item),
+    })
+    mount()
+    expect(await screen.findByText(events.items[0]!.cause)).toBeTruthy()
+  })
+
+  it('has a Portuguese sentence of its own for every code', () => {
+    for (const code of DOCTOR_SAY_CODES) {
+      const values = new Proxy({}, { get: (_, key) => `<${String(key)}>` }) as Record<
+        string,
+        string
+      >
+      if (code === 'recipe_problem') continue
+      expect(ptBR.doctor.say[code].cause(values)).not.toBe(en.doctor.say[code].cause(values))
+      expect(ptBR.doctor.say[code].repair(values)).not.toBe(en.doctor.say[code].repair(values))
+    }
   })
 })

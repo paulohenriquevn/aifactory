@@ -144,6 +144,53 @@ describe('the onboarding', () => {
     expect(await screen.findByText(en.onboarding.choose.chosen('me/app'))).toBeTruthy()
   })
 
+  it('marks no step as done while the connection to GitHub is still being checked', async () => {
+    api.get.mockImplementation((path: string) => {
+      if (path === '/api/panel/setup') return new Promise(() => {})
+      if (path === '/api/panel/repositories') return Promise.resolve(view(repo('me/app', true)))
+      if (path === '/api/panel/knowledge') return Promise.resolve({ repository: null })
+      return Promise.resolve(doctor('ok'))
+    })
+    mount()
+    await screen.findByText(en.onboarding.connect.loading)
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/panel/repositories'))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(document.querySelectorAll('[data-slot="stepper-step"][data-state="done"]').length).toBe(
+      0,
+    )
+    expect(current()).toContain(en.onboarding.steps.connect)
+  })
+
+  it.each([
+    ['en', en],
+    ['pt-BR', ptBR],
+  ] as const)('names the visibility of a repository in %s', async (language, copy) => {
+    window.localStorage.setItem(LANGUAGE_KEY, language)
+    serve({
+      setup: setupReady,
+      repos: view(repo('me/app'), { ...repo('me/open'), private: false }),
+    })
+    mount()
+    await screen.findByText('me/app')
+    expect(screen.getByText(copy.onboarding.choose.private)).toBeTruthy()
+    expect(screen.getByText(copy.onboarding.choose.public)).toBeTruthy()
+  })
+
+  it.each([
+    ['en', en],
+    ['pt-BR', ptBR],
+  ] as const)('says the state of each step to a screen reader in %s', async (language, copy) => {
+    window.localStorage.setItem(LANGUAGE_KEY, language)
+    serve({ setup: setupReady, repos: view(repo('me/app')) })
+    mount()
+    await screen.findByRole('textbox', { name: copy.onboarding.choose.search })
+    const steps = [...document.querySelectorAll('[data-slot="stepper-label"]')].map(
+      (el) => el.textContent,
+    )
+    expect(steps[0]).toContain(copy.onboarding.stepState.done)
+    expect(steps[2]).toContain(copy.onboarding.stepState.pending)
+  })
+
   it.each([
     ['en', en],
     ['pt-BR', ptBR],

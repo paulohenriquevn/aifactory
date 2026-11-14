@@ -6,6 +6,7 @@ import {
   type DoctorItemId,
   type PublishMode,
 } from '../../shared/panel'
+import { DOCTOR_SAY_EN, type DoctorSayCode, type DoctorSayValues } from '../../shared/doctor-say'
 import type { RepositorySettings } from '../github/pulls'
 import { missingRoutedEvents } from '../ingest/decide'
 
@@ -71,6 +72,9 @@ export type PublishFacts = {
   versionTags: string[]
 }
 
+/** What the App subscribes to, where its settings are and, when known, the account that owns it. */
+export type EventsFacts = { events: string[]; settingsUrl: string; owner?: string }
+
 export type RecipeFacts = {
   /** Why the recipe cannot be used. */
   problem?: string
@@ -93,7 +97,7 @@ export type DoctorFacts = {
   integration: string
   settings: Read<RepositorySettings>
   access: Read<AccessFacts>
-  events: Read<{ events: string[]; settingsUrl: string }>
+  events: Read<EventsFacts>
   /** The integration and pre-release branches that do not exist. */
   branches: Read<{ missing: string[] }>
   /** Whether the `factory` label exists. */
@@ -108,13 +112,28 @@ export type DoctorFacts = {
   sandbox: Read<SandboxFacts>
 }
 
-const unknownItem = (id: DoctorItemId, { tried, error }: Unread): DoctorItem => ({
+/**
+ * An item that is not fine. Its sentences come from the code, so the panel can say them in the owner's
+ * language from the same code and values.
+ */
+const problem = (
+  id: DoctorItemId,
+  status: 'warn' | 'blocked' | 'unknown',
+  code: DoctorSayCode,
+  values: DoctorSayValues,
+  extra: { link?: string; canRepair?: boolean } = {},
+): DoctorItem => ({
   id,
-  status: 'unknown',
-  cause: `Not known: ${tried} failed (${error}). Nothing is assumed to be fine.`,
-  repair: 'Check again in a moment.',
-  canRepair: false,
+  status,
+  cause: DOCTOR_SAY_EN[code].cause(values),
+  repair: DOCTOR_SAY_EN[code].repair(values),
+  ...(extra.link === undefined ? {} : { link: extra.link }),
+  canRepair: extra.canRepair ?? false,
+  say: { code, values },
 })
+
+const unknownItem = (id: DoctorItemId, { tried, error }: Unread): DoctorItem =>
+  problem(id, 'unknown', 'unknown', { tried, error })
 
 const fine = (id: DoctorItemId, cause: string): DoctorItem => ({
   id,
@@ -127,15 +146,15 @@ const fine = (id: DoctorItemId, cause: string): DoctorItem => ({
 export function issuesItem(repo: string, settings: Read<RepositorySettings>): DoctorItem {
   if (!settings.read) return unknownItem('issues_disabled', settings)
   if (settings.value.hasIssues) return fine('issues_disabled', 'Issues are on.')
-  return {
-    id: 'issues_disabled',
-    status: 'blocked',
-    cause: `Issues are turned off on ${repo}, so nobody can ask the factory for work there.`,
-    repair:
-      'Turn Issues on under Settings, General, Features. A fork starts with Issues off. If you cannot change the settings, ask an administrator of the repository.',
-    link: `https://github.com/${repo}/settings`,
-    canRepair: false,
-  }
+  return problem(
+    'issues_disabled',
+    'blocked',
+    'issues_off',
+    { repo },
+    {
+      link: `https://github.com/${repo}/settings`,
+    },
+  )
 }
 
 const LEVEL: Record<string, number> = { read: 1, write: 2, admin: 3 }
@@ -148,15 +167,7 @@ export function appAccessItem(repo: string, access: Read<AccessFacts>): DoctorIt
   const { reachable, granted, needed } = access.value
   const link = `https://github.com/${repo}/settings/installations`
   if (!reachable) {
-    return {
-      id: 'app_access',
-      status: 'blocked',
-      cause: `The GitHub App does not reach ${repo}.`,
-      repair:
-        'Add the repository to the installation of the App, on the page of the account that owns it.',
-      link,
-      canRepair: false,
-    }
+    return problem('app_access', 'blocked', 'app_unreachable', { repo }, { link })
   }
   const lacking = Object.entries(needed)
     .filter(([name, level]) => !covers(granted[name], level))
@@ -164,31 +175,28 @@ export function appAccessItem(repo: string, access: Read<AccessFacts>): DoctorIt
   if (lacking.length === 0) {
     return fine('app_access', `The GitHub App reaches ${repo} with every permission it needs.`)
   }
-  return {
-    id: 'app_access',
-    status: 'blocked',
-    cause: `The installation of the GitHub App on ${repo} lacks ${lacking.join(', ')}.`,
-    repair:
-      'Accept the permissions the App asks for on its installation page; GitHub shows the request there.',
-    link,
-    canRepair: false,
-  }
+  return problem(
+    'app_access',
+    'blocked',
+    'app_lacks',
+    { repo, lacking: lacking.join(', ') },
+    { link },
+  )
 }
 
-export function appEventsItem(events: Read<{ events: string[]; settingsUrl: string }>): DoctorItem {
+export function appEventsItem(events: Read<EventsFacts>): DoctorItem {
   if (!events.read) return unknownItem('app_events', events)
   const missing = missingRoutedEvents(events.value.events)
   if (missing.length === 0) {
     return fine('app_events', 'The App subscribes to every event the factory reads.')
   }
-  return {
-    id: 'app_events',
-    status: 'warn',
-    cause: `The App does not subscribe to ${missing.join(', ')}, so GitHub never tells the factory about it.`,
-    repair: 'Turn the missing events on under "Subscribe to events" in the App settings.',
-    link: events.value.settingsUrl,
-    canRepair: false,
-  }
+  return problem(
+    'app_events',
+    'warn',
+    'app_events',
+    { missing: missing.join(', '), ...(events.value.owner ? { owner: events.value.owner } : {}) },
+    { link: events.value.settingsUrl },
+  )
 }
 
 export function branchesItem(repo: string, branches: Read<{ missing: string[] }>): DoctorItem {
@@ -197,27 +205,28 @@ export function branchesItem(repo: string, branches: Read<{ missing: string[] }>
   if (missing.length === 0) {
     return fine('branches', 'The integration and pre-release branches exist.')
   }
-  return {
-    id: 'branches',
-    status: 'blocked',
-    cause: `${repo} has no branch ${missing.join(', ')}.`,
-    repair: 'The factory can create what is missing from the head of the release branch.',
-    link: `https://github.com/${repo}/branches`,
-    canRepair: true,
-  }
+  return problem(
+    'branches',
+    'blocked',
+    'branches_missing',
+    { repo, missing: missing.join(', ') },
+    { link: `https://github.com/${repo}/branches`, canRepair: true },
+  )
 }
 
 export function labelItem(repo: string, label: Read<boolean>): DoctorItem {
   if (!label.read) return unknownItem('label', label)
   if (label.value) return fine('label', 'The "factory" label exists.')
-  return {
-    id: 'label',
-    status: 'warn',
-    cause: `${repo} has no "factory" label, which is what asks the factory to take an issue.`,
-    repair: 'The factory can create the label.',
-    link: `https://github.com/${repo}/labels`,
-    canRepair: true,
-  }
+  return problem(
+    'label',
+    'warn',
+    'label_missing',
+    { repo },
+    {
+      link: `https://github.com/${repo}/labels`,
+      canRepair: true,
+    },
+  )
 }
 
 /**
@@ -244,14 +253,13 @@ export function autoMergeItem(
     ...(allowMergeCommit === false ? ['"Allow merge commits"'] : []),
   ]
   if (off.length > 0) {
-    return {
-      id: 'auto_merge',
-      status: 'blocked',
-      cause: `${integration} requires status checks, so the factory waits for them through auto-merge, and ${repo} has ${off.join(', ')} turned off.`,
-      repair: `Turn on ${off.join(' and ')} under Settings, General, Pull Requests.`,
-      link: `https://github.com/${repo}/settings`,
-      canRepair: false,
-    }
+    return problem(
+      'auto_merge',
+      'blocked',
+      'auto_merge_off',
+      { integration, repo, off: off.join(', '), turnOn: off.join(' and ') },
+      { link: `https://github.com/${repo}/settings` },
+    )
   }
   if (allowAutoMerge === undefined || allowMergeCommit === undefined) {
     return unknownItem(
@@ -292,15 +300,14 @@ export function ciSilentItem(
   if (silent.length === 0) {
     return fine('ci_silent', `Every required check of ${integration} reported on a recent commit.`)
   }
-  return {
-    id: 'ci_silent',
-    // With no pull request to look at, a workflow that runs only on pull requests looks silent too.
-    status: pullRequests > 0 ? 'blocked' : 'warn',
-    cause: `${integration} requires ${silent.join(', ')}, which reported on none of its ${commits.length} most recent commits and pull requests: a workflow is disabled, or nothing triggers it.`,
-    repair: `Open the Actions tab: enable a workflow GitHub disabled for inactivity, or make the workflow run on pull requests into ${integration}.`,
-    link: `https://github.com/${repo}/actions`,
-    canRepair: false,
-  }
+  // With no pull request to look at, a workflow that runs only on pull requests looks silent too.
+  return problem(
+    'ci_silent',
+    pullRequests > 0 ? 'blocked' : 'warn',
+    'ci_silent',
+    { integration, silent: silent.join(', '), commits: String(commits.length) },
+    { link: `https://github.com/${repo}/actions` },
+  )
 }
 
 const words = (name: string) => name.toLowerCase().match(/[a-z0-9]+/g) ?? []
@@ -335,15 +342,13 @@ export function checksParityItem(
       `Every required check of ${integration} has a check of the factory.`,
     )
   }
-  return {
-    id: 'checks_parity',
-    status: 'warn',
-    cause: `${integration} requires ${alone.join(', ')}, and no check of the factory has that name: the factory would learn of a failure only from CI, after its own checks passed.`,
-    repair:
-      'Add a check that runs the same command to the checks of the repository in the panel, or to .factory/setup.json.',
-    link: '/repositories',
-    canRepair: false,
-  }
+  return problem(
+    'checks_parity',
+    'warn',
+    'checks_alone',
+    { integration, alone: alone.join(', ') },
+    { link: '/repositories' },
+  )
 }
 
 /** Whether a workflow file is started by a pushed tag: its `push` trigger names tags. */
@@ -390,27 +395,31 @@ const oneOf = (names: string[]) =>
  */
 function tagItem(repo: string, publish: PublishFacts): DoctorItem {
   const [workflow] = publish.tagWorkflows
-  const where = `tag: ${workflow} runs on a tag, and package.json on ${publish.ref}`
-  const warning = {
-    id: 'publish_mode',
-    status: 'warn',
-    repair:
-      'Set the version in package.json to the one the release will have before promoting, or publish with changesets.',
-    link: `https://github.com/${repo}/blob/${publish.ref}/${workflow}`,
-    canRepair: false,
-  } as const
+  const link = `https://github.com/${repo}/blob/${publish.ref}/${workflow}`
   const version = publish.manifestVersion
   if (version === undefined) {
-    return { ...warning, cause: `${where} has no version to compare with the next tag.` }
+    return problem(
+      'publish_mode',
+      'warn',
+      'tag_no_version',
+      { workflow, ref: publish.ref },
+      { link },
+    )
   }
   const next = nextTags(publish.versionTags)
   if (next.includes(`v${version}`)) {
-    return fine('publish_mode', `${where} is at ${version}, a version the next tag may have.`)
+    return fine(
+      'publish_mode',
+      `tag: ${workflow} runs on a tag, and package.json on ${publish.ref} is at ${version}, a version the next tag may have.`,
+    )
   }
-  return {
-    ...warning,
-    cause: `${where} is at ${version}, while the next tag would be ${oneOf(next)}: what the workflow publishes would not carry the version of the tag.`,
-  }
+  return problem(
+    'publish_mode',
+    'warn',
+    'tag_mismatch',
+    { workflow, ref: publish.ref, version, next: oneOf(next) },
+    { link },
+  )
 }
 
 export function publishItem(repo: string, publish: Read<PublishFacts>): DoctorItem {
@@ -431,28 +440,20 @@ export function publishItem(repo: string, publish: Read<PublishFacts>): DoctorIt
 
 export function recipeItem(recipe: Read<RecipeFacts>): DoctorItem {
   if (!recipe.read) return unknownItem('recipe', recipe)
-  const { problem, pending, url } = recipe.value
-  if (problem !== undefined) {
-    return {
-      id: 'recipe',
-      status: 'blocked',
-      cause: problem,
-      repair: 'Fix .factory/setup.json on the default branch: a run stops with the same reason.',
-      link: url,
-      canRepair: false,
-    }
+  const { problem: reason, pending, url } = recipe.value
+  if (reason !== undefined) {
+    return problem('recipe', 'blocked', 'recipe_problem', { problem: reason }, { link: url })
   }
   if (pending.length === 0) {
     return fine('recipe', 'The recipe has no problem and no domain waiting for approval.')
   }
-  return {
-    id: 'recipe',
-    status: 'warn',
-    cause: `The recipe asks for ${pending.join(', ')}, which the sandbox does not reach until you approve them.`,
-    repair: 'Approve the domains on the page of the repository in the panel.',
-    link: '/repositories',
-    canRepair: false,
-  }
+  return problem(
+    'recipe',
+    'warn',
+    'recipe_pending',
+    { pending: pending.join(', ') },
+    { link: '/repositories' },
+  )
 }
 
 const NO_CREDIT = /Status code 402|spend_limit|usage limit exceeded/i
@@ -475,15 +476,13 @@ export function sandboxItem(sandbox: Read<SandboxFacts>): DoctorItem {
   if (!refusal || Date.parse(lastStartedAt ?? '') >= Date.parse(refusal.at)) {
     return fine('sandbox', 'The sandbox provider has not refused the latest run.')
   }
-  return {
-    id: 'sandbox',
-    status: 'blocked',
-    cause: `The sandbox provider refused the last run of this repository (task ${refusal.taskId}, ${refusal.at}): ${refusal.error}`,
-    repair:
-      'Add credit to the sandbox provider, or fix its key on the server. The task retries itself once the provider accepts.',
-    link: `/tasks/${refusal.taskId}`,
-    canRepair: false,
-  }
+  return problem(
+    'sandbox',
+    'blocked',
+    'sandbox_refused',
+    { taskId: String(refusal.taskId), at: refusal.at, error: refusal.error },
+    { link: `/tasks/${refusal.taskId}` },
+  )
 }
 
 /** The report: one item for each diagnosis, in the order of `DOCTOR_ITEMS`. */
