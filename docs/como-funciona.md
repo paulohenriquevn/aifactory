@@ -1294,6 +1294,8 @@ para conectar o Codex de novo pela página Setup. Cada execução simultânea do
 precisa do seu login (`~/.codex-factory-2` e assim por diante); o Claude por token não tem essa
 restrição. A OpenAI recomenda não usar login de assinatura em repositório público.
 
+Quando o provedor recusa o token com um 401 (mesmo com `exp` distante), a fábrica renova o login uma vez à força, para o token que o sandbox tem, atualiza o firewall e repete o passo. Se a renovação falha, a tarefa espera para tentar de novo e o painel mostra o login do Codex como recusado.
+
 ## Alimentando a fábrica com um backlog
 
 `scripts/backlog-feed.mjs` lê o `BACKLOG.md` do squad que veio antes da fábrica e transforma cada item

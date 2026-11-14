@@ -4,7 +4,10 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { persistOAuthTokens } from '@theokit/agents/auth'
+
 import {
+  CODEX_STORE,
   codexAccount,
   codexAuthFile,
   CodexLoginError,
@@ -12,7 +15,9 @@ import {
   fromCliAuth,
   hasCodexLogin,
   legacyAuthFile,
+  markCodexRefused,
   REFRESH_MARGIN_MS,
+  renewCodexLogin,
   saveCodexLogin,
 } from './codex-auth'
 
@@ -219,5 +224,135 @@ describe('codexAccount', () => {
     const account = codexAccount(env)
     expect(account.connected).toBe(false)
     expect(account).toHaveProperty('problem')
+  })
+})
+
+describe('a login the provider refused before its exp', () => {
+  const renewedBody = (access: string) => ({
+    access_token: access,
+    refresh_token: 'rotated',
+    expires_in: 864_000,
+  })
+
+  it('is shown as not connected, with the reason, until it is replaced', async () => {
+    const env = newHome()
+    const access = accessExpiring(66 * 3_600_000)
+    writeCliLogin(env, access)
+    await freshCodexLogin({ env, fetch: refusing, now: () => NOW })
+    expect(codexAccount(env)).toMatchObject({ connected: true })
+
+    await markCodexRefused(access, env)
+
+    const account = codexAccount(env)
+    expect(account.connected).toBe(false)
+    expect(account).toMatchObject({
+      problem: expect.stringMatching(/refused.*connect Codex again/),
+    })
+    expect(JSON.stringify(account)).not.toContain(access)
+  })
+
+  it('is renewed at once whatever its exp says, and the marker goes with the token it was about', async () => {
+    const env = newHome()
+    const access = accessExpiring(66 * 3_600_000)
+    writeCliLogin(env, access)
+    await freshCodexLogin({ env, fetch: refusing, now: () => NOW })
+    await markCodexRefused(access, env)
+    const renewed = accessExpiring(10 * 86_400_000)
+
+    const login = await renewCodexLogin(access, {
+      env,
+      fetch: answering(renewedBody(renewed)),
+      now: () => NOW,
+    })
+
+    expect(login.accessToken).toBe(renewed)
+    expect(codexAccount(env)).toMatchObject({ connected: true })
+  })
+
+  it('uses a login another run already replaced, without renewing it, and keeps a refusal of that one', async () => {
+    const env = newHome()
+    const old = accessExpiring(66 * 3_600_000)
+    writeCliLogin(env, old)
+    await freshCodexLogin({ env, fetch: refusing, now: () => NOW })
+    const replacement = accessExpiring(9 * 86_400_000)
+    await saveCodexLogin(
+      { access: replacement, refresh: 'other', expires: NOW + 9 * 86_400_000, idToken: ID_TOKEN },
+      env,
+    )
+    // A concurrent run was refused for the replacement.
+    await markCodexRefused(replacement, env)
+
+    const login = await renewCodexLogin(old, { env, fetch: refusing, now: () => NOW })
+
+    expect(login.accessToken).toBe(replacement)
+    expect(codexAccount(env)).toMatchObject({ connected: false })
+  })
+
+  it('does not renew a login that was replaced after the check, and keeps what the replacement is', async () => {
+    const env = newHome()
+    const old = accessExpiring(66 * 3_600_000)
+    writeCliLogin(env, old)
+    await freshCodexLogin({ env, fetch: refusing, now: () => NOW })
+    const replacement = accessExpiring(9 * 86_400_000)
+    let replaced = false
+    // Replaced once the renewal is under way: after its own check of the store, before the refresh goes out.
+    const now = () => {
+      if (!replaced) {
+        replaced = true
+        persistOAuthTokens(
+          'openai',
+          {
+            access: replacement,
+            refresh: 'other',
+            expires: NOW + 9 * 86_400_000,
+            idToken: ID_TOKEN,
+          },
+          CODEX_STORE,
+          env,
+        )
+      }
+      return NOW
+    }
+
+    // A refresh that would be refused: it must never be asked.
+    const login = await renewCodexLogin(old, {
+      env,
+      fetch: answering({ error: 'invalid_grant' }, 400),
+      now,
+    })
+
+    expect(replaced).toBe(true)
+    expect(login.accessToken).toBe(replacement)
+    expect(stored(env)).toMatchObject({ access: replacement, refresh: 'other' })
+  })
+
+  it('ignores a refusal that arrives late for a token already replaced', async () => {
+    const env = newHome()
+    const old = accessExpiring(66 * 3_600_000)
+    writeCliLogin(env, old)
+    await freshCodexLogin({ env, fetch: refusing, now: () => NOW })
+    const replacement = accessExpiring(9 * 86_400_000)
+    await saveCodexLogin(
+      { access: replacement, refresh: 'other', expires: NOW + 9 * 86_400_000, idToken: ID_TOKEN },
+      env,
+    )
+
+    await markCodexRefused(replacement, env)
+    await markCodexRefused(old, env)
+
+    expect(codexAccount(env)).toMatchObject({ connected: false })
+  })
+
+  it('says the login was refused and must be connected again when the renewal fails', async () => {
+    const env = newHome()
+    const access = accessExpiring(66 * 3_600_000)
+    writeCliLogin(env, access)
+    await expect(
+      renewCodexLogin(access, {
+        env,
+        fetch: answering({ error: 'invalid_grant' }, 400),
+        now: () => NOW,
+      }),
+    ).rejects.toThrow(/was refused and could not be renewed.*connect Codex again/)
   })
 })
