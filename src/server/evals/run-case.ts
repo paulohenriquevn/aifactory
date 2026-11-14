@@ -26,8 +26,11 @@ import {
   type HarnessResult,
 } from '../factory/harness'
 import {
+  blockingCount,
   MAX_ATTEMPTS,
+  OUTSIDE_THE_PLAN,
   parseVerdict,
+  reviewAllowsRework,
   reviewPrompt,
   reworkPrompt,
   type Finding,
@@ -80,6 +83,8 @@ class CaseRun {
   cost = 0
   attempts = 1
   reviewRounds = 0
+  /** The findings that block, in each review round so far. */
+  private readonly blockingCounts: number[] = []
   private sessionId: string | undefined
   /** What the builder meant to change, written before it changed anything. */
   private plan: ChangePlan | undefined
@@ -259,10 +264,13 @@ class CaseRun {
       : { verdict: 'invalid', summary: result.summary, findings: [] }
   }
 
+  private canResume(): boolean {
+    return this.deps.builder.resume !== undefined && !!this.sessionId
+  }
+
+  /** Failing checks send the builder back up to `MAX_ATTEMPTS`; a review has its own rule. */
   private canRework(): boolean {
-    return (
-      this.attempts < MAX_ATTEMPTS && this.deps.builder.resume !== undefined && !!this.sessionId
-    )
+    return this.attempts < MAX_ATTEMPTS && this.canResume()
   }
 
   /** Checks, reviews and reworks until the case is approved or out of attempts, as `Run.loop` does. */
@@ -293,7 +301,12 @@ class CaseRun {
       if (read.verdict === 'approve' && blocking.length === 0) {
         return { checksPassed: true, verdict: 'approve', blockingGuards: [] }
       }
-      if (read.verdict === 'invalid' || !this.canRework()) {
+      if (read.verdict !== 'approve') this.blockingCounts.push(blockingCount(read.findings))
+      if (
+        read.verdict === 'invalid' ||
+        !this.canResume() ||
+        !reviewAllowsRework(this.attempts, this.blockingCounts)
+      ) {
         return {
           checksPassed: true,
           verdict: read.verdict,
@@ -304,7 +317,7 @@ class CaseRun {
       const outside: Finding[] = unplanned.map((file) => ({
         severity: 'minor',
         file,
-        issue: 'changed outside the plan',
+        issue: OUTSIDE_THE_PLAN,
       }))
       await this.rework([...guards, ...outside, ...read.findings], [])
     }

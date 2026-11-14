@@ -53,13 +53,17 @@ import {
 } from './change-plan'
 import { buildPrompt, type CodingHarness, type HarnessResult } from './harness'
 import {
+  blockingCount,
   MAX_ATTEMPTS,
   notResolvedPrompt,
+  OUTSIDE_THE_PLAN,
   parseVerdict,
   renderFindings,
   resolvedPrompt,
+  reviewAllowsRework,
   reviewPrompt,
   reworkPrompt,
+  roundsNote,
   type Finding,
   type ReviewVerdict,
 } from './review'
@@ -1129,7 +1133,7 @@ export class Run {
     const outside: Finding[] = unplanned.map((file) => ({
       severity: 'minor',
       file,
-      issue: 'changed outside the plan',
+      issue: OUTSIDE_THE_PLAN,
     }))
     const merged: ReviewVerdict = {
       verdict: blocked ? 'changes' : read.verdict,
@@ -1341,12 +1345,13 @@ export class Run {
     attempt: number,
     here: StoredCheck[],
     outcome: ReviewVerdict,
+    counts: number[] = [],
   ): Promise<RunResult> {
     const { deps, taskId, row, api, branch, state } = this.c
     const reason =
       outcome.verdict === 'invalid'
         ? `the review gave no usable verdict: ${outcome.summary}`
-        : `the reviewer still asked for changes after ${attempt} attempt${attempt === 1 ? '' : 's'}`
+        : `the reviewer still asked for changes after ${attempt} attempt${attempt === 1 ? '' : 's'}${roundsNote(attempt, counts)}`
     state.current = 'pr'
     const pull = await api.openPullRequest(row.repository, this.c.token, {
       head: branch,
@@ -1403,12 +1408,13 @@ export class Run {
   }
 
   /**
-   * Checks the commit and has it reviewed, up to three attempts. Failing checks and a review that
+   * Checks the commit and has it reviewed, up to three attempts, or six while the blocking findings fall. Failing checks and a review that
    * asks for changes send the work back to the same agent session; an approval opens the pull request,
    * and running out of attempts after green checks hands the work to a person.
    */
   async loop(pushed: string): Promise<RunResult> {
     let sha = pushed
+    const counts: number[] = []
     for (let attempt = this.c.resuming?.attempt ?? 1; ; attempt++) {
       const canRework =
         attempt < MAX_ATTEMPTS && this.builder.resume !== undefined && !!this.sessionId
@@ -1425,11 +1431,14 @@ export class Run {
 
       const outcome = await this.review(sha, attempt)
       if (outcome.verdict === 'approve') return this.approved(sha, attempt, checked.here, outcome)
-      if (outcome.verdict === 'changes' && canRework) {
+      counts.push(blockingCount(outcome.findings))
+      const mayRework =
+        this.builder.resume !== undefined && !!this.sessionId && reviewAllowsRework(attempt, counts)
+      if (outcome.verdict === 'changes' && mayRework) {
         sha = await this.rework(attempt + 1, outcome.findings, [])
         continue
       }
-      return this.handOver(sha, attempt, checked.here, outcome)
+      return this.handOver(sha, attempt, checked.here, outcome, counts)
     }
   }
 }

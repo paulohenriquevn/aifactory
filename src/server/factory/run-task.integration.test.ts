@@ -1041,6 +1041,64 @@ describe('runTask review loop', () => {
     expect(row).toMatchObject({ stage: 'handoff', pullRequestUrl: PR_URL })
   })
 
+  const roundsOf = (...sizes: number[]) =>
+    sizes.map((n) =>
+      verdictJson(
+        'changes',
+        Array.from({ length: n }, (_, i) => ({ ...finding, issue: `problem ${i}` })),
+        'still wrong',
+      ),
+    )
+
+  it('gives a fourth round to a review whose blocking findings fall: 4, 3, 2', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const reviewer = reviewerSaying(...roundsOf(4, 3, 2), verdictJson('approve'))
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+      id,
+    )
+
+    expect(result).toMatchObject({ status: 'done' })
+    expect(reviewer.prompts).toHaveLength(4)
+    expect(builder.resumed).toHaveLength(3)
+  })
+
+  it('hands over a review that is not converging: 5, 6, 7', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const reviewer = reviewerSaying(...roundsOf(5, 6, 7))
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+      id,
+    )
+
+    expect(result.status).toBe('handoff')
+    const reason = result.status === 'handoff' ? result.reason : ''
+    expect(reason).toContain('the review is not converging')
+    expect(reason).toContain('5, 6, 7')
+    expect(reviewer.prompts).toHaveLength(3)
+  })
+
+  it('hands over at the higher limit while the findings still fall, with the counts', async () => {
+    const id = await seedTask()
+    const builder = resumableBuilder()
+    const reviewer = reviewerSaying(...roundsOf(9, 8, 7, 6, 5, 4))
+
+    const result = await runTask(
+      deps(new FakeSandbox(changed()), { harness: builder, reviewer }),
+      id,
+    )
+
+    expect(result.status).toBe('handoff')
+    const reason = result.status === 'handoff' ? result.reason : ''
+    expect(reason).toContain('after 6 attempts')
+    expect(reason).toContain('9, 8, 7, 6, 5, 4')
+    expect(reviewer.prompts).toHaveLength(6)
+  })
+
   it('hands over at once when the reviewer gives no verdict, and does not rework blindly', async () => {
     const id = await seedTask()
     const builder = resumableBuilder()

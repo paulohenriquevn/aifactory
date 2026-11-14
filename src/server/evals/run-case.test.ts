@@ -295,6 +295,42 @@ describe('runCase', () => {
     expect(builder.prompts[3]).not.toContain('.changeset/calm-owls.md')
   })
 
+  const changesWith = (n: number) =>
+    JSON.stringify({
+      verdict: 'changes',
+      summary: 'wrong',
+      findings: Array.from({ length: n }, (_, i) => ({ severity: 'major', issue: `problem ${i}` })),
+    })
+  const rounds = (...sizes: number[]) =>
+    sizes.map((n): HarnessResult => ({ ok: true, summary: changesWith(n) }))
+
+  it('gives a fourth review round when the blocking findings fall: 4, 3, 2', async () => {
+    const builder = agent('builder', planned(built(), built(), built(), built()))
+    const reviewer = agent('reviewer', [...rounds(4, 3, 2), { ok: true, summary: APPROVE }])
+
+    const result = await runCase(deps(sandbox(), builder, reviewer), evalCase)
+
+    expect(result).toMatchObject({ passed: true, reviewRounds: 4 })
+  })
+
+  it('stops after three rounds when the blocking findings do not fall: 5, 6, 7', async () => {
+    const builder = agent('builder', planned(built(), built(), built()))
+    const reviewer = agent('reviewer', rounds(5, 6, 7))
+
+    const result = await runCase(deps(sandbox(), builder, reviewer), evalCase)
+
+    expect(result).toMatchObject({ passed: false, reviewRounds: 3 })
+  })
+
+  it('stops at the higher limit while the findings still fall', async () => {
+    const builder = agent('builder', planned(built(), built(), built(), built(), built(), built()))
+    const reviewer = agent('reviewer', rounds(9, 8, 7, 6, 5, 4))
+
+    const result = await runCase(deps(sandbox(), builder, reviewer), evalCase)
+
+    expect(result).toMatchObject({ passed: false, reviewRounds: 6 })
+  })
+
   it('says nothing to the reviewer about the checks when none failed', async () => {
     const reviewer = agent('reviewer', [{ ok: true, summary: APPROVE }])
 
