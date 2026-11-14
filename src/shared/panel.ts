@@ -244,6 +244,8 @@ export type AgentComparison = {
   rework: BuilderRework[]
   reviewerRework: ReviewerRework[]
   cost: AgentDeliveryCost[]
+  /** The whole cost of a delivered run, for the agent and model that reviewed it. */
+  reviewerCost: AgentDeliveryCost[]
 }
 
 export type MetricsReport = {

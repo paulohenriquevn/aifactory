@@ -113,6 +113,50 @@ export function costByAgent(passes: PassFact[], events: EventsByTask): AgentDeli
     .sort((a, b) => a.agent.localeCompare(b.agent) || (a.model ?? '').localeCompare(b.model ?? ''))
 }
 
+/**
+ * What a delivered run cost as a whole, for the reviewer and model that reviewed it, so a change of reviewer
+ * can be compared on what a delivery cost with it: the build, the rework and the reviews. A run belongs to
+ * the agent and model of the last review made while it lasted; a delivered run with no review is left out.
+ * Unknown costs are kept unknown: a run with any pass lacking a cost is counted in `deliveredRuns` and left
+ * out of `reportedRuns` and `costUsd`.
+ */
+export function costByReviewer(
+  passes: PassFact[],
+  reviews: ReviewFact[],
+  events: EventsByTask,
+): AgentDeliveryCost[] {
+  const groups = new Map<string, AgentDeliveryCost>()
+  for (const [taskId, taskEvents] of events) {
+    for (const run of runsOf(taskEvents)) {
+      if (!terminalOf(run) || !run.events.some((e) => e.stage === 'done')) continue
+      const last = reviews
+        .filter((r) => r.taskId === taskId && inRun(run, r.at))
+        .sort((a, b) => a.at.getTime() - b.at.getTime())
+        .at(-1)
+      if (!last) continue
+      const made = passes.filter((p) => p.taskId === taskId && inRun(run, p.at))
+      const key = keyOf(last.reviewer, last.model)
+      const g = groups.get(key) ?? {
+        agent: last.reviewer,
+        model: last.model,
+        deliveredRuns: 0,
+        reportedRuns: 0,
+        costUsd: 0,
+        perDelivery: null,
+      }
+      g.deliveredRuns += 1
+      if (made.every((p) => p.costUsd !== null)) {
+        g.reportedRuns += 1
+        g.costUsd += made.reduce((sum, p) => sum + (p.costUsd ?? 0), 0)
+      }
+      groups.set(key, g)
+    }
+  }
+  return [...groups.values()]
+    .map((g) => ({ ...g, perDelivery: g.reportedRuns > 0 ? g.costUsd / g.reportedRuns : null }))
+    .sort((a, b) => a.agent.localeCompare(b.agent) || (a.model ?? '').localeCompare(b.model ?? ''))
+}
+
 async function eventsOf(db: Database): Promise<EventsByTask> {
   const rows = await db
     .select({
@@ -277,5 +321,6 @@ export async function comparisonByAgent(db: Database): Promise<AgentComparison> 
     rework,
     reviewerRework: reworkByReviewer(reviews, rounds, events),
     cost: costByAgent(passes, events),
+    reviewerCost: costByReviewer(passes, reviews, events),
   }
 }

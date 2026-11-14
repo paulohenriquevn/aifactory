@@ -5,6 +5,7 @@ import type { TaskStage } from '../db/schema'
 import {
   approvalByReviewer,
   costByAgent,
+  costByReviewer,
   reworkByBuilder,
   reworkByReviewer,
   type EventsByTask,
@@ -231,6 +232,68 @@ describe('reworkByReviewer', () => {
     ).toEqual([
       { reviewer: 'codex', model: 'gpt-6.1-sol', reviews: 1, reworkRounds: 1, perReview: 1 },
       { reviewer: 'codex', model: 'gpt-6.1-terra', reviews: 1, reworkRounds: 0, perReview: 0 },
+    ])
+  })
+})
+
+describe('costByReviewer', () => {
+  const pass = (
+    taskId: number,
+    harness: string,
+    costUsd: number | null,
+    hour: number,
+  ): PassFact => ({
+    taskId,
+    harness,
+    model: null,
+    costUsd,
+    at: at(hour),
+  })
+
+  it('charges the whole delivery, builds and reworks included, to the reviewer that reviewed it', () => {
+    const passes = [
+      pass(1, 'claude-code', 10, 1),
+      pass(1, 'codex', 1, 2),
+      pass(2, 'codex', 4, 1),
+      pass(2, 'codex', 2, 2),
+    ]
+    const reviews = [fact(1, 'codex', 'approve', 2), fact(2, 'claude-code', 'approve', 2)]
+    expect(costByReviewer(passes, reviews, events([1, finished(0)], [2, finished(0)]))).toEqual([
+      {
+        agent: 'claude-code',
+        model: null,
+        deliveredRuns: 1,
+        reportedRuns: 1,
+        costUsd: 6,
+        perDelivery: 6,
+      },
+      {
+        agent: 'codex',
+        model: null,
+        deliveredRuns: 1,
+        reportedRuns: 1,
+        costUsd: 11,
+        perDelivery: 11,
+      },
+    ])
+  })
+
+  it('keeps a delivery unknown when any of its passes reported no cost, and skips one nobody reviewed', () => {
+    const passes = [
+      pass(1, 'claude-code', 10, 1),
+      pass(1, 'codex', null, 2),
+      pass(2, 'codex', 4, 1),
+    ]
+    const reviews = [fact(1, 'codex', 'approve', 2)]
+    expect(costByReviewer(passes, reviews, events([1, finished(0)], [2, finished(0)]))).toEqual([
+      {
+        agent: 'codex',
+        model: null,
+        deliveredRuns: 1,
+        reportedRuns: 0,
+        costUsd: 0,
+        perDelivery: null,
+      },
     ])
   })
 })

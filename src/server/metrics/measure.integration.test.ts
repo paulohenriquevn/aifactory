@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import {
+  agentRun,
   evidence,
   ingress,
   metricPoint,
@@ -87,7 +88,7 @@ const openIssue = async (repository: string, title: string, body: string) => {
 
 beforeEach(async () => {
   await getPool().query(
-    'truncate table metric_signal, metric_point, watch, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table metric_signal, metric_point, watch, review, agent_run, evidence, stage_event, task, ingress restart identity cascade',
   )
   opened.length = 0
   failures = 0
@@ -354,9 +355,80 @@ describe('first-review approval by agent', () => {
       { reviewer: 'claude-code', model: null, reviews: 2, approved: 1, share: 0.5 },
       { reviewer: 'codex', model: null, reviews: 1, approved: 1, share: 1 },
     ])
-    expect((await metricsReport(db, NOW)).byAgent.reviewerRework).toEqual([
-      { reviewer: 'claude-code', model: null, reviews: 2, reworkRounds: 0, perReview: 0 },
-      { reviewer: 'codex', model: null, reviews: 1, reworkRounds: 0, perReview: 0 },
+  })
+
+  it('attributes rework and the whole cost of a delivery to the reviewer that reviewed it', async () => {
+    const db = getDb()
+    // One delivery per reviewer: changes asked at 10:05, a rework build at 10:10, approval at 10:20, with
+    // a builder pass costing `build`, the rework `rework` and two review passes costing `review` each.
+    const reviewedTwice = async (
+      reviewer: string,
+      build: number,
+      rework: number,
+      review_: number,
+    ) => {
+      const taskId = await delivered(10, build + rework + 2 * review_)
+      const round = (n: number, verdict: 'changes' | 'approve', minutes: number) =>
+        db.insert(review).values({
+          taskId,
+          round: n,
+          sha: `s${n}`,
+          reviewer,
+          verdict,
+          summary: '',
+          findings: [],
+          at: dayAt(10, minutes),
+        })
+      const pass = (role: 'builder' | 'reviewer', attempt: number, cost: number, minutes: number) =>
+        db.insert(agentRun).values({
+          taskId,
+          role,
+          harness: role === 'builder' ? 'claude-code' : reviewer,
+          attempt,
+          costUsd: cost,
+          durationMs: 1,
+          ok: true,
+          at: dayAt(10, minutes),
+        })
+      await pass('builder', 1, build, 2)
+      await pass('reviewer', 1, review_, 4)
+      await round(1, 'changes', 5)
+      await db.insert(stageEvent).values({
+        taskId,
+        stage: 'build',
+        detail: { harness: 'claude-code', attempt: 2, rework: true },
+        at: dayAt(10, 10),
+      })
+      await pass('builder', 2, rework, 12)
+      await pass('reviewer', 2, review_, 19)
+      await round(2, 'approve', 20)
+    }
+    await reviewedTwice('claude-code', 10, 3, 1)
+    await reviewedTwice('codex', 4, 1, 2)
+
+    const { byAgent } = await metricsReport(db, NOW)
+
+    expect(byAgent.reviewerRework).toEqual([
+      { reviewer: 'claude-code', model: null, reviews: 2, reworkRounds: 1, perReview: 0.5 },
+      { reviewer: 'codex', model: null, reviews: 2, reworkRounds: 1, perReview: 0.5 },
+    ])
+    expect(byAgent.reviewerCost).toEqual([
+      {
+        agent: 'claude-code',
+        model: null,
+        deliveredRuns: 1,
+        reportedRuns: 1,
+        costUsd: 15,
+        perDelivery: 15,
+      },
+      {
+        agent: 'codex',
+        model: null,
+        deliveredRuns: 1,
+        reportedRuns: 1,
+        costUsd: 9,
+        perDelivery: 9,
+      },
     ])
   })
 })

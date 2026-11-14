@@ -709,7 +709,7 @@ const metricsReport: MetricsReport = {
       rules: [],
     },
   ],
-  byAgent: { approval: [], rework: [], reviewerRework: [], cost: [] },
+  byAgent: { approval: [], rework: [], reviewerRework: [], cost: [], reviewerCost: [] },
   signals: [
     {
       metric: 'cost_per_delivery',
@@ -753,7 +753,7 @@ describe('health metrics', () => {
       'GET /api/panel/metrics': {
         rows: [],
         signals: [],
-        byAgent: { approval: [], rework: [], reviewerRework: [], cost: [] },
+        byAgent: { approval: [], rework: [], reviewerRework: [], cost: [], reviewerCost: [] },
       },
     })
     render(
