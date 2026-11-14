@@ -1,5 +1,6 @@
 import type { CheckReport, PullRequestDetail } from '../github/pulls'
 
+import type { FailedStep } from './promotion'
 import { AUTOMATIC_RETRIES, automaticRunsLeft } from './transitions'
 
 /**
@@ -20,14 +21,19 @@ const FRAME = 18
  * What the factory read on the server about a failed check run: the lines of its log (or its annotations and
  * summary) that say why it failed, or why they could not be read.
  */
-export type ServerEvidence = { lines: string[] } | { unreadable: string }
+export type ServerEvidence = { lines: string[]; step?: FailedStep } | { unreadable: string }
 
 /**
  * A failed check as the note names it. A commit status has no check run, so it has no evidence. A check that
  * is `notRequired` failed on the same commit and is named because a required check (an aggregate job) said
  * only that something it depends on failed.
  */
-export type FailedReport = CheckReport & { evidence?: ServerEvidence; notRequired?: true }
+export type FailedReport = CheckReport & {
+  evidence?: ServerEvidence
+  notRequired?: true
+  /** No check of the factory's has this name: only running the step's command in the sandbox reproduces it. */
+  alone?: true
+}
 
 /** What to do about a task whose pull request waits for the repository's required checks. */
 export type WaitingStep =
@@ -41,7 +47,7 @@ export type WaitingStep =
   | { kind: 'send_back'; failed: string[]; reports: CheckReport[] }
   /** The pull request conflicts with its base: the task starts again from the new base. */
   | { kind: 'start_over'; reason: string }
-  | { kind: 'person'; reason: string; stopAutoMerge: boolean }
+  | { kind: 'person'; reason: string; stopAutoMerge: boolean; reports?: CheckReport[] }
 
 export type WaitingIntegration = {
   /** The commit the factory verified and reviewed: the only one it lets merge. */
@@ -145,6 +151,7 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
         kind: 'person',
         reason: `the required checks still fail after ${runs}: ${failed.join(', ')}`,
         stopAutoMerge: true,
+        reports: failed.map((name) => failedRun(input.reports, name)!),
       }
     }
     const reports = failed.map((name) => failedRun(input.reports, name)!)
@@ -166,7 +173,9 @@ const unread = (r: FailedReport) => r.evidence !== undefined && 'unreadable' in 
 const remarks = (r: FailedReport) =>
   (r.notRequired
     ? ' (not a required check: it failed on the same commit, where a required one names no failure of its own)'
-    : '') + (unread(r) ? ' (the factory could not read its log or annotations)' : '')
+    : '') +
+  (r.alone ? ' (no check of the factory matches it, so the factory never ran it)' : '') +
+  (unread(r) ? ' (the factory could not read its log or annotations)' : '')
 
 /** The lines read from the check's log or annotations, when the factory read any. */
 const evidenceLines = (r: FailedReport) =>
@@ -183,7 +192,19 @@ function quote(r: FailedReport, share: number): string {
   return text.replace(/~{3,}/g, '~~')
 }
 
-const said = (r: FailedReport) => evidenceLines(r).length > 0 || r.detail.trim() !== ''
+/** The line that names the step that exited and what it ran, so the builder can run it in the sandbox. */
+function stepLine(r: FailedReport): string {
+  const step = r.evidence && 'lines' in r.evidence ? r.evidence.step : undefined
+  if (!step) return ''
+  const ran = step.command && step.command !== step.name ? ` (ran: ${step.command})` : ''
+  return `Step that exited: ${step.name}${ran}\n`.replace(/~{3,}/g, '~~')
+}
+
+/** What a note says after its list of checks: the quoted reports, for a handoff to carry the same evidence. */
+export const evidenceOfNote = (note: string): string => note.split('\n\n').slice(1).join('\n\n')
+
+const said = (r: FailedReport) =>
+  evidenceLines(r).length > 0 || r.detail.trim() !== '' || stepLine(r) !== ''
 
 /**
  * The feedback a run gets when the repository's required checks failed: every check with its link, and what
@@ -191,16 +212,24 @@ const said = (r: FailedReport) => evidenceLines(r).length > 0 || r.detail.trim()
  * server is quoted from it, because the agent's sandbox cannot open the link; one whose evidence could not be
  * read says so, and the reason goes to the factory's log rather than to the agent.
  */
-export function checksFeedback(sha: string, failed: FailedReport[]): string {
+export function checksFeedback(sha: string, failed: FailedReport[], rerunProblem?: string): string {
   const head = [
     `The repository's required checks failed on ${short(sha)}, so the pull request was not merged. Fix what they report:`,
     ...failed.map((r) => `- ${r.name}: ${r.url}${remarks(r)}`),
+    ...(rerunProblem
+      ? [
+          `The factory could not rerun the failed jobs (${rerunProblem.slice(0, 200)}), so a failure that is not of the work may be among these.`,
+        ]
+      : []),
   ].join('\n')
   const told = failed.filter(said)
   // Each report gets an equal share of what is left once its frame (`\n\n<name>:\n` and a fence) is counted.
-  const frames = told.reduce((sum, r) => sum + r.name.length + FRAME, 0)
+  const frames = told.reduce((sum, r) => sum + r.name.length + FRAME + stepLine(r).length, 0)
   const share = Math.floor((NOTE_MAX - head.length - frames) / Math.max(told.length, 1))
   if (share < TAIL_MIN) return head.slice(0, NOTE_MAX)
-  const quotes = told.map((r) => `\n\n${r.name}:\n~~~~text\n${quote(r, share)}\n~~~~`)
+  const quotes = told.map((r) => {
+    const text = quote(r, share)
+    return `\n\n${r.name}:\n${stepLine(r)}${text === '' ? '' : `~~~~text\n${text}\n~~~~`}`
+  })
   return head + quotes.join('')
 }

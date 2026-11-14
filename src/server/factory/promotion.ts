@@ -58,6 +58,9 @@ const TELLING = [
   /\berror TS\d+/,
   /^[✖×]/,
   /^\d+:\d+\s+error\s/,
+  /^ERROR: /,
+  /^error [\w-]+: /,
+  /\bE[A-Z]{4,}: /,
 ]
 
 /** A heading under which knip and similar tools list what they found, one item per line. */
@@ -67,6 +70,32 @@ const LINT_ERROR = /^\d+:\d+\s+error\s/
 
 const clean = (raw: string) =>
   raw.replace(TIMESTAMP, '').replace(COLORS, '').replace('##[error]', '').trim()
+
+/** The step of a job that failed: the script that exited (when the log names it) and the command the step ran. */
+export type FailedStep = { name: string; command?: string }
+
+const GROUP_RUN = /^##\[group\]Run (.+)$/
+const EXITED = /ERROR: "([^"]+)" exited with \d+/
+
+/**
+ * The step that exited, read from an Actions log: the command of the last `Run` group before the first error
+ * line, and the script a runner such as pnpm says exited. Undefined when the log names neither.
+ */
+export function failedStep(log: string): FailedStep | undefined {
+  let command: string | undefined
+  let script: string | undefined
+  let ended = false
+  for (const raw of log.split('\n')) {
+    const line = clean(raw)
+    const stripped = raw.replace(TIMESTAMP, '').replace(COLORS, '').trim()
+    const group = GROUP_RUN.exec(stripped)
+    if (group && !ended) command = group[1].slice(0, MAX_LINE)
+    if (raw.includes('##[error]')) ended = true
+    script ??= EXITED.exec(line)?.[1]
+  }
+  const name = script ?? command
+  return name ? { name, ...(command ? { command } : {}) } : undefined
+}
 
 /**
  * The lines of a job's log that say why it failed, read without a model: assertions, failing tests,

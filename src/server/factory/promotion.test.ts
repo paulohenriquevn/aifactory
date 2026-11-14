@@ -7,6 +7,7 @@ import {
   recurrenceIsNewIssue,
   issueBody,
   issueTitle,
+  failedStep,
   logEvidence,
   needsPerson,
   newIssuesCapFromEnv,
@@ -371,5 +372,31 @@ describe('recurrenceIsNewIssue', () => {
 
   it('opens a new issue when the issue was closed', () => {
     expect(recurrenceIsNewIssue({ issueOpen: false, fixIntegrated: false })).toBe(true)
+  })
+})
+
+describe('failedStep', () => {
+  it('names the script that exited and the command of the step', () => {
+    const log = [
+      '2026-11-12T10:00:00Z ##[group]Run pnpm quality',
+      'ERROR: "quality:loc" exited with 1.',
+      '2026-11-12T10:00:01Z ##[error]Process completed with exit code 1.',
+    ].join('\n')
+    expect(failedStep(log)).toEqual({ name: 'quality:loc', command: 'pnpm quality' })
+    expect(logEvidence(log)).toEqual(['ERROR: "quality:loc" exited with 1.'])
+  })
+
+  it('falls back to the command, and to nothing for a log without steps', () => {
+    expect(failedStep('##[group]Run npm test\n##[error]boom\n##[group]Run post')).toEqual({
+      name: 'npm test',
+      command: 'npm test',
+    })
+    expect(failedStep('nothing here')).toBeUndefined()
+  })
+
+  it('keeps depcruise rule lines and errno lines as evidence', () => {
+    expect(logEvidence('error types-dont-import-runtime: a.ts → b.ts')).toHaveLength(1)
+    expect(logEvidence('Error: ENOTEMPTY: directory not empty, rmdir x')).toHaveLength(1)
+    expect(logEvidence('ENOTEMPTY: directory not empty')).toHaveLength(1)
   })
 })

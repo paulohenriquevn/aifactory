@@ -2,10 +2,11 @@ import type { FailedRun, PromotionApi } from '../github/promotion-api'
 import type { CheckReport } from '../github/pulls'
 
 import type { FailedReport, ServerEvidence } from './ci-wait'
-import { checkEvidence, logEvidence } from './promotion'
+import { checkEvidence, failedStep, logEvidence } from './promotion'
 
 /** What reading a failed check's evidence takes from GitHub, with a repository-scoped token. */
-export type EvidenceApi = Pick<PromotionApi, 'failedChecks' | 'jobLog' | 'annotations'>
+export type EvidenceApi = Pick<PromotionApi, 'failedChecks' | 'jobLog' | 'annotations'> &
+  Partial<Pick<PromotionApi, 'jobAttempt' | 'rerunFailedJobs'>>
 
 /**
  * The lines that say why a check run failed, read on the factory host: the error lines of an Actions job's
@@ -22,6 +23,94 @@ export async function readEvidence(
   return checkEvidence(await api.annotations(repo, token, run.id), run.summary)
 }
 
+/** What became of the rerun of the failed jobs: how many runs are rerunning, and what kept the others from it. */
+export type RerunOutcome = { started: number; problems: string[] }
+
+/** The reruns the factory asked for, by commit and run, and when: the next pass waits for them to finish. */
+export type RerunMemo = Map<string, number>
+
+/** How long a requested rerun is waited for before the failure counts again. */
+const RERUN_WAIT_MS = 15 * 60_000
+
+const said = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** A check run whose log or annotations were read and said nothing about what failed (an aggregate job). */
+const aggregate = (evidence: ServerEvidence) => 'lines' in evidence && evidence.lines.length === 0
+
+/**
+ * The failed Actions runs worth rerunning: the runs of the failed required checks and, when they all say
+ * no more than that something they depend on failed (an aggregate job such as `checks-pass`), the other
+ * failed runs of the commit, as `alongside` names them. A run of an unrelated workflow is left alone.
+ */
+async function relevantRuns(
+  api: EvidenceApi,
+  repo: string,
+  token: string,
+  runs: FailedRun[],
+  names: string[],
+): Promise<FailedRun[]> {
+  const named = runs.filter((run) => run.actions && names.includes(run.name))
+  const evidence = await Promise.all(named.map((run) => evidenceOf(api, repo, token, run)))
+  if (named.length > 0 && !evidence.every(aggregate)) return named
+  return runs.filter((run) => run.actions)
+}
+
+/**
+ * Reruns, once, the failed Actions runs behind the failed required checks whose job is on its first attempt:
+ * a failure that is not of the work (a flaky test) passes on the second attempt. A job already on its second
+ * attempt is never rerun, and a run rerun by `memo` in the last quarter of an hour is waited for, not
+ * rerun again. What GitHub refuses or fails to answer is a problem the caller reports, per run, so one failure
+ * does not keep the others from being rerun. An API without the rerun calls reruns nothing and says nothing.
+ */
+export async function rerunTransient(
+  api: EvidenceApi,
+  repo: string,
+  token: string,
+  sha: string,
+  reports: CheckReport[],
+  memo: RerunMemo,
+  now: Date = new Date(),
+): Promise<RerunOutcome> {
+  const outcome: RerunOutcome = { started: 0, problems: [] }
+  const { jobAttempt, rerunFailedJobs } = api
+  if (!jobAttempt || !rerunFailedJobs) return outcome
+  let runs: FailedRun[]
+  try {
+    runs = await relevantRuns(
+      api,
+      repo,
+      token,
+      await api.failedChecks(repo, token, sha),
+      reports.map((r) => r.name),
+    )
+  } catch (error) {
+    outcome.problems.push(`listing the failed jobs: ${said(error)}`)
+    return outcome
+  }
+  const tried = new Set<number>()
+  for (const run of runs) {
+    try {
+      const job = await jobAttempt.call(api, repo, token, run.id)
+      if (job.attempt >= 2 || tried.has(job.runId)) continue
+      tried.add(job.runId)
+      const key = `${sha}:${job.runId}`
+      const asked = memo.get(key)
+      if (asked !== undefined && now.getTime() - asked < RERUN_WAIT_MS) {
+        outcome.started += 1
+        continue
+      }
+      const answer = await rerunFailedJobs.call(api, repo, token, job.runId)
+      if (answer.started) {
+        memo.set(key, now.getTime())
+        outcome.started += 1
+      } else outcome.problems.push(answer.refusal)
+    } catch (error) {
+      outcome.problems.push(`rerunning ${run.name}: ${said(error)}`)
+    }
+  }
+  return outcome
+}
+
 const unreadable = (error: unknown): ServerEvidence => ({
   unreadable: error instanceof Error ? error.message : String(error),
 })
@@ -34,7 +123,10 @@ async function evidenceOf(
   run: FailedRun,
 ): Promise<ServerEvidence> {
   try {
-    return { lines: await readEvidence(api, repo, token, run) }
+    if (!run.actions) return { lines: await readEvidence(api, repo, token, run) }
+    const log = await api.jobLog(repo, token, run.id)
+    const step = failedStep(log)
+    return { lines: logEvidence(log), ...(step ? { step } : {}) }
   } catch (error) {
     return unreadable(error)
   }

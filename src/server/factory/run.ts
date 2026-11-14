@@ -21,6 +21,7 @@ import { KnowledgeFeed } from '../knowledge/feed'
 import { parseLearned, withoutLearned } from '../knowledge/format'
 
 import { cloneRepository } from './clone'
+import { evidenceOfNote } from './ci-wait'
 import { ensureBranches, integrationBranch } from './branches'
 import { uploadChangesetCheck } from './changeset-check'
 import { withChangesetCheck } from './changesets'
@@ -792,14 +793,16 @@ export class Run {
    */
   private async checksUnanswered(first: HarnessResult): Promise<RunResult> {
     const { deps, taskId, row, api, branch } = this.c
+    const evidence = evidenceOfNote(this.c.continuation?.feedback ?? '').slice(0, 2_500)
     const reason =
-      "the repository's required checks failed and the agent changed nothing, saying why below"
+      "the repository's required checks failed and the agent changed nothing, saying why below" +
+      (evidence ? `. What the failed checks reported:\n\n${evidence}` : '')
     const said = first.summary.slice(0, 3_000)
     await api.commentOnIssue(
       row.repository,
       this.c.token,
       row.issueNumber,
-      `The repository's required checks failed on ${row.pullRequestUrl}, and the agent left it as it is:\n\n${said}`,
+      `The repository's required checks failed on ${row.pullRequestUrl}, and the agent left it as it is:\n\n${said}${evidence ? `\n\nWhat the failed checks reported:\n\n${evidence}` : ''}`,
     )
     await enterStage(deps.db, taskId, 'handoff', {
       branch,
