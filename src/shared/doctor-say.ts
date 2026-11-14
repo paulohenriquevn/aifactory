@@ -79,6 +79,36 @@ export const DOCTOR_TRIED_EN: DoctorTriedSentences = {
 export const RECIPE_WHY_KINDS = ['not_json', 'invalid', 'status'] as const
 export type RecipeWhyKind = (typeof RECIPE_WHY_KINDS)[number]
 
+/** The rule an invalid recipe broke, which a reader says in its own language. */
+export const RECIPE_RULES = ['type', 'too_small', 'too_big', 'unknown_keys', 'hostname'] as const
+
+/** A recipe that cannot be used, as parts: the kind, where, and for `invalid`, the rule with its numbers. */
+export type RecipeWhy = {
+  kind: RecipeWhyKind
+  repo: string
+  path: string
+  /** The English reason, for a rule this list does not know. */
+  detail: string
+  /** The field that broke the rule, as a dotted path; empty for the whole file. */
+  at?: string
+  rule?: (typeof RECIPE_RULES)[number]
+  /** The type a value should have, the limit it crossed, what the limit counts, the fields not known. */
+  expected?: string
+  limit?: string
+  origin?: string
+  keys?: string
+}
+
+/** The merge settings a repository has turned off, by the values the doctor sends. */
+export const MERGE_SETTINGS = [
+  ['autoMerge', '"Allow auto-merge"'],
+  ['mergeCommit', '"Allow merge commits"'],
+] as const
+
+/** The names of the merge settings that are off, to be joined in the language of the reader. */
+export const settingsOff = (v: DoctorSayValues) =>
+  MERGE_SETTINGS.filter(([key]) => v[key] === 'off').map(([, name]) => name)
+
 export type DoctorSayCode = (typeof DOCTOR_SAY_CODES)[number]
 
 /** The values a sentence is built from, already joined into text. */
@@ -139,8 +169,9 @@ export const DOCTOR_SAY_EN: DoctorSentences = {
   },
   auto_merge_off: {
     cause: (v) =>
-      `${v.integration} requires status checks, so the factory waits for them through auto-merge, and ${v.repo} has ${v.off} turned off.`,
-    repair: (v) => `Turn on ${v.turnOn} under Settings, General, Pull Requests.`,
+      `${v.integration} requires status checks, so the factory waits for them through auto-merge, and ${v.repo} has ${settingsOff(v).join(', ')} turned off.`,
+    repair: (v) =>
+      `Turn on ${settingsOff(v).join(' and ')} under Settings, General, Pull Requests.`,
   },
   ci_silent: {
     cause: (v) =>

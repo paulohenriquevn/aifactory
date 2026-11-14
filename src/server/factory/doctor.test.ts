@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { ptBR } from '../../app/lib/copy/pt-BR'
 import { DOCTOR_SAY_CODES, DOCTOR_SAY_EN, DOCTOR_TRIED_CODES } from '../../shared/doctor-say'
 
 import {
@@ -28,6 +29,7 @@ import {
   type DoctorFacts,
   type PublishFacts,
 } from './doctor'
+import { parseRecipe, type RecipeError } from './recipe'
 
 const REPO = 'o/r'
 const down = unread('reading o/r', 'GitHub answered 502 reading o/r: ')
@@ -266,8 +268,7 @@ describe('auto_merge', () => {
         values: {
           integration: 'workspace',
           repo: 'o/r',
-          off: '"Allow auto-merge"',
-          turnOn: '"Allow auto-merge"',
+          autoMerge: 'off',
         },
       },
     })
@@ -289,6 +290,16 @@ describe('auto_merge', () => {
       settings({ allowAutoMerge: false, allowMergeCommit: false }),
     )
     expect(both.cause).toContain('has "Allow auto-merge", "Allow merge commits" turned off.')
+    // Each setting is sent apart, so a language joins them with its own word.
+    expect(both.say?.values).toEqual({
+      integration: 'workspace',
+      repo: 'o/r',
+      autoMerge: 'off',
+      mergeCommit: 'off',
+    })
+    expect(ptBR.doctor.say.auto_merge_off.repair(both.say!.values)).toBe(
+      'Ligue "Allow auto-merge" e "Allow merge commits" em Settings, General, Pull Requests.',
+    )
   })
 
   it('is fine when checks are required and both settings are on', () => {
@@ -556,6 +567,41 @@ describe('publish_mode', () => {
 
   it('is unknown when the repository could not be read', () => {
     expectUnknown(publishItem(REPO, down))
+  })
+})
+
+describe('a recipe that is invalid, said in Portuguese from what the validator found', () => {
+  const url = 'https://github.com/o/r/blob/main/.factory/setup.json'
+  const cause = (recipe: unknown) => {
+    try {
+      parseRecipe(REPO, JSON.stringify(recipe))
+    } catch (error) {
+      const item = recipeItem(
+        readOf({
+          problem: (error as Error).message,
+          why: (error as RecipeError).why,
+          pending: [],
+          url,
+        }),
+      )
+      return ptBR.doctor.say.recipe_problem.cause(item.say!.values)
+    }
+    throw new Error('the recipe was accepted')
+  }
+  const at = 'o/r: .factory/setup.json na branch padrão não pode ser usado:'
+
+  it('names the field and the rule with no English from the validator', () => {
+    expect(cause({ install: 5 })).toBe(`${at} install deve ser um texto`)
+    expect(cause({ install: '' })).toBe(`${at} install deve ter ao menos 1 caractere`)
+    expect(cause({ install: 'x'.repeat(601) })).toBe(
+      `${at} install deve ter no máximo 600 caracteres`,
+    )
+    expect(cause({ checks: [] })).toBe(`${at} checks deve ter ao menos 1 item`)
+    expect(cause({ egress: ['https://x.org'] })).toBe(`${at} egress.0 não é um nome de host`)
+    expect(cause({ network: 'all' })).toBe(
+      `${at} o arquivo tem campos que a receita não conhece: network`,
+    )
+    expect(cause([])).toBe(`${at} o arquivo deve ser um objeto`)
   })
 })
 

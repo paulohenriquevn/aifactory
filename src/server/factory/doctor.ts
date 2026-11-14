@@ -12,7 +12,7 @@ import {
   type DoctorSayCode,
   type DoctorSayValues,
   type DoctorTried,
-  type RecipeWhyKind,
+  type RecipeWhy,
 } from '../../shared/doctor-say'
 import type { RepositorySettings } from '../github/pulls'
 import { missingRoutedEvents } from '../ingest/decide'
@@ -99,7 +99,7 @@ export type RecipeFacts = {
   /** Why the recipe cannot be used. */
   problem?: string
   /** The same reason as a kind and its parts, so the panel can say it in the owner's language. */
-  why?: { kind: RecipeWhyKind; repo: string; path: string; detail: string }
+  why?: RecipeWhy
   /** Domains the recipe asks for that the owner has not approved. */
   pending: string[]
   /** The recipe file on GitHub. */
@@ -273,16 +273,16 @@ export function autoMergeItem(
     return fine('auto_merge', 'ok_auto_merge_free', { integration })
   }
   const { allowAutoMerge, allowMergeCommit } = settings.value
-  const off = [
-    ...(allowAutoMerge === false ? ['"Allow auto-merge"'] : []),
-    ...(allowMergeCommit === false ? ['"Allow merge commits"'] : []),
-  ]
-  if (off.length > 0) {
+  const off: DoctorSayValues = {
+    ...(allowAutoMerge === false ? { autoMerge: 'off' } : {}),
+    ...(allowMergeCommit === false ? { mergeCommit: 'off' } : {}),
+  }
+  if (Object.keys(off).length > 0) {
     return problem(
       'auto_merge',
       'blocked',
       'auto_merge_off',
-      { integration, repo, off: off.join(', '), turnOn: off.join(' and ') },
+      { integration, repo, ...off },
       { link: `https://github.com/${repo}/settings` },
     )
   }

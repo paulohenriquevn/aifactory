@@ -1,4 +1,4 @@
-import type { DoctorTriedSentences } from '../../../shared/doctor-say'
+import { settingsOff, type DoctorTriedSentences } from '../../../shared/doctor-say'
 
 import type { Copy } from './en'
 
@@ -22,10 +22,35 @@ const TRIED: DoctorTriedSentences = {
 const tried = (v: Record<string, string>) => TRIED[v.what as keyof typeof TRIED]?.(v) ?? v.tried
 
 /** Why a recipe cannot be used, by kind. */
-const RECIPE_WHY: Record<string, (detail: string) => string> = {
-  not_json: (d) => `ele não é JSON (${d})`,
-  invalid: (d) => d,
-  status: (d) => `o GitHub respondeu ${d} ao lê-lo`,
+const TYPES: Record<string, string> = {
+  string: 'um texto',
+  array: 'uma lista',
+  object: 'um objeto',
+  number: 'um número',
+  boolean: 'verdadeiro ou falso',
+}
+/** What a field has too few or too many of: the characters of a text, the items of a list. */
+const unitOf = (v: Record<string, string>, n: string) =>
+  v.origin === 'array'
+    ? `${n} ${n === '1' ? 'item' : 'itens'}`
+    : `${n} ${n === '1' ? 'caractere' : 'caracteres'}`
+
+/** The rule an invalid recipe broke, in Portuguese; the English reason for a rule not listed. */
+const RULES: Record<string, (v: Record<string, string>) => string> = {
+  type: (v) => `deve ser ${TYPES[v.expected ?? ''] ?? v.expected ?? 'de outro tipo'}`,
+  too_small: (v) => `deve ter ao menos ${unitOf(v, v.limit ?? '')}`,
+  too_big: (v) => `deve ter no máximo ${unitOf(v, v.limit ?? '')}`,
+  unknown_keys: (v) => `tem campos que a receita não conhece: ${v.keys}`,
+  hostname: () => 'não é um nome de host',
+}
+
+const RECIPE_WHY: Record<string, (v: Record<string, string>) => string> = {
+  not_json: (v) => `ele não é JSON (${v.detail})`,
+  invalid: (v) => {
+    const rule = RULES[v.rule ?? '']
+    return rule ? `${v.at || 'o arquivo'} ${rule(v)}` : (v.detail ?? '')
+  },
+  status: (v) => `o GitHub respondeu ${v.detail} ao lê-lo`,
 }
 
 /** The panel's text in Brazilian Portuguese. Typed against English: a missing or extra key does not compile. */
@@ -326,8 +351,8 @@ export const ptBR: Copy = {
       },
       auto_merge_off: {
         cause: (v) =>
-          `${v.integration} exige checks, então a fábrica espera por eles com o auto-merge, e ${v.repo} está com ${v.off} desligado.`,
-        repair: (v) => `Ligue ${v.turnOn} em Settings, General, Pull Requests.`,
+          `${v.integration} exige checks, então a fábrica espera por eles com o auto-merge, e ${v.repo} está com ${settingsOff(v).join(', ')} desligado.`,
+        repair: (v) => `Ligue ${settingsOff(v).join(' e ')} em Settings, General, Pull Requests.`,
       },
       ci_silent: {
         cause: (v) =>
@@ -357,7 +382,7 @@ export const ptBR: Copy = {
         cause: (v) => {
           const why = RECIPE_WHY[v.kind ?? '']
           return why
-            ? `${v.repo}: ${v.path} na branch padrão não pode ser usado: ${why(v.detail ?? '')}`
+            ? `${v.repo}: ${v.path} na branch padrão não pode ser usado: ${why(v)}`
             : (v.problem ?? '')
         },
         repair: () =>

@@ -8,7 +8,7 @@ import { FACTORY_LABEL } from '../ingest/decide'
 
 import { integrationBranch, PRE_RELEASE_BRANCH } from './branches'
 import { usesChangesets, withChangesetCheck } from './changesets'
-import type { DoctorTried } from '../../shared/doctor-say'
+import type { DoctorTried, RecipeWhy } from '../../shared/doctor-say'
 import {
   manifestVersion,
   providerRefusal,
@@ -188,7 +188,7 @@ async function readPublish(reader: Reader, defaultBranch: string): Promise<Publi
 async function readRecipe(
   { api, name, token }: Reader,
   defaultBranch: string,
-): Promise<{ recipe?: Recipe; problem?: string; why?: RecipeError['why'] }> {
+): Promise<{ recipe?: Recipe; problem?: string; why?: RecipeWhy }> {
   const text = await api.readFile(name, token, RECIPE_PATH, defaultBranch)
   if (text === undefined) return {}
   try {

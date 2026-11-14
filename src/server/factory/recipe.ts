@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import type { RecipeWhy } from '../../shared/doctor-say'
 import type { FetchLike } from '../github/app'
 
 import type { CheckSpec } from './evidence'
@@ -37,22 +38,31 @@ const schema = z
 
 /** The recipe of a project could not be used. The run stops and says why, so the file gets fixed. */
 export class RecipeError extends Error {
-  /** The reason as a kind and its detail, for a reader that says it in another language. */
-  readonly why: {
-    kind: 'not_json' | 'invalid' | 'status'
-    repo: string
-    path: string
-    detail: string
-  }
+  /** The reason as parts, for a reader that says it in another language. */
+  readonly why: RecipeWhy
 
-  constructor(
-    repo: string,
-    reason: string,
-    why: { kind: 'not_json' | 'invalid' | 'status'; detail: string },
-  ) {
+  constructor(repo: string, reason: string, why: Omit<RecipeWhy, 'repo' | 'path'>) {
     super(`${repo}: ${RECIPE_PATH} on the default branch cannot be used: ${reason}`)
     this.name = 'RecipeError'
     this.why = { ...why, repo, path: RECIPE_PATH }
+  }
+}
+
+/** The rule a Zod issue says was broken, with the numbers and names the sentence needs. */
+function ruleOf(issue: z.core.$ZodIssue): Partial<RecipeWhy> {
+  switch (issue.code) {
+    case 'invalid_type':
+      return { rule: 'type', expected: issue.expected }
+    case 'too_small':
+      return { rule: 'too_small', limit: String(issue.minimum), origin: issue.origin }
+    case 'too_big':
+      return { rule: 'too_big', limit: String(issue.maximum), origin: issue.origin }
+    case 'unrecognized_keys':
+      return { rule: 'unknown_keys', keys: issue.keys.join(', ') }
+    case 'invalid_format':
+      return { rule: 'hostname' }
+    default:
+      return {}
   }
 }
 
@@ -73,6 +83,8 @@ export function parseRecipe(repo: string, text: string): Recipe {
     throw new RecipeError(repo, `${at || 'the file'} ${issue.message}`, {
       kind: 'invalid',
       detail: at ? `${at} ${issue.message}` : issue.message,
+      at,
+      ...ruleOf(issue),
     })
   }
   return parsed.data
