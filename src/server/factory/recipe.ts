@@ -48,6 +48,16 @@ export class RecipeError extends Error {
   }
 }
 
+/** Where the parser says the text breaks, when it says: `position 1`, and `(line 1 column 2)` on newer Node. */
+function jsonPosition(detail: string): Partial<RecipeWhy> {
+  const position = /position (\d+)/.exec(detail)?.[1]
+  const place = /line (\d+) column (\d+)/.exec(detail)
+  return {
+    ...(position ? { position } : {}),
+    ...(place ? { line: place[1], column: place[2] } : {}),
+  }
+}
+
 /** The rule a Zod issue says was broken, with the numbers and names the sentence needs. */
 function ruleOf(issue: z.core.$ZodIssue): Partial<RecipeWhy> {
   switch (issue.code) {
@@ -71,9 +81,11 @@ export function parseRecipe(repo: string, text: string): Recipe {
   try {
     value = JSON.parse(text)
   } catch (error) {
-    throw new RecipeError(repo, `it is not JSON (${(error as Error).message})`, {
+    const detail = (error as Error).message
+    throw new RecipeError(repo, `it is not JSON (${detail})`, {
       kind: 'not_json',
-      detail: (error as Error).message,
+      detail,
+      ...jsonPosition(detail),
     })
   }
   const parsed = schema.safeParse(value)

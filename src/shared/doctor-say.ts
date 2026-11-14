@@ -97,7 +97,17 @@ export type RecipeWhy = {
   limit?: string
   origin?: string
   keys?: string
+  /** Where a text that is not JSON breaks: the character, and the line and column when the parser says. */
+  position?: string
+  line?: string
+  column?: string
 }
+
+/** How a read failed, from the words of the error: GitHub's status, a connection that broke, or anything else. */
+export type DoctorFailure =
+  | { kind: 'github_status'; status: string; detail: string }
+  | { kind: 'network' }
+  | { kind: 'other' }
 
 /** The merge settings a repository has turned off, by the values the doctor sends. */
 export const MERGE_SETTINGS = [

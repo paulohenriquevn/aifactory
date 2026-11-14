@@ -10,6 +10,7 @@ import {
   DOCTOR_SAY_EN,
   DOCTOR_TRIED_EN,
   type DoctorSayCode,
+  type DoctorFailure,
   type DoctorSayValues,
   type DoctorTried,
   type RecipeWhy,
@@ -38,6 +39,17 @@ export const unread = (tried: string, error: string, what?: DoctorTried): Unread
   error,
   ...(what ? { what } : {}),
 })
+
+const GITHUB_STATUS = /^GitHub answered (\d{3})(?: [^:]*)?(?:: ([\s\S]*))?$/
+const NETWORK = /fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket|timed out/i
+
+/** How a read failed, from what its error says; the raw error stays with the item for diagnosis. */
+export function failureOf(error: string): DoctorFailure {
+  const answered = GITHUB_STATUS.exec(error)
+  if (answered)
+    return { kind: 'github_status', status: answered[1], detail: (answered[2] ?? '').trim() }
+  return NETWORK.test(error) ? { kind: 'network' } : { kind: 'other' }
+}
 
 /** Something to read, named by a code so the panel can say it in the owner's language. */
 export const triedOf = (code: DoctorTried['code'], values: DoctorSayValues = {}): DoctorTried => ({
@@ -154,10 +166,19 @@ const problem = (
   say: { code, values },
 })
 
+/** The failure as values: its kind, and for a status from GitHub the status and what GitHub said. */
+function failureValues(error: string): DoctorSayValues {
+  const failure = failureOf(error)
+  return failure.kind === 'github_status'
+    ? { errorKind: failure.kind, errorStatus: failure.status, errorDetail: failure.detail }
+    : { errorKind: failure.kind }
+}
+
 const unknownItem = (id: DoctorItemId, { tried, error, what }: Unread): DoctorItem =>
   problem(id, 'unknown', 'unknown', {
     tried,
     error,
+    ...failureValues(error),
     ...(what ? { what: what.code, ...what.values } : {}),
   })
 

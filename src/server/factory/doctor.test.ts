@@ -11,6 +11,7 @@ import {
   checksParityItem,
   ciSilentItem,
   diagnose,
+  failureOf,
   DOCTOR_ITEMS,
   issuesItem,
   labelItem,
@@ -605,6 +606,32 @@ describe('a recipe that is invalid, said in Portuguese from what the validator f
   })
 })
 
+describe('how a read failed', () => {
+  it('tells a status from GitHub, a broken connection and anything else apart', () => {
+    expect(failureOf('GitHub answered 502 reading the App')).toEqual({
+      kind: 'github_status',
+      status: '502',
+      detail: '',
+    })
+    expect(failureOf('GitHub answered 403 listing o/r: Resource not accessible')).toEqual({
+      kind: 'github_status',
+      status: '403',
+      detail: 'Resource not accessible',
+    })
+    expect(failureOf('fetch failed')).toEqual({ kind: 'network' })
+    expect(failureOf('relation "x" does not exist')).toEqual({ kind: 'other' })
+  })
+
+  it('sends the kind and the status with an item it could not read, and keeps the raw error', () => {
+    const item = labelItem(REPO, unread('reading the labels of o/r', 'GitHub answered 502 reading'))
+    expect(item.say?.values).toMatchObject({
+      errorKind: 'github_status',
+      errorStatus: '502',
+      error: 'GitHub answered 502 reading',
+    })
+  })
+})
+
 describe('recipe', () => {
   const url = 'https://github.com/o/r/blob/main/.factory/setup.json'
 
@@ -855,7 +882,13 @@ describe('the sentences of an item that is not fine', () => {
     const item = labelItem(REPO, unread('reading the labels of o/r', 'GitHub answered 502'))
     expect(item.say).toEqual({
       code: 'unknown',
-      values: { tried: 'reading the labels of o/r', error: 'GitHub answered 502' },
+      values: {
+        tried: 'reading the labels of o/r',
+        error: 'GitHub answered 502',
+        errorKind: 'github_status',
+        errorStatus: '502',
+        errorDetail: '',
+      },
     })
     expect(item.cause).toBe(
       'Not known: reading the labels of o/r failed (GitHub answered 502). Nothing is assumed to be fine.',
@@ -899,6 +932,9 @@ describe('the sentences of an item that is not fine', () => {
         what: 'labels',
         repo: 'o/r',
         error: 'GitHub answered 502',
+        errorKind: 'github_status',
+        errorStatus: '502',
+        errorDetail: '',
       },
     })
   })

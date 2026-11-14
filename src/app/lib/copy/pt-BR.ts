@@ -21,6 +21,15 @@ const TRIED: DoctorTriedSentences = {
 /** What was tried, in Portuguese when the code is one this panel knows, and as the server said it otherwise. */
 const tried = (v: Record<string, string>) => TRIED[v.what as keyof typeof TRIED]?.(v) ?? v.tried
 
+/** How a read failed, in Portuguese; the raw error stays in it when the kind is not one this panel knows. */
+const failure = (v: Record<string, string>) => {
+  if (v.errorKind === 'github_status') {
+    return `o GitHub respondeu ${v.errorStatus}${v.errorDetail ? `: ${v.errorDetail}` : ''}`
+  }
+  if (v.errorKind === 'network') return `a conexão falhou: ${v.error}`
+  return v.error ?? ''
+}
+
 /** Why a recipe cannot be used, by kind. */
 const TYPES: Record<string, string> = {
   string: 'um texto',
@@ -45,7 +54,14 @@ const RULES: Record<string, (v: Record<string, string>) => string> = {
 }
 
 const RECIPE_WHY: Record<string, (v: Record<string, string>) => string> = {
-  not_json: (v) => `ele não é JSON (${v.detail})`,
+  not_json: (v) => {
+    const place = v.line
+      ? ` (linha ${v.line}, coluna ${v.column})`
+      : v.position
+        ? ` (posição ${v.position})`
+        : ''
+    return `ele não é um JSON válido${place}`
+  },
   invalid: (v) => {
     const rule = RULES[v.rule ?? '']
     return rule ? `${v.at || 'o arquivo'} ${rule(v)}` : (v.detail ?? '')
@@ -308,7 +324,7 @@ export const ptBR: Copy = {
     say: {
       unknown: {
         cause: (v) =>
-          `Não sei: ${tried(v)} falhou (${v.error}). Nada é dado como certo sem ter sido lido.`,
+          `Não sei: ${tried(v)} falhou (${failure(v)}). Nada é dado como certo sem ter sido lido.`,
         repair: () => 'Verifique de novo daqui a pouco.',
       },
       unknown_unanswered: {
