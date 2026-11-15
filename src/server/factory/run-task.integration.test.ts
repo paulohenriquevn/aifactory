@@ -3088,11 +3088,11 @@ describe('release', () => {
     ])
     expect((await deliveries(id)).filter((d) => d.kind === 'release')).toEqual([])
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
-    expect(row.stage).toBe('released')
-    const released = (
-      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'released'))
-    )[0]
-    expect(released.detail).toMatchObject({ publishing: 'changesets', mergeSha: 'merge0002' })
+    // The publication releases the task once the release of its package exists, not before.
+    expect(row.stage).toBe('done')
+    expect(await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'released'))).toEqual(
+      [],
+    )
     expect(await getDb().select().from(watch).where(eq(watch.taskId, id))).toMatchObject([
       { sha: 'merge0002', tag: null, status: 'watching' },
     ])

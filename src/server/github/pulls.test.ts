@@ -1437,3 +1437,79 @@ describe('what the doctor reads of a repository', () => {
     ).rejects.toThrow(/403 listing the pull requests into workspace on o\/r/)
   })
 })
+
+describe('listIssueComments', () => {
+  it('reads every page, so a comment past the first hundred is found', async () => {
+    const comment = (id: number) => ({
+      id,
+      body: `c${id}`,
+      user: { login: 'bot', type: 'Bot' },
+      author_association: 'NONE',
+      created_at: '2026-11-15T00:00:00Z',
+    })
+    const pages = [
+      Array.from({ length: 100 }, (_, i) => comment(i + 1)),
+      [comment(101), comment(102)],
+    ]
+    const asked: string[] = []
+    const fetch = async (url: string) => {
+      asked.push(url)
+      const page = Number(new URL(url).searchParams.get('page'))
+      return new Response(JSON.stringify(pages[page - 1] ?? []), { status: 200 })
+    }
+
+    const seen = await createGithubApi(fetch).listIssueComments('o/r', 't', 7, new Date(0))
+
+    expect(seen).toHaveLength(102)
+    expect(seen.at(-1)?.body).toBe('c102')
+    expect(asked).toHaveLength(2)
+  })
+})
+
+describe('releasesSince', () => {
+  it('reads past the first page, so a package release older than the latest hundred is found', async () => {
+    const release = (n: number, day: string) => ({
+      tag_name: `pkg@${n}`,
+      html_url: `u${n}`,
+      prerelease: false,
+      draft: false,
+      published_at: `2026-11-${day}T00:00:00Z`,
+    })
+    const pages = [Array.from({ length: 100 }, (_, i) => release(i + 2, '14')), [release(1, '01')]]
+    const fetch = async (url: string) => {
+      const page = Number(new URL(url).searchParams.get('page'))
+      return new Response(JSON.stringify(pages[page - 1] ?? []), { status: 200 })
+    }
+
+    const found = await createGithubApi(fetch).releasesSince('o/r', 't', new Date(0))
+
+    expect(found).toHaveLength(101)
+    expect(found.map((r) => r.tag)).toContain('pkg@1')
+  })
+
+  it('finds a release created early but published after a newer-created one, on a later page', async () => {
+    const release = (tag: string, published: string) => ({
+      tag_name: tag,
+      html_url: 'u',
+      prerelease: false,
+      draft: false,
+      published_at: published,
+    })
+    const pages = [
+      Array.from({ length: 100 }, (_, i) => release(`old${i}`, '2026-01-01T00:00:00Z')),
+      [release('late@1.0.0', '2026-11-14T00:00:00Z')],
+    ]
+    const fetch = async (url: string) => {
+      const page = Number(new URL(url).searchParams.get('page'))
+      return new Response(JSON.stringify(pages[page - 1] ?? []), { status: 200 })
+    }
+
+    const found = await createGithubApi(fetch).releasesSince(
+      'o/r',
+      't',
+      new Date('2026-11-01T00:00:00Z'),
+    )
+
+    expect(found.map((r) => r.tag)).toEqual(['late@1.0.0'])
+  })
+})

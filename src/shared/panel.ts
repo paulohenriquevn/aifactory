@@ -348,7 +348,7 @@ export type TaskDetail = {
 /** What the inbox lists: a task that waits for a person, and why. */
 export type InboxItem = {
   task: TaskCard
-  kind: 'question' | 'review' | 'handoff' | 'failed' | 'main_red'
+  kind: 'question' | 'review' | 'handoff' | 'failed' | 'main_red' | 'publication_partial'
   /** One line that says what is wanted. */
   summary: string
   at: string

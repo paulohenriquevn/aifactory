@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest'
 
 import { FakeGithub } from '../../test/fake-github'
 
-import { changesetsWaiting, publishedPackagesChanged, versionedTags } from './changed-packages'
+import {
+  changesetsWaiting,
+  releasesOfCommit,
+  packagesOfCommit,
+  publishedPackagesChanged,
+  versionedTags,
+} from './changed-packages'
 
 /** What a fake GitHub was asked to read, as `ref:path`. */
 const readsOf = (api: FakeGithub) => api.callsTo('readFile').map(([path, ref]) => `${ref}:${path}`)
@@ -191,5 +197,105 @@ describe('versionedTags', () => {
 
     expect(await versionedTags(api, 'o/r', 't', 'vm')).toEqual([])
     expect(reads()).toEqual([])
+  })
+})
+
+describe('packagesOfCommit', () => {
+  it('names a package that was private when the commit landed, since a later commit may publish it', async () => {
+    const api = new FakeGithub()
+    const tree = {
+      '.changeset/config.json': '{"ignore":["@theokit/agent"]}',
+      'packages/agent/package.json': '{"name":"@theokit/agent","private":true}',
+      'packages/agent/src/a.ts': 'a',
+    }
+    api
+      .repo('o/r')
+      .files('m1^', tree)
+      .files('m1', { ...tree, 'packages/agent/src/a.ts': 'b' })
+
+    expect(await packagesOfCommit(api, 'o/r', 't', 'm1')).toEqual(['@theokit/agent'])
+  })
+
+  it('names the packages a commit changed against its first parent', async () => {
+    const api = new FakeGithub()
+    const tree = { ...theokit, 'packages/ui/src/a.ts': 'a' }
+    api
+      .repo('o/r')
+      .files('m1^', tree)
+      .files('m1', { ...tree, 'packages/ui/src/a.ts': 'b' })
+
+    // A file belongs to the innermost package that holds it, not to the root as well.
+    expect(await packagesOfCommit(api, 'o/r', 't', 'm1')).toEqual(['@theokit/ui'])
+  })
+
+  it('attributes a file to a package a later commit of the promotion created', async () => {
+    const api = new FakeGithub()
+    const tree = { ...theokit, 'packages/new/src/a.ts': 'a' }
+    api
+      .repo('o/r')
+      .files('m1^', tree)
+      .files('m1', { ...tree, 'packages/new/src/a.ts': 'b' })
+      .files('promoted', { ...tree, 'packages/new/package.json': '{"name":"@theokit/new"}' })
+
+    expect(await packagesOfCommit(api, 'o/r', 't', 'm1', 'promoted')).toEqual(['@theokit/new'])
+  })
+
+  it('does not name a package a later commit moved to another directory and renamed', async () => {
+    const api = new FakeGithub()
+    const tree = { ...theokit, 'packages/old/package.json': '{"name":"@theokit/old"}' }
+    api
+      .repo('o/r')
+      .files('m1^', { ...tree, 'packages/old/src/a.ts': 'a' })
+      .files('m1', { ...tree, 'packages/old/src/a.ts': 'b' })
+      .files('promoted', { ...theokit, 'packages/new/package.json': '{"name":"@theokit/new"}' })
+
+    await expect(packagesOfCommit(api, 'o/r', 't', 'm1', 'promoted')).rejects.toThrow(
+      /packages\/old.*moved or removed/,
+    )
+  })
+
+  it('names the root package only for files no nested package holds', async () => {
+    const api = new FakeGithub()
+    const tree = { ...theokit, 'packages/ui/src/a.ts': 'a', 'README.md': 'a' }
+    api
+      .repo('o/r')
+      .files('m1^', tree)
+      .files('m1', { ...tree, 'packages/ui/src/a.ts': 'b', 'README.md': 'b' })
+
+    expect(await packagesOfCommit(api, 'o/r', 't', 'm1')).toEqual([
+      '@theokit/ui',
+      'theokit-monorepo',
+    ])
+  })
+})
+
+describe('releasesOfCommit', () => {
+  it('names name@version of the published packages a commit changed, at the version the ref holds', async () => {
+    const api = new FakeGithub()
+    const tree = {
+      '.changeset/config.json': '{"ignore":["@theokit/skip"]}',
+      'packages/a/package.json': '{"name":"@theokit/a","version":"0.1.0"}',
+      'packages/a/src/a.ts': 'a',
+      'packages/p/package.json': '{"name":"@theokit/p","version":"1.0.0","private":true}',
+      'packages/p/src/a.ts': 'a',
+      'packages/skip/package.json': '{"name":"@theokit/skip","version":"1.0.0"}',
+      'packages/skip/src/a.ts': 'a',
+    }
+    const changed = {
+      ...tree,
+      'packages/a/src/a.ts': 'b',
+      'packages/p/src/a.ts': 'b',
+      'packages/skip/src/a.ts': 'b',
+    }
+    api
+      .repo('o/r')
+      .files('m1^', tree)
+      .files('m1', changed)
+      .files('main', {
+        ...changed,
+        'packages/a/package.json': '{"name":"@theokit/a","version":"0.2.0"}',
+      })
+
+    expect(await releasesOfCommit(api, 'o/r', 't', 'm1', 'main')).toEqual(['@theokit/a@0.2.0'])
   })
 })

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, like, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
 import {
@@ -13,8 +13,10 @@ import {
   review,
   stageEvent,
   task,
+  setting,
   watch,
 } from '../db/schema'
+import { MISSING_KEY } from '../factory/ship'
 import { retryAt } from '../factory/auto-retry'
 import {
   columnOf,
@@ -384,7 +386,33 @@ export async function inbox(db: Database): Promise<InboxItem[]> {
       })
     }
   }
+  items.push(...(await missingReleases(db)))
   return items.sort((a, b) => a.at.localeCompare(b.at))
+}
+
+/**
+ * The releases that the last shipment of each repository found missing for the task it left open. Nothing
+ * else will publish them, so the owner is told; the next shipment replaces what is said here.
+ */
+async function missingReleases(db: Database): Promise<InboxItem[]> {
+  const rows = await db
+    .select()
+    .from(setting)
+    .where(like(setting.key, `${MISSING_KEY}%`))
+  const items: InboxItem[] = []
+  for (const row of rows) {
+    const { taskId, missing } = JSON.parse(row.value) as { taskId?: number; missing: string[] }
+    if (taskId === undefined || missing.length === 0) continue
+    for (const card of await cards(db, await db.select().from(task).where(eq(task.id, taskId)))) {
+      items.push({
+        task: card,
+        kind: 'publication_partial',
+        summary: `No release for ${missing.join(', ')} in ${row.key.slice(MISSING_KEY.length)}; the issues of that package stay open.`,
+        at: iso(row.updatedAt),
+      })
+    }
+  }
+  return items
 }
 
 /**

@@ -11,6 +11,7 @@ const KIND: Record<InboxItem['kind'], string> = {
   handoff: 'Needs a person',
   failed: 'Failed',
   main_red: 'The default branch is red',
+  publication_partial: 'A package was not published',
 }
 
 export default function InboxPage() {

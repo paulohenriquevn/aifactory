@@ -5,6 +5,7 @@ import {
   changesetIgnore,
   changesetPackages,
   enclosingPackages,
+  isIgnored,
   packageDirs,
   parseManifest,
   publishedTouched,
@@ -95,4 +96,89 @@ export async function versionedTags(
     if (tag) tags.push(tag)
   }
   return tags
+}
+
+/**
+ * The packages the commit of a task changes, by name: the named package that carries each file its merge
+ * changed against its first parent (the innermost one that holds it). Whether the package is private or ignored is not asked, since
+ * a later commit of the same promotion may have made it publishable, and what a release lacks is named by
+ * the package alone.
+ */
+export async function packagesOfCommit(
+  api: GithubApi,
+  repo: string,
+  token: string,
+  sha: string,
+  layout: string = sha,
+): Promise<string[]> {
+  const found = await manifestsOfCommit(api, repo, token, sha, layout)
+  return found.flatMap(({ text, dir }) => {
+    const { name } = parseManifest(text, dir)
+    return name === undefined ? [] : [name]
+  })
+}
+
+/**
+ * The releases (`name@version`) of the published packages a task's commit changed, at the version `ref` (the
+ * release branch) holds: what changesets must have released for the change to be available. A private or
+ * ignored package, or one with no name or version, is never released and is left out.
+ */
+export async function releasesOfCommit(
+  api: GithubApi,
+  repo: string,
+  token: string,
+  sha: string,
+  ref: string,
+): Promise<string[]> {
+  const found = await manifestsOfCommit(api, repo, token, sha, ref)
+  if (found.length === 0) return []
+  const ignore = changesetIgnore(await mustRead(api, repo, token, '.changeset/config.json', ref))
+  return found.flatMap(({ text, dir }) => {
+    const { name, private: kept } = parseManifest(text, dir)
+    const { version } = JSON.parse(text) as { version?: unknown }
+    if (name === undefined || kept || typeof version !== 'string' || isIgnored(name, ignore)) {
+      return []
+    }
+    return [`${name}@${version}`]
+  })
+}
+
+async function manifestsOfCommit(
+  api: GithubApi,
+  repo: string,
+  token: string,
+  sha: string,
+  layout: string,
+): Promise<{ dir: string; text: string }[]> {
+  const files = touchedPaths(await api.changedFiles(repo, token, `${sha}^`, sha))
+  // The packages of the commit and of the promoted tree (`layout`): a later task may have created or moved one.
+  const atCommit = packageDirs(await api.filePaths(repo, token, sha))
+  const promoted = layout === sha ? atCommit : packageDirs(await api.filePaths(repo, token, layout))
+  const dirs = [...new Set([...atCommit, ...promoted])]
+  // A file belongs to the innermost package that holds it, so a nested package's change is not the root's.
+  const touched = [
+    ...new Set(
+      files.flatMap((file) => {
+        const own = enclosingPackages(file, dirs).sort((a, b) => b.length - a.length)[0]
+        return own === undefined ? [] : [own]
+      }),
+    ),
+  ]
+  // A package the promoted tree no longer has at that path was moved or removed since: what it is called
+  // there now cannot be told, so the task's package is not established.
+  const gone = touched.filter((dir) => !promoted.includes(dir))
+  if (gone.length > 0) {
+    throw new Error(
+      `${gone.join(', ')} is no package in the promoted tree: it was moved or removed`,
+    )
+  }
+  const found: { dir: string; text: string }[] = []
+  for (const dir of touched) {
+    const path = manifestPath(dir)
+    const text =
+      (await api.readFile(repo, token, path, layout)) ??
+      (await mustRead(api, repo, token, path, sha))
+    found.push({ dir, text })
+  }
+  return found
 }

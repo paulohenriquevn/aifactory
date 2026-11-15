@@ -181,6 +181,13 @@ export async function release(
   if (!row) throw new ReleaseRefused(`task ${taskId} does not exist`)
   const allowed = outcome(row, 'release')
   if (allowed.kind !== 'action') throw new ReleaseRefused(allowed.reason)
+  // A task a publication is still releasing is not released a second time.
+  const [publishing] = await deps.db
+    .select({ id: publication.id })
+    .from(publication)
+    .where(and(eq(publication.taskId, taskId), eq(publication.status, 'waiting')))
+  if (publishing)
+    throw new ReleaseRefused('its release is being published: the packages are not all out yet')
   // Only integrated work with a commit is released.
   const headSha = row.headSha!
   const pre = await latestPreRelease(deps.db, taskId)
@@ -408,13 +415,16 @@ export async function completeRelease(
     })
     return { tag: created.tag, url: created.url, mergeSha, issueErrors: shipped.issueErrors }
   }
-  await enterStage(deps.db, taskId, 'released', {
-    actor,
-    mergeSha,
-    sha,
-    ...(releaseError ? { releaseError } : {}),
-    publishing,
-  })
+  // A changesets promotion leaves the task as it is: the publication releases it, once the release of its
+  // package exists (`shipContained`), and not before.
+  if (!publishing) {
+    await enterStage(deps.db, taskId, 'released', {
+      actor,
+      mergeSha,
+      sha,
+      ...(releaseError ? { releaseError } : {}),
+    })
+  }
   return { tag: undefined, url: undefined, mergeSha, releaseError, publishing }
 }
 

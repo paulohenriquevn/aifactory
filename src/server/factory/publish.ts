@@ -115,7 +115,7 @@ async function readReleases(
   token: string,
   versionPullRequest: number,
   tags: PublishedRelease[],
-): Promise<ReleasesRead> {
+): Promise<ReleasesRead & { versionedSha: string }> {
   const pr = await deps.api.readPullRequest(p.repository, token, versionPullRequest)
   if (!pr.mergeCommitSha) {
     throw new Error(
@@ -124,12 +124,15 @@ async function readReleases(
   }
   const expected = await versionedTags(deps.api, p.repository, token, pr.mergeCommitSha)
   const now = deps.now?.() ?? new Date()
-  return releasesRead(
-    expected,
-    tags.map((t) => t.tag),
-    pr.mergedAt ?? p.startedAt,
-    now,
-  )
+  return {
+    ...releasesRead(
+      expected,
+      tags.map((t) => t.tag),
+      pr.mergedAt ?? p.startedAt,
+      now,
+    ),
+    versionedSha: pr.mergeCommitSha,
+  }
 }
 
 /** One publication, one step further: the Version Packages merge, then the published versions. */
@@ -158,7 +161,7 @@ async function advance(deps: PublishDeps, p: Publication, result: PublishResult)
   const tags = (await deps.api.releasesSince(p.repository, token, p.startedAt)).filter((r) =>
     isPackageTag(r.tag),
   )
-  const read: ReleasesRead =
+  const read: ReleasesRead & { versionedSha?: string } =
     tags.length === 0
       ? { wait: 'waiting for the release workflow to publish' }
       : await readReleases(deps, p, token, versionPullRequest, tags)
@@ -177,6 +180,7 @@ async function advance(deps: PublishDeps, p: Publication, result: PublishResult)
     tags,
     publishedBy: "the repository's release workflow",
     detail: { published: 'changesets' },
+    versionedSha: read.versionedSha,
   })
   const unclosed = unclosedNote(shipped)
   await deps.db
