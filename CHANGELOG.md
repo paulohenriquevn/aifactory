@@ -23,6 +23,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- The sandbox image has English and Portuguese word lists, so a repository check that tells the two apart, like TheoCode's `english-only`, can pass in it. The E2B template moves to `aifactory-sandbox:5` and the Docker image to `aifactory-sandbox:4` (#168)
 - The task board loads in under half a second instead of about 20, and no longer keeps the database busy while the panel is open: `stage_event` gets an index on its task, its stage and its order (#166)
 - The factory no longer integrates a change to its own agents by itself. When approved work in the factory's repository touches agent configuration (the harnesses, `review.ts`, `evidence.ts`, `guards.ts`, the models, the prompts under `src/server/agents/`), the task is handed over as a draft pull request with the cause `agent_configuration`, the paths it changed and what to run, and nothing is merged. Before, the factory merged such a change into `workspace` as soon as the checks passed and the reviewer approved, with no evaluation. A fork names its own repository with `ownRepository` (#139)
 - An issue is no longer closed when its work is integrated, before a release ships it. The factory's pull request began with `Closes #<issue>`, so in a repository whose default branch is the integration branch GitHub closed the issue on that merge. The body now names the issue with no closing keyword, and the issue is closed on release, with the version, as for every other repository (#138)

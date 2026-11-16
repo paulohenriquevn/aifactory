@@ -23,7 +23,7 @@ const MAX_OUTPUT = 20 * 1024 * 1024
 
 /** Everything this provider creates carries this label, so what a crash left behind can be found. */
 const LABEL = 'aifactory.sandbox'
-const IMAGE = 'aifactory-sandbox:3'
+const IMAGE = 'aifactory-sandbox:4'
 const PROXY_IMAGE = 'mitmproxy/mitmproxy:11'
 const CA_VOLUME = 'aifactory-mitm-ca'
 const WORKDIR = '/work'

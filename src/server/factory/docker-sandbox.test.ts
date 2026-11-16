@@ -305,7 +305,7 @@ describe('creating a docker sandbox', () => {
     // `kill(pid, 0)` still finds it: a test that checks a subprocess is gone fails for the sandbox's sake.
     const args = sandboxArgs('n', 'net', {})
     expect(args).toContain('--init')
-    expect(args.indexOf('--init')).toBeLessThan(args.indexOf('aifactory-sandbox:3'))
+    expect(args.indexOf('--init')).toBeLessThan(args.indexOf('aifactory-sandbox:4'))
   })
 
   it('gives the proxy no capabilities and a memory limit, and the sandbox no volume at all', () => {
