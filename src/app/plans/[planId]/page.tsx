@@ -5,7 +5,6 @@ import { Link, useParams } from 'react-router'
 import type { PlanItemView, PlanView } from '../../../shared/panel'
 import { post, put } from '../../lib/api'
 import { Assist } from '../../components/Assist'
-import { useCopy } from '../../lib/copy'
 import { money } from '../../lib/format'
 import { useResource } from '../../lib/live'
 
@@ -34,7 +33,6 @@ const fromServer = (items: PlanItemView[]): Edit[] =>
  * (usetheokit/theokit#1151).
  */
 export default function PlanPage() {
-  const { t } = useCopy()
   const id = Number(useParams().planId)
   const resource = useResource<PlanView>(`/api/panel/plans/${id}`, { everyMs: 3_000 })
   const plan = resource.data
@@ -50,7 +48,7 @@ export default function PlanPage() {
   }, [plan, dirty])
 
   if (resource.error) return <p className="text-sm text-destructive">{resource.error}</p>
-  if (!plan) return <p className="text-sm text-muted-foreground">{t.plans.loading}</p>
+  if (!plan) return <p className="text-sm text-muted-foreground">Loading…</p>
 
   const change = (key: number, patch: Partial<Edit>) => {
     setDirty(true)
@@ -100,8 +98,8 @@ export default function PlanPage() {
         { start },
       )
       return result.failure
-        ? t.plans.refused(result.created.length, result.failure)
-        : t.plans.created(result.created.length, start)
+        ? `Created ${result.created.length}, then GitHub refused: ${result.failure}`
+        : `Created ${result.created.length} issue${result.created.length === 1 ? '' : 's'}${start ? ' and started them' : ''}.`
     })
 
   const waiting = (edits ?? []).filter((e) => e.selected && !e.locked).length
@@ -110,7 +108,7 @@ export default function PlanPage() {
     <div className="space-y-5">
       <div>
         <Link to="/plans" className="text-sm text-muted-foreground hover:text-foreground">
-          {t.plans.back}
+          ← Plans
         </Link>
         <h1 className="mt-1 text-xl font-semibold">{plan.goal}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
@@ -125,22 +123,26 @@ export default function PlanPage() {
                   : 'success'
             }
           >
-            {t.plans.status[plan.status]}
+            {plan.status}
           </Badge>
         </div>
       </div>
 
       {plan.status === 'planning' ? (
-        <Alert intent="info" title={t.plans.reading} description={t.plans.readingText} />
+        <Alert
+          intent="info"
+          title="An agent is reading the repository"
+          description="This takes a minute or two. The page updates on its own."
+        />
       ) : null}
       {plan.status === 'failed' ? (
         <Alert
           intent="destructive"
-          title={t.plans.failedTitle}
-          description={plan.error ?? t.plans.noReason}
+          title="The plan did not come out"
+          description={plan.error ?? 'No reason was recorded.'}
           action={
             <Link to="/plans" className="text-sm underline underline-offset-2">
-              {t.plans.tryAgain}
+              Try again
             </Link>
           }
         />
@@ -148,7 +150,7 @@ export default function PlanPage() {
       {plan.summary ? <p className="text-sm text-foreground">{plan.summary}</p> : null}
 
       {edits && edits.length > 0 ? (
-        <ol aria-label={t.plans.issues} className="space-y-3">
+        <ol aria-label="Issues" className="space-y-3">
           {edits.map((e, index) => {
             const item = plan.items.find((i) => i.id === e.id)
             return (
@@ -159,13 +161,13 @@ export default function PlanPage() {
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    aria-label={t.plans.include(index + 1)}
+                    aria-label={`Include issue ${index + 1}`}
                     checked={e.selected}
                     disabled={e.locked}
                     onChange={(ev) => change(e.key, { selected: ev.target.checked })}
                   />
                   <Input
-                    aria-label={t.plans.titleOf(index + 1)}
+                    aria-label={`Title of issue ${index + 1}`}
                     value={e.title}
                     disabled={e.locked}
                     onChange={(ev) => change(e.key, { title: ev.target.value })}
@@ -176,7 +178,7 @@ export default function PlanPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        aria-label={t.plans.moveUp(index + 1)}
+                        aria-label={`Move issue ${index + 1} up`}
                         disabled={index === 0}
                         onClick={() => move(index, -1)}
                       >
@@ -185,7 +187,7 @@ export default function PlanPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        aria-label={t.plans.moveDown(index + 1)}
+                        aria-label={`Move issue ${index + 1} down`}
                         disabled={index === edits.length - 1}
                         onClick={() => move(index, 1)}
                       >
@@ -194,19 +196,19 @@ export default function PlanPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        aria-label={t.plans.removeLabel(index + 1)}
+                        aria-label={`Remove issue ${index + 1}`}
                         onClick={() => {
                           setDirty(true)
                           setEdits((all) => all?.filter((x) => x.key !== e.key))
                         }}
                       >
-                        {t.plans.remove}
+                        Remove
                       </Button>
                     </>
                   ) : null}
                 </div>
                 <Textarea
-                  aria-label={t.plans.descriptionOf(index + 1)}
+                  aria-label={`Description of issue ${index + 1}`}
                   value={e.body}
                   disabled={e.locked}
                   rows={5}
@@ -232,10 +234,10 @@ export default function PlanPage() {
                       rel="noreferrer"
                       className="text-foreground underline underline-offset-2"
                     >
-                      {t.plans.issueLink(item.issueNumber)}
+                      Issue #{item.issueNumber}
                     </a>
                     {item.started ? (
-                      <Badge variant="success">{t.plans.started}</Badge>
+                      <Badge variant="success">started</Badge>
                     ) : (
                       <Button
                         size="sm"
@@ -244,11 +246,11 @@ export default function PlanPage() {
                         onClick={() =>
                           void act(async () => {
                             await post(`/api/panel/plans/${id}/items/${item.id}/start`)
-                            return t.plans.startedIssue(item.issueNumber ?? 0)
+                            return `Started issue #${item.issueNumber}.`
                           })
                         }
                       >
-                        {t.plans.startThis}
+                        Start this one
                       </Button>
                     )}
                   </div>
@@ -265,9 +267,9 @@ export default function PlanPage() {
             size="sm"
             variant="secondary"
             disabled={busy}
-            onClick={() => void act(async () => (await save(), t.plans.saved))}
+            onClick={() => void act(async () => (await save(), 'Saved.'))}
           >
-            {t.plans.saveChanges}
+            Save changes
           </Button>
           <Button
             size="sm"
@@ -275,16 +277,18 @@ export default function PlanPage() {
             disabled={busy || waiting === 0}
             onClick={() => void createIssues(false)}
           >
-            {t.plans.createIssues}
+            Create issues
           </Button>
           <Button
             size="sm"
             disabled={busy || waiting === 0}
             onClick={() => void createIssues(true)}
           >
-            {t.plans.createAndStart}
+            Create issues and start
           </Button>
-          <span className="text-xs text-muted-foreground">{t.plans.toCreate(waiting)}</span>
+          <span className="text-xs text-muted-foreground">
+            {waiting} issue{waiting === 1 ? '' : 's'} to create
+          </span>
         </div>
       ) : null}
       {message ? (

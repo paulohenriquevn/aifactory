@@ -100,9 +100,6 @@ const issues: IssuesApi = {
   async addLabels(_r, _t, issue, labels) {
     world.added.push({ issue, labels })
   },
-  async updateIssueBody() {
-    throw new Error('the panel does not rewrite an issue body')
-  },
 }
 
 let api = new FakeGithub()
@@ -307,16 +304,6 @@ describe('the repositories page', () => {
       releaseMode: null,
       reviewer: 'claude-code',
     })
-  })
-
-  it('saves the fixes trimmed, and refuses one that is empty, long or on several lines', async () => {
-    await enable()
-    await saveRepository(deps(), 'paulo/app', { fixes: ['  pnpm prettier --write .  '] })
-    const [row] = await getDb().select().from(repository)
-    expect(row.fixes).toEqual(['pnpm prettier --write .'])
-    for (const fixes of [[''], ['a\nb'], ['x'.repeat(501)], Array(9).fill('x')]) {
-      await expect(saveRepository(deps(), 'paulo/app', { fixes })).rejects.toThrow()
-    }
   })
 
   describe('the run limit through the settings endpoints', () => {

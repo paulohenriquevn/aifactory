@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest'
 
 import {
   THRESHOLDS,
-  failedForEnvironment,
-  regressionPValue,
   caseOutcome,
   compareWithBaseline,
   summarize,
@@ -193,84 +191,5 @@ describe('caseOutcome', () => {
       passed: false,
       reason: 'the agent asked a question',
     })
-  })
-})
-
-describe('environment failures and paired cases', () => {
-  const failedFor = (id: string, reason: string): CaseResult => ({ ...result(id, false), reason })
-  const many = (prefix: string, count: number, passed: boolean) =>
-    Array.from({ length: count }, (_, i) => result(`${prefix}${i}`, passed))
-
-  it('tells a case the environment failed from one the agents failed', () => {
-    expect(failedForEnvironment(failedFor('a', '403: team is blocked: spend_limit'))).toBe(true)
-    expect(failedForEnvironment(failedFor('a', 'the agent made no change'))).toBe(false)
-    expect(failedForEnvironment(result('a', true))).toBe(false)
-  })
-
-  it('leaves out of the comparison a case the environment failed, and names it', () => {
-    const before = baseline([result('a', true), result('b', true), ...many('x', 8, true)])
-    const run = [result('a', true), failedFor('b', 'fetch failed'), ...many('x', 8, true)]
-
-    const compared = compareWithBaseline(run, before)
-
-    expect(compared.unmeasured).toEqual(['b'])
-    expect(compared.regressions).toEqual([])
-    expect(compared.now.cases).toBe(9)
-    expect(compared.ok).toBe(true)
-  })
-
-  it('refuses a run where the environment failed more than one case in five, since it measured too little', () => {
-    const before = baseline([...many('x', 4, true), result('a', true), result('b', true)])
-    const run = [...many('x', 4, true), failedFor('a', 'fetch failed'), failedFor('b', 'ETIMEDOUT')]
-
-    const compared = compareWithBaseline(run, before)
-
-    expect(compared.ok).toBe(false)
-    expect(compared.reasons).toContain(
-      'the environment failed 2 of 6 cases (a, b), so the run measured too little',
-    )
-  })
-
-  it('counts the cases that got better as well as the ones that got worse', () => {
-    const before = baseline([result('a', true), result('b', false), result('c', false)])
-    const run = [result('a', false), result('b', true), result('c', true)]
-
-    const compared = compareWithBaseline(run, before)
-
-    expect(compared.regressions).toEqual(['a'])
-    expect(compared.improvements).toEqual(['b', 'c'])
-  })
-
-  it('refuses regressions that outnumber improvements past chance, under the pass-rate threshold too', () => {
-    // 30 cases, 6 regressions and none better: a 20% drop, at the threshold, but p = 1/64.
-    const before = baseline([...many('r', 6, true), ...many('x', 24, true)])
-    const run = [...many('r', 6, false), ...many('x', 24, true)]
-
-    const compared = compareWithBaseline(run, before)
-
-    expect(compared.pValue).toBeCloseTo(1 / 64, 6)
-    expect(compared.ok).toBe(false)
-    expect(compared.reasons).toContain(
-      '6 cases got worse and 0 got better, more than chance explains (p = 0.016)',
-    )
-  })
-
-  it('does not call two regressions against one improvement a change', () => {
-    const before = baseline([result('a', true), result('b', true), result('c', false), ...many('x', 7, true)])
-    const run = [result('a', false), result('b', false), result('c', true), ...many('x', 7, true)]
-
-    const compared = compareWithBaseline(run, before)
-
-    expect(compared.pValue).toBeCloseTo(0.5, 6)
-    expect(compared.ok).toBe(true)
-  })
-})
-
-describe('regressionPValue', () => {
-  it('is the chance of at least that many regressions among the changed cases, if a change were a coin', () => {
-    expect(regressionPValue(0, 0)).toBe(1)
-    expect(regressionPValue(1, 0)).toBeCloseTo(0.5, 9)
-    expect(regressionPValue(3, 1)).toBeCloseTo(5 / 16, 9)
-    expect(regressionPValue(0, 4)).toBe(1)
   })
 })

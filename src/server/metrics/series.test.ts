@@ -76,21 +76,6 @@ describe('dailySeries', () => {
     ])
   })
 
-  it('adds an observation that is no sample to the sum without counting it', () => {
-    const metric = 'person_decisions_per_delivery'
-    const deliveries = [1, 2, 3, 4].map(() => obs('o/a', '2026-11-01', 0, metric))
-    const decisions = [1, 2].map(() => ({
-      ...obs('o/a', '2026-11-01', 1, metric),
-      sample: false as const,
-    }))
-
-    const series = dailySeries([...deliveries, ...decisions], METRICS)
-
-    expect(series.find((s) => s.repository === 'o/a')?.points).toEqual([
-      { day: '2026-11-01', value: 0.5, samples: 4 },
-    ])
-  })
-
   it('dates an observation by its day in UTC', () => {
     const late = { ...obs('o/a', '2026-11-01', 1), at: new Date('2026-11-01T23:59:59Z') }
     const early = { ...obs('o/a', '2026-11-02', 1), at: new Date('2026-11-02T00:00:00Z') }

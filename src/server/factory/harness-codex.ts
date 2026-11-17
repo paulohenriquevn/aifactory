@@ -234,42 +234,13 @@ function withExitCode(exitCode: number, text: string): string {
 /** The provider's refusal of the login, as Codex prints it. */
 const UNAUTHORIZED = /HTTP 401|\(401\)|token_expired/i
 
-/** What a Codex run's JSON event stream said: its thread, last message, whether a turn completed, and use. */
-type CodexStream = {
-  sessionId?: string
-  summary: string
-  completed: boolean
-  failure?: string
-  tokensIn?: number
-  tokensOut?: number
-}
-
-/** Folds one event of the stream into what the stream said so far. */
-function foldCodexEvent(seen: CodexStream, event: CodexEvent): void {
-  if (event.type === 'thread.started' && event.thread_id) seen.sessionId = event.thread_id
-  if (event.type === 'item.completed' && event.item?.type === 'agent_message') {
-    seen.summary = event.item.text ?? seen.summary
-  }
-  if (event.type === 'turn.completed') {
-    seen.completed = true
-    // A thread has several turns; what it used is what each one reports, added up.
-    seen.tokensIn = sum(seen.tokensIn, event.usage?.input_tokens)
-    seen.tokensOut = sum(seen.tokensOut, event.usage?.output_tokens)
-  }
-  if (event.type === 'turn.failed') seen.failure = event.error?.message ?? 'the turn failed'
-  // A stream that fell back to another transport is reported as an error event but the turn goes on.
-  if (
-    event.type === 'error' &&
-    event.message &&
-    !/reconnecting|falling back/i.test(event.message)
-  ) {
-    seen.failure ??= event.message
-  }
-}
-
-/** Reads the JSON lines Codex prints, skipping any line that is not one. */
-function readCodexStream(stdout: string): CodexStream {
-  const seen: CodexStream = { summary: '', completed: false }
+export function parseCodexResult(exitCode: number, stdout: string, stderr: string): HarnessResult {
+  let sessionId: string | undefined
+  let summary = ''
+  let completed = false
+  let failure: string | undefined
+  let tokensIn: number | undefined
+  let tokensOut: number | undefined
   for (const line of stdout.split('\n')) {
     if (!line.startsWith('{')) continue
     let event: CodexEvent
@@ -278,13 +249,26 @@ function readCodexStream(stdout: string): CodexStream {
     } catch {
       continue
     }
-    foldCodexEvent(seen, event)
+    if (event.type === 'thread.started' && event.thread_id) sessionId = event.thread_id
+    if (event.type === 'item.completed' && event.item?.type === 'agent_message') {
+      summary = event.item.text ?? summary
+    }
+    if (event.type === 'turn.completed') {
+      completed = true
+      // A thread has several turns; what it used is what each one reports, added up.
+      tokensIn = sum(tokensIn, event.usage?.input_tokens)
+      tokensOut = sum(tokensOut, event.usage?.output_tokens)
+    }
+    if (event.type === 'turn.failed') failure = event.error?.message ?? 'the turn failed'
+    // A stream that fell back to another transport is reported as an error event but the turn goes on.
+    if (
+      event.type === 'error' &&
+      event.message &&
+      !/reconnecting|falling back/i.test(event.message)
+    ) {
+      failure ??= event.message
+    }
   }
-  return seen
-}
-
-export function parseCodexResult(exitCode: number, stdout: string, stderr: string): HarnessResult {
-  const { sessionId, summary, completed, failure, tokensIn, tokensOut } = readCodexStream(stdout)
   const ok = exitCode === 0 && completed && failure === undefined
   const text =
     failure ?? (ok ? '' : withExitCode(exitCode, (cleaned(stderr) || stdout).trim().slice(-1000)))
@@ -292,7 +276,6 @@ export function parseCodexResult(exitCode: number, stdout: string, stderr: strin
   const unauthorized = !ok && !quota && UNAUTHORIZED.test(text)
   return {
     ...(unauthorized ? { unauthorized } : {}),
-    ...(!ok && exitCode === 124 ? { timedOut: true } : {}),
     ok,
     summary: (ok ? summary : `codex failed: ${text || `exit ${exitCode}`}`).slice(0, SUMMARY_MAX),
     ...(sessionId ? { sessionId } : {}),

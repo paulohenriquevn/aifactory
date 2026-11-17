@@ -7,19 +7,7 @@ export type EgressRule = {
   headers?: Record<string, string>
 }
 
-/** Who a sandbox belongs to, so a sandbox whose owner is gone can be told from one in use. */
-export type SandboxOwner =
-  | { owner: 'task'; taskId: number; run: string }
-  | { owner: 'eval'; caseId: string; runId: string }
-  | { owner: 'prove-checks'; repository: string }
-  | { owner: 'plan'; planId: number }
-
-/** A sandbox as the provider lists it: what it was created with, and when. */
-export type ListedSandbox = { id: string; startedAt: Date; metadata: Record<string, string> }
-
 export type SandboxSpec = {
-  /** Recorded on the sandbox when the provider can, so a listing says who owns it. */
-  owner?: SandboxOwner
   /** The only destinations the sandbox can reach. */
   egress: EgressRule[]
   timeoutMs: number
@@ -81,12 +69,6 @@ export interface IsolatedSandboxProvider {
   deleteSnapshot?(snapshotId: string): Promise<void>
   /** The snapshots that still exist, so the supervisor can find ones nothing needs. */
   listSnapshots?(): Promise<{ id: string; createdAt: Date; sizeBytes: number }[]>
-  /** Every sandbox the account has up, whoever created it, so the supervisor can stop the ones nobody owns. */
-  listSandboxes?(): Promise<ListedSandbox[]>
-  /** Stops a sandbox by id. */
-  killSandbox?(id: string): Promise<void>
-  /** How many sandboxes the account may have up at once, when the plan says. */
-  readonly maxSandboxes?: number
 }
 
 /** Thrown when a run is asked for without the isolation the factory requires. */

@@ -215,16 +215,4 @@ describe('catchUpResolved', () => {
     ])
     expect(await stageOf(broken)).toBe('done')
   })
-
-  it('releases without touching the issue: no tag is known in a catch-up', async () => {
-    const open = await resolved('paulo/app', 1, 'aaa111')
-    const gh = fakeGithub({ 'paulo/app:main': ['aaa111'] })
-    gh.api.repo('paulo/app').issue(1, { state: 'open' })
-
-    const result = await catchUpResolved({ db: getDb(), ...gh }, { after: 0, limit: 10 })
-
-    expect(result.released).toEqual([open])
-    expect(gh.api.repo('paulo/app').issue(1).state).toBe('open')
-    expect(gh.api.repo('paulo/app').issue(1).comments).toEqual([])
-  })
 })

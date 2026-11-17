@@ -1,7 +1,6 @@
 import { Button } from '@usetheo/ui'
 import { useEffect, useState } from 'react'
 
-import { useCopy } from '../../lib/copy'
 import { get, post } from '../../lib/api'
 import type { Connection } from '../../lib/chat'
 
@@ -10,7 +9,6 @@ import type { Connection } from '../../lib/chat'
  * and the page asks every few seconds whether the credential is there yet.
  */
 export function ChatgptConnect({ onConnected }: { onConnected: () => void }) {
-  const { t } = useCopy()
   const [state, setState] = useState<Connection['login']>({ status: 'idle' })
   const [busy, setBusy] = useState(false)
 
@@ -38,28 +36,30 @@ export function ChatgptConnect({ onConnected }: { onConnected: () => void }) {
 
   return (
     <section
-      aria-label={t.chatgpt.label}
+      aria-label="Conectar o ChatGPT"
       className="mb-3 rounded-2xl border border-border bg-muted p-4 text-[14px]"
     >
-      <p className="text-foreground">{t.chatgpt.intro}</p>
+      <p className="text-foreground">
+        Conecte a sua assinatura do ChatGPT para conversar com este modelo.
+      </p>
       {state.status === 'waiting' ? (
         <p className="mt-2 text-foreground/80">
-          {t.chatgpt.open}{' '}
+          Abra{' '}
           <a href={state.verificationUri} target="_blank" rel="noreferrer" className="underline">
             {state.verificationUri}
           </a>{' '}
-          {t.chatgpt.typeCode}{' '}
-          <strong className="font-mono tracking-wider text-foreground">{state.userCode}</strong>.{' '}
-          {t.chatgpt.waitHint}
+          e digite o código{' '}
+          <strong className="font-mono tracking-wider text-foreground">{state.userCode}</strong>.
+          Esta página percebe sozinha quando você terminar.
         </p>
       ) : (
         <Button className="mt-3" size="sm" disabled={busy} onClick={() => void start()}>
-          {t.chatgpt.connect}
+          Conectar o ChatGPT
         </Button>
       )}
       {state.status === 'error' ? (
         <p role="alert" className="mt-2 text-destructive">
-          {t.chatgpt.failed} {state.message}
+          Não deu certo: {state.message}
         </p>
       ) : null}
     </section>

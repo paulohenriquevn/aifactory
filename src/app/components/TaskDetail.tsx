@@ -8,7 +8,6 @@ import {
   type TimelineEvent,
 } from '../../shared/panel'
 import { Pass, StageBadge } from './Badges'
-import { CoordinatorActions } from './CoordinatorActions'
 import { PlanSection } from './PlanSection'
 import { WatchPanel } from './WatchPanel'
 import { TaskActions } from './TaskActions'
@@ -103,13 +102,6 @@ export function TaskDetailView({ id, above }: { id: number; above?: ReactNode })
               </li>
             ))}
           </ul>
-        </section>
-      ) : null}
-
-      {detail.coordinatorActions.length > 0 ? (
-        <section aria-label={t.coordinator.sectionTitle}>
-          <h2 className="mb-2 text-sm font-semibold">{t.coordinator.sectionTitle}</h2>
-          <CoordinatorActions actions={detail.coordinatorActions} />
         </section>
       ) : null}
 

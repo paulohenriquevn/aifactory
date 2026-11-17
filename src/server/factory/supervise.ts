@@ -3,8 +3,6 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { Database } from '../db'
 import { finding, question, stageEvent, task, watch } from '../db/schema'
 
-import { reapSandboxes } from './reap-sandboxes'
-import type { ListedSandbox } from './sandbox'
 import { WATCH_WINDOW_MS } from './watch'
 
 /** What the supervisor reports. `key` is what makes the same problem one finding, not many. */
@@ -41,9 +39,6 @@ export type SuperviseDeps = {
   limits?: Limits
   /** The snapshots the sandbox provider holds, when it can say. */
   listSnapshots?: () => Promise<{ id: string; createdAt: Date; sizeBytes: number }[]>
-  /** The sandboxes the account has up, and how to stop one, when the provider can. */
-  listSandboxes?: () => Promise<ListedSandbox[]>
-  killSandbox?: (id: string) => Promise<void>
 }
 
 const minutes = (ms: number) => Math.round(ms / 60_000)
@@ -202,13 +197,7 @@ export async function detect(deps: SuperviseDeps): Promise<Detected> {
   return { found, checked }
 }
 
-export type SuperviseResult = {
-  opened: string[]
-  resolved: string[]
-  open: number
-  /** The sandboxes stopped because their owner is done, when any were. */
-  reaped?: { id: string; reason: string }[]
-}
+export type SuperviseResult = { opened: string[]; resolved: string[]; open: number }
 
 /**
  * Brings the findings in line with what is true now. A problem seen again keeps its first-seen time, a
@@ -258,20 +247,6 @@ export async function supervise(deps: SuperviseDeps): Promise<SuperviseResult> {
         ),
       )
     result.resolved.push(...gone.map((g) => g.key))
-  }
-  // A sandbox whose owner is done holds a slot of the account and bills: stop it. Failing leaves the rest.
-  if (deps.listSandboxes && deps.killSandbox) {
-    try {
-      const reaped = await reapSandboxes({
-        db,
-        now: () => now,
-        listSandboxes: deps.listSandboxes,
-        killSandbox: deps.killSandbox,
-      })
-      if (reaped.length > 0) result.reaped = reaped
-    } catch (error) {
-      console.error(JSON.stringify({ event: 'sandbox_reap_failed', error: String(error) }))
-    }
   }
   return result
 }

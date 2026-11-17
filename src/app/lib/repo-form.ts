@@ -33,12 +33,3 @@ export const parseDomains = (text: string): string[] =>
     .filter((d) => d !== '')
 
 export const formatDomains = (domains: string[]) => domains.join('\n')
-
-/** One fix command per line, trimmed; blank lines are dropped. */
-export const parseFixes = (text: string): string[] =>
-  text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '')
-
-export const formatFixes = (fixes: string[]) => fixes.join('\n')

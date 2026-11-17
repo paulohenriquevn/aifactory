@@ -9,28 +9,15 @@ import type { RoutedCode } from '../ingest/decide'
 
 /** What a person asks for in the panel. `retry_from_finding` is a retry from a supervisor finding. */
 type PanelEvent =
-  | 'approve'
-  | 'request_changes'
-  | 'withdraw_send_back'
-  | 'retry'
-  | 'retry_from_finding'
-  | 'resolve'
-  | 'release'
+  'approve' | 'request_changes' | 'retry' | 'retry_from_finding' | 'resolve' | 'release'
 
 /**
  * What the factory does with no person asking. `retry_due` is a failure whose time to run again came
  * (`retryAt`), `conflict_rerun` a pull request that conflicts with its base, `integrate` approved work
- * reaching its pull request, `coordinator_send_back` the coordinator sending a handed-over task back to its
- * agent (`coordinator/apply.ts`), `merged_by_person` a person merging the pull request a handoff left.
+ * reaching its pull request.
  */
 type AutomaticEvent =
-  | 'retry_due'
-  | 'conflict_rerun'
-  | 'send_back_after_ci'
-  | 'coordinator_send_back'
-  | 'hand_over'
-  | 'integrate'
-  | 'merged_by_person'
+  'retry_due' | 'conflict_rerun' | 'send_back_after_ci' | 'hand_over' | 'integrate'
 
 /** A delivery from GitHub: the label that hands an issue over, and every intent the event router gives. */
 type WebhookEvent = 'issue_labeled' | RoutedCode
@@ -56,10 +43,6 @@ export type Action =
   | 'open_follow_up_issue'
   | 're_evaluate_integration'
   | 'cancel'
-  /** A person's send-back that has not started is undone: its queued run goes and the stage before it returns. */
-  | 'withdraw_send_back'
-  /** A person merged the work a handoff left: it is integrated, and goes on to the release like any other. */
-  | 'adopt_merge'
 
 export type Outcome =
   | { kind: 'action'; action: Action }
@@ -88,8 +71,6 @@ export type Facts = {
   checksPassed?: boolean
   /** Whoever wrote the comment or the review is someone the repository trusts. */
   trusted?: boolean
-  /** The task waits in `intake` for a run a person asked for with a note, and no run has taken it. */
-  sendBackPending?: boolean
 }
 
 type Rule = Outcome | ((task: Facts) => Outcome)
@@ -102,7 +83,7 @@ const each = <S extends TaskStage>(stages: readonly S[], rule: Rule) =>
   Object.fromEntries(stages.map((stage) => [stage, rule])) as Record<S, Rule>
 
 /** The stages in which a run is alive. */
-export const WORKING = ['sandbox', 'plan', 'build', 'push', 'verify', 'review', 'pr'] as const
+const WORKING = ['sandbox', 'plan', 'build', 'push', 'verify', 'review', 'pr'] as const
 /** The stages the supervisor looks at for a run that stalled or was lost. */
 const SUPERVISED = ['intake', 'sandbox', 'plan', 'build', 'push', 'verify', 'review', 'pr'] as const
 
@@ -129,12 +110,6 @@ const onBranch = (task: Facts) =>
   act(task.branchGone ? 'start_from_integration_branch' : 'continue_on_branch')
 const sendBack: Rule = (task) => (task.mergedSha ? ALREADY_INTEGRATED : onBranch(task))
 
-const NOT_WITHDRAWABLE = refuse('only a send-back that has not started can be withdrawn')
-const withdraw: Rule = (task) =>
-  task.sendBackPending
-    ? act('withdraw_send_back')
-    : refuse('this task waits for no send-back of a person that could be withdrawn')
-
 const NOT_RETRIED = refuse(
   'only a failed or handed-over task, or one whose pull request was never merged, can be retried',
 )
@@ -154,10 +129,6 @@ const NOT_RUN_AGAIN = refuse(
 )
 const NOT_AWAITING_CHECKS = refuse(
   'only work that waits for the repository checks is sent back on its own',
-)
-
-const NOT_HANDED_OVER = refuse(
-  'the coordinator sends back only a task that was handed over to a person',
 )
 
 const NOBODY_WORKING = ignore(
@@ -227,13 +198,6 @@ const TRANSITIONS: Record<TransitionEvent, Record<TaskStage, Rule>> = {
     // on its branch, which a retry would delete.
     failed: sendBack,
   },
-  withdraw_send_back: {
-    ...each(
-      [...WORKING, 'waiting', 'done', 'released', 'handoff', 'failed', 'cancelled'],
-      NOT_WITHDRAWABLE,
-    ),
-    intake: withdraw,
-  },
   retry: {
     ...each(['intake', ...WORKING, 'waiting', 'released', 'cancelled'], NOT_RETRIED),
     done: whenNeverMerged(NOT_RETRIED),
@@ -279,13 +243,6 @@ const TRANSITIONS: Record<TransitionEvent, Record<TaskStage, Rule>> = {
     ),
     done: (task) => (task.awaitingCiSha ? act('continue_on_branch') : NOT_AWAITING_CHECKS),
   },
-  coordinator_send_back: {
-    ...each(
-      ['intake', ...WORKING, 'waiting', 'done', 'released', 'failed', 'cancelled'],
-      NOT_HANDED_OVER,
-    ),
-    handoff: sendBack,
-  },
   hand_over: {
     ...each(WORKING, act('hand_over')),
     ...each(['intake', 'waiting', 'released', 'handoff', 'failed', 'cancelled'], NOBODY_WORKING),
@@ -301,13 +258,6 @@ const TRANSITIONS: Record<TransitionEvent, Record<TaskStage, Rule>> = {
       ['waiting', 'done', 'released', 'handoff', 'failed', 'cancelled'],
       NOT_AT_ITS_PULL_REQUEST,
     ),
-  },
-  merged_by_person: {
-    ...each(
-      ['intake', ...WORKING, 'waiting', 'done', 'released', 'failed', 'cancelled'],
-      ignore('only the pull request a handoff left waits for a person to merge it'),
-    ),
-    handoff: act('adopt_merge'),
   },
 
   issue_labeled: {

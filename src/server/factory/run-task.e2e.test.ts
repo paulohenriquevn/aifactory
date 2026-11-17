@@ -188,7 +188,7 @@ describe('the factory against the real services', () => {
     expect(mine[0].base.ref).toBe('workspace')
     expect(mine[0].merged_at).not.toBeNull()
     expect(mine[0].html_url).toBe(result.status === 'done' ? result.pullRequestUrl : '')
-    expect(mine[0].body).toContain('For #1.')
+    expect(mine[0].body).toContain('Closes #1')
 
     // The pre-release is a tag on the commit develop is at now.
     const developHead = (await api('/git/ref/heads/develop')) as { object: { sha: string } }

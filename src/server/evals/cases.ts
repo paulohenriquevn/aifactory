@@ -5,13 +5,8 @@ export type Candidate = {
   taskId: number
   repository: string
   issueNumber: number
-  /** The commit the first checks ran on: the builder's, or the fix commit on top of it. */
+  /** The first commit the run pushed; its parent is the commit the run started from. */
   firstSha: string
-  /**
-   * The builder's first commit when the first checks ran on a fix commit on top of it: its parent is the
-   * commit the run started from. Absent when the first checks ran on the builder's commit (`firstSha`).
-   */
-  startSha?: string
   mergedSha: string
   costUsd: number
   durationMs: number
@@ -33,8 +28,6 @@ export type EvalCase = {
   integrationBranch: string
   baseSha: string
   checks: CheckSpec[]
-  /** The repository's fix commands, run before each round of checks; absent means none. */
-  fixes?: string[]
   /** Domains the repository's checks reach besides the registry, as the owner set them. */
   egress: string[]
   /** What the factory's own run of this task came to, for comparison. */
@@ -128,59 +121,10 @@ const AGENTS_FOLDER = 'src/server/agents/'
 
 const isTest = (path: string) => /\.test\.[cm]?[jt]sx?$/.test(path)
 
-/**
- * The quality gates and the guard against weakened tests: what decides whether work is good enough. A change
- * to one is never integrated by the factory on its own, since no evaluation measures it: the owner reads it.
- * A path that ends in `/` names a folder.
- */
-export const QUALITY_GATES = [
-  'quality/',
-  'scripts/crap.mjs',
-  'stryker.config.json',
-  'vitest.stryker.config.ts',
-  'vitest.config.ts',
-  '.jscpd.json',
-  '.github/workflows/',
-  'src/server/factory/test-weakening.ts',
-]
-
 /** The paths among `changed` that belong to the agents' configuration. */
 export function agentConfigurationChanged(changed: string[]): string[] {
   return changed.filter(
     (path) =>
       !isTest(path) && (AGENT_CONFIGURATION.includes(path) || path.startsWith(AGENTS_FOLDER)),
-  )
-}
-
-/** The factory's own repository: the one whose code `AGENT_CONFIGURATION` names. */
-export const FACTORY_REPOSITORY = 'paulohenriquevn/aifactory'
-
-/**
- * The agent configuration a change of `repository` touches. The factory never integrates such a change on
- * its own: it waits for `pnpm evals:check` and the owner. Another repository's files of the same name are
- * its own code, so nothing there is held. `own` is the factory's repository, another name for a fork.
- */
-export function heldForEvaluation(
-  repository: string,
-  changed: string[],
-  own: string = FACTORY_REPOSITORY,
-): string[] {
-  return repository === own ? agentConfigurationChanged(changed) : []
-}
-
-/**
- * The quality gates a change of `repository` touches. Like the agent configuration, the factory never
- * integrates such a change on its own; unlike it, no evaluation measures it, so the owner reviews it.
- */
-export function heldForReview(
-  repository: string,
-  changed: string[],
-  own: string = FACTORY_REPOSITORY,
-): string[] {
-  if (repository !== own) return []
-  return changed.filter(
-    (path) =>
-      !isTest(path) &&
-      QUALITY_GATES.some((gate) => (gate.endsWith('/') ? path.startsWith(gate) : path === gate)),
   )
 }

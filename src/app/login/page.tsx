@@ -3,10 +3,8 @@ import { useState, type FormEvent } from 'react'
 import { Button, Input } from '@usetheo/ui'
 
 import { post } from '../lib/api'
-import { useCopy } from '../lib/copy'
 
 export default function LoginPage() {
-  const { t } = useCopy()
   const [token, setToken] = useState('')
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -26,9 +24,9 @@ export default function LoginPage() {
 
   return (
     <form onSubmit={submit} className="mx-auto mt-16 max-w-sm space-y-3">
-      <h1 className="text-xl font-semibold">{t.login.title}</h1>
+      <h1 className="text-xl font-semibold">Sign in</h1>
       <label className="block text-sm">
-        <span className="text-foreground">{t.login.token}</span>
+        <span className="text-foreground">Panel token</span>
         <Input
           type="password"
           autoComplete="current-password"
@@ -43,7 +41,7 @@ export default function LoginPage() {
         </p>
       ) : null}
       <Button type="submit" disabled={busy || token === ''}>
-        {t.login.submit}
+        Sign in
       </Button>
     </form>
   )

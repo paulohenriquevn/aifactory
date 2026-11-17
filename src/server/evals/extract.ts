@@ -10,7 +10,6 @@ type Row = {
   repository: string
   issue_number: number
   first_sha: string
-  start_sha: string | null
   merged_sha: string
   cost_usd: string
   duration_ms: string
@@ -34,12 +33,11 @@ export async function deliveredCandidates(db: Database): Promise<Candidate[]> {
         (select e.at from stage_event e where e.task_id = t.id and e.id > l.sandbox_id and e.stage = 'done' order by e.id limit 1) as finished,
         (select e.detail from stage_event e where e.task_id = t.id and e.id > l.sandbox_id and e.stage = 'done' order by e.id limit 1) as done,
         (select e.detail->>'sha' from stage_event e where e.task_id = t.id and e.id > l.sandbox_id and e.stage = 'verify' order by e.id limit 1) as first_sha,
-        (select e.detail->>'fixedFrom' from stage_event e where e.task_id = t.id and e.id > l.sandbox_id and e.stage = 'verify' order by e.id limit 1) as start_sha,
         exists (select 1 from stage_event e where e.task_id = t.id and e.id > l.sandbox_id and (e.detail->>'resumed')::boolean) as resumed
       from task t join last_run l on l.task_id = t.id
       where t.stage in ('done', 'released') and t.merged_sha is not null
     )
-    select r.task_id, r.repository, r.issue_number, r.first_sha, r.start_sha, r.merged_sha,
+    select r.task_id, r.repository, r.issue_number, r.first_sha, r.merged_sha,
       coalesce((r.done->>'costUsd')::numeric, 0) as cost_usd,
       (extract(epoch from r.finished - r.started) * 1000)::bigint as duration_ms,
       coalesce((r.done->>'attempts')::int, 1) as attempts,
@@ -57,7 +55,6 @@ export async function deliveredCandidates(db: Database): Promise<Candidate[]> {
     repository: r.repository,
     issueNumber: r.issue_number,
     firstSha: r.first_sha,
-    ...(r.start_sha ? { startSha: r.start_sha } : {}),
     mergedSha: r.merged_sha,
     costUsd: Number(r.cost_usd),
     durationMs: Number(r.duration_ms),
@@ -74,11 +71,7 @@ export type CaseSources = {
   ): Promise<{ title: string; body: string; labels: string[] }>
   /** The first parent of `sha`: the commit the run started from. */
   parentOf(repository: string, sha: string): Promise<string>
-  config(repository: string): Promise<{
-    integrationBranch: string
-    egress: string[]
-    fixes?: string[]
-  }>
+  config(repository: string): Promise<{ integrationBranch: string; egress: string[] }>
 }
 
 export async function toCase(candidate: Candidate, sources: CaseSources): Promise<EvalCase> {
@@ -94,9 +87,8 @@ export async function toCase(candidate: Candidate, sources: CaseSources): Promis
     labels: issue.labels,
     kind: kindOf(issue.labels),
     integrationBranch: config.integrationBranch,
-    baseSha: await sources.parentOf(repository, candidate.startSha ?? candidate.firstSha),
+    baseSha: await sources.parentOf(repository, candidate.firstSha),
     checks: candidate.checks,
-    ...(config.fixes?.length ? { fixes: config.fixes } : {}),
     egress: config.egress,
     original: {
       taskId: candidate.taskId,

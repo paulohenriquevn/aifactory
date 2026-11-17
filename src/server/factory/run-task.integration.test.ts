@@ -1,10 +1,5 @@
-import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { and, desc, eq } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { getStorageManager } from 'theokit/server/storage'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -17,7 +12,6 @@ import {
   delivery,
   evidence,
   ingress,
-  promotionWait,
   publication,
   question,
   releaseWait,
@@ -30,7 +24,7 @@ import {
 import type { GithubApp } from '../github/app'
 import type { ChangedFile, IssueComment } from '../github/pulls'
 
-import { retryableFailure, type Stage } from '../../shared/panel'
+import { retryableFailure } from '../../shared/panel'
 import { retryAt } from './auto-retry'
 import {
   divergedRepository,
@@ -46,20 +40,14 @@ import type { NewNote } from '../knowledge/store'
 import { githubEgress } from './credential-renewal'
 import { CHANGESET_CHECK_SCRIPT } from './changeset-check'
 import { CHANGESET_CHECK_PATH } from './changesets'
-import { FakeBackend, FakeSandbox, type Reply } from './fake-sandbox'
+import { FakeSandbox, type Reply } from './fake-sandbox'
 import { eventsOf } from './transcript-store'
 import { parseRecipe } from './recipe'
 import type { CodingHarness } from './harness'
 import type { Finding } from './review'
 import { mergeEgress, resumeTask, runTask, type RunTaskDeps } from './run-task'
 import { runContinuation } from './run-support'
-import { fixedBaseNote } from './ci-wait'
-import {
-  mergeFixedBase,
-  requestChanges,
-  retryAutomatically,
-  type ActionDeps,
-} from '../panel/actions'
+import { requestChanges, retryAutomatically, type ActionDeps } from '../panel/actions'
 import { runDueRetries } from '../panel/retry-waiting'
 import { listTasks } from '../panel/queries'
 import { release } from './deliver'
@@ -74,7 +62,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await getPool().query(
-    'truncate table promotion_wait, agent_event, agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
+    'truncate table agent_event, agent_run, watch, delivery, decision, question, review, evidence, stage_event, task, ingress, repository restart identity cascade',
   )
 })
 afterAll(() => getStorageManager().dispose())
@@ -354,95 +342,6 @@ const stagesOf = async (taskId: number) =>
 /** GitHub has the task's branch: an earlier run pushed it and nothing deleted it since. */
 const branchPushed = (issueNumber = 7) => repo().heads.set(`factory/${issueNumber}`, 'f'.repeat(40))
 
-/** A fake backend that also writes the files it is given, as a sandbox does. */
-class WritingBackend extends FakeBackend {
-  /** `dir` stands for the sandbox's /tmp, so no upload lands on the host's own paths. */
-  constructor(
-    script: ConstructorParameters<typeof FakeBackend>[0],
-    private readonly dir: string,
-  ) {
-    super(script)
-  }
-
-  override async uploadFile(path: string, content: string | Buffer) {
-    await super.uploadFile(path, content)
-    await writeFile(path.replace(/^\/tmp\//, `${this.dir}/`), content)
-  }
-}
-
-/** A sandbox whose commands run in a real directory, against a real bare repository standing for GitHub. */
-class RealGit {
-  baseHead = ''
-  readonly sandbox: FakeSandbox
-
-  private constructor(
-    private readonly root: string,
-    readonly work: string,
-    private readonly remote: string,
-  ) {
-    const backend = new WritingBackend((command) => {
-      const ran = spawnSync(
-        'bash',
-        [
-          '-c',
-          command
-            .replaceAll('https://github.com/paulo/app.git', `file://${remote}`)
-            .replaceAll('/tmp/factory', `${root}/factory`),
-        ],
-        { cwd: work, encoding: 'utf8' },
-      )
-      return { stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.status ?? 1 }
-    }, root)
-    this.sandbox = new FakeSandbox()
-    const create = this.sandbox.create.bind(this.sandbox)
-    this.sandbox.create = async (spec) => ({ ...(await create(spec)), backend })
-  }
-
-  static async open(): Promise<RealGit> {
-    const root = await mkdtemp(join(tmpdir(), 'aifactory-git-'))
-    const remote = join(root, 'remote.git')
-    const work = join(root, 'work')
-    const seed = join(root, 'seed')
-    const run = (cwd: string, ...args: string[]) =>
-      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
-        cwd,
-        encoding: 'utf8',
-      }).trim()
-    execFileSync('mkdir', ['-p', work, seed])
-    run(root, 'init', '--bare', '-b', 'workspace', remote)
-    run(seed, 'init', '-b', 'workspace')
-    await writeFile(join(seed, 'README.md'), 'hello\n')
-    run(seed, 'add', '-A')
-    run(seed, 'commit', '-m', 'base')
-    run(seed, 'push', remote, 'workspace')
-    const git = new RealGit(root, work, remote)
-    git.baseHead = run(seed, 'rev-parse', 'HEAD')
-    return git
-  }
-
-  private git(...args: string[]): string {
-    return execFileSync('git', ['--git-dir', this.remote, ...args], { encoding: 'utf8' }).trim()
-  }
-
-  remoteHead(branch: string): string {
-    return this.git('rev-parse', `refs/heads/${branch}`)
-  }
-
-  show(sha: string, path: string): string {
-    return execFileSync('git', ['--git-dir', this.remote, 'show', `${sha}:${path}`], {
-      encoding: 'utf8',
-    })
-  }
-
-  parentOf(sha: string): string {
-    return this.git('rev-parse', `${sha}^`)
-  }
-
-  close() {
-    return rm(this.root, { recursive: true, force: true })
-  }
-}
-
 describe('runTask', () => {
   it('pushes factory/<issue> and records the stages in order', async () => {
     const id = await seedTask()
@@ -470,141 +369,6 @@ describe('runTask', () => {
     expect(sandbox.backend.commands.some((c) => c.includes('push origin factory/7 '))).toBe(true)
     expect(github.asked).toContain('paulo/app')
     expect(sandbox.stopped).toBe(1)
-  })
-
-  it("passes format on the first round when the repository's fix commits what the builder left unformatted", async () => {
-    await getDb()
-      .insert(repository)
-      .values({
-        fullName: 'paulo/app',
-        enabled: true,
-        checks: [{ name: 'format', command: 'prettier --check .' }],
-        fixes: ['prettier --write .'],
-      })
-    const id = await seedTask()
-    let formatted = false
-    const sandbox = new FakeSandbox(
-      changed((c) => {
-        if (c.includes('write-tree')) return { stdout: 'tree0\n' }
-        if (c.endsWith('prettier --write .')) {
-          formatted = true
-          dirty = true
-          return { stdout: 'src/truncate.js' }
-        }
-        if (c.endsWith('prettier --check .')) return formatted ? {} : { exitCode: 1 }
-        return undefined
-      }),
-    )
-
-    const result = await runTask(deps(sandbox), id)
-
-    expect(result).toMatchObject({ status: 'done' })
-    expect(await stagesOf(id)).toEqual([
-      'sandbox',
-      'build',
-      'push',
-      'push',
-      'verify',
-      'review',
-      'pr',
-      'done',
-    ])
-    const [row] = await getDb()
-      .select()
-      .from(stageEvent)
-      .where(and(eq(stageEvent.taskId, id), eq(stageEvent.stage, 'push')))
-      .orderBy(desc(stageEvent.id))
-    expect(JSON.stringify(row.detail)).toContain('prettier --write .')
-    expect(sandbox.backend.files.get('/tmp/factory-commit-message.txt')).toBe(
-      "style: apply the repository's fixes\n",
-    )
-    const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
-    expect(stored.every((e) => e.passed)).toBe(true)
-  })
-
-  it('runs the fixes once, and checks their commit, when the builder changed nothing and the fixes did', async () => {
-    await getDb()
-      .insert(repository)
-      .values({ fullName: 'paulo/app', enabled: true, fixes: ['prettier --write .'] })
-    const id = await seedTask()
-    dirty = false
-    const sandbox = new FakeSandbox(
-      changed((c) => {
-        if (c.includes('write-tree')) return { stdout: 'tree0\n' }
-        if (c.endsWith('prettier --write .')) {
-          dirty = true
-          return { stdout: 'src/truncate.js' }
-        }
-        return undefined
-      }),
-    )
-    const unchanged: CodingHarness = {
-      name: 'unchanged',
-      egress: agentEgress,
-      run: async () => ({ ok: true, summary: 'Nothing to add.', sessionId: 'sess-1' }),
-    }
-
-    const result = await runTask(deps(sandbox, { harness: unchanged }), id)
-
-    expect(result).toMatchObject({ status: 'done' })
-    const fixRuns = sandbox.backend.commands.filter((c) => c.endsWith('prettier --write .'))
-    expect(fixRuns).toHaveLength(1)
-    expect(sandbox.backend.commands.filter((c) => c.includes('commit -F'))).toHaveLength(1)
-    expect(await stagesOf(id)).toEqual([
-      'sandbox',
-      'build',
-      'push',
-      'verify',
-      'review',
-      'pr',
-      'done',
-    ])
-  })
-
-  it('leaves the work as it was and still runs the checks when a fix fails', async () => {
-    await getDb()
-      .insert(repository)
-      .values({
-        fullName: 'paulo/app',
-        enabled: true,
-        checks: [{ name: 'format', command: 'prettier --check .' }],
-        fixes: ['prettier --write .'],
-      })
-    const id = await seedTask()
-    const sandbox = new FakeSandbox(
-      changed((c) => {
-        if (c.includes('write-tree')) return { stdout: 'tree0\n' }
-        if (c.endsWith('prettier --write .')) {
-          dirty = true
-          return { exitCode: 2, stderr: 'SyntaxError in src/truncate.js' }
-        }
-        if (c.includes('checkout-index')) dirty = false
-        return undefined
-      }),
-    )
-
-    const result = await runTask(deps(sandbox), id)
-
-    expect(result).toMatchObject({ status: 'done' })
-    expect(sandbox.backend.commands.filter((c) => c.includes('commit -F'))).toHaveLength(1)
-    expect(await stagesOf(id)).toEqual([
-      'sandbox',
-      'build',
-      'push',
-      'verify',
-      'review',
-      'pr',
-      'done',
-    ])
-    const [verify] = await getDb()
-      .select()
-      .from(stageEvent)
-      .where(and(eq(stageEvent.taskId, id), eq(stageEvent.stage, 'verify')))
-    expect(verify.detail).toMatchObject({
-      fixes: [{ command: 'prettier --write .', exitCode: 2 }],
-    })
-    const stored = await getDb().select().from(evidence).where(eq(evidence.taskId, id))
-    expect(stored.map((e) => e.name)).toEqual(['format'])
   })
 
   it('records the whole cost and the branch on the done stage', async () => {
@@ -900,143 +664,6 @@ describe('runTask', () => {
     expect(result).toMatchObject({ status: 'failed', stage: 'build' })
     expect(result.status === 'failed' && result.error).toContain('Invalid API key')
     expect(sandbox.backend.commands.some((c) => c.includes('push origin'))).toBe(false)
-  })
-
-  it('keeps the work of a pass cut at its limit: the failure names the commit that is on factory/<issue>', async () => {
-    const id = await seedTask()
-    const git = await RealGit.open()
-    try {
-      const cut: CodingHarness = {
-        name: 'f',
-        egress: agentEgress,
-        run: async (_backend, input) => {
-          await writeFile(join(input.cwd, 'kept.txt'), 'half done\n')
-          return { ok: false, timedOut: true, summary: 'claude exited 124' }
-        },
-      }
-
-      const result = await runTask(deps(git.sandbox, { harness: cut }), id)
-
-      const remote = git.remoteHead('factory/7')
-      expect(remote).toMatch(/^[0-9a-f]{40}$/)
-      expect(result).toMatchObject({ status: 'failed', stage: 'push' })
-      expect(result.status === 'failed' && result.error).toContain(
-        `the work was kept in commit ${remote} on factory/7`,
-      )
-      expect(git.show(remote, 'kept.txt')).toBe('half done\n')
-      expect(git.parentOf(remote)).toBe(git.baseHead)
-      expect(result.status === 'failed' && result.error).toContain('send the task back')
-    } finally {
-      await git.close()
-    }
-  })
-
-  it('keeps the work of a pass cut at its limit: commits and pushes it, and the failure names the commit', async () => {
-    const id = await seedTask()
-    const sandbox = new FakeSandbox(changed())
-    const cut: CodingHarness = {
-      name: 'f',
-      egress: agentEgress,
-      run: async () => ({ ok: false, timedOut: true, summary: 'claude exited 124' }),
-    }
-
-    const result = await runTask(deps(sandbox, { harness: cut }), id)
-
-    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
-    expect(result.status === 'failed' && result.error).toMatch(/kept in commit \S+ on factory\//)
-    expect(sandbox.backend.commands.some((c) => c.includes('push origin'))).toBe(true)
-  })
-
-  it('names no commit when the push of a pass cut at its limit fails', async () => {
-    const id = await seedTask()
-    const sandbox = new FakeSandbox(
-      changed((c) => (c.includes('push origin') ? { exitCode: 1, stderr: 'rejected' } : undefined)),
-    )
-    const cut: CodingHarness = {
-      name: 'f',
-      egress: agentEgress,
-      run: async () => ({ ok: false, timedOut: true, summary: 'claude exited 124' }),
-    }
-
-    const result = await runTask(deps(sandbox, { harness: cut }), id)
-
-    expect(result.status).toBe('failed')
-    expect(result.status === 'failed' && result.error).toContain('the work could not be kept')
-    expect(result.status === 'failed' && result.error).not.toContain('kept in commit')
-  })
-
-  it('keeps the work of a pass cut at its limit even when the provider also reported its quota', async () => {
-    const id = await seedTask()
-    const sandbox = new FakeSandbox(changed())
-    const cut: CodingHarness = {
-      name: 'f',
-      egress: agentEgress,
-      run: async () => ({
-        ok: false,
-        timedOut: true,
-        summary: 'codex exited 124',
-        quota: { message: 'usage limit', resetsAt: 'tomorrow' },
-      }),
-    }
-
-    const result = await runTask(deps(sandbox, { harness: cut }), id)
-
-    expect(result).toMatchObject({ status: 'failed', stage: 'push' })
-    expect(result.status === 'failed' && result.error).toMatch(/kept in commit \S+ on factory\//)
-    expect(sandbox.backend.commands.some((c) => c.includes('push origin'))).toBe(true)
-  })
-
-  it.each([
-    ['the push succeeds', undefined, 'kept in commit'],
-    [
-      'the push fails',
-      (c: string) => (c.includes('push origin') ? { exitCode: 1, stderr: 'rejected' } : undefined),
-      'the work could not be kept',
-    ],
-  ])('keeps the quota reset of a pass cut at its limit when %s', async (_n, script, text) => {
-    const id = await seedTask()
-    const sandbox = new FakeSandbox(changed(script))
-    const cut: CodingHarness = {
-      name: 'f',
-      egress: agentEgress,
-      run: async () => ({
-        ok: false,
-        timedOut: true,
-        summary: 'codex exited 124',
-        quota: { message: 'usage limit', resetsAt: 'Nov 5th, 2026 11:48 AM' },
-      }),
-    }
-
-    const result = await runTask(deps(sandbox, { harness: cut }), id)
-
-    expect(result.status === 'failed' && result.error).toContain(text)
-    const failed = (
-      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'failed'))
-    )[0]
-    expect(failed.detail).toMatchObject({
-      quota: true,
-      resetsAt: 'Nov 5th, 2026 11:48 AM',
-      resumesAt: '2026-11-05T11:48:00.000Z',
-    })
-  })
-
-  it('pushes nothing when a pass cut at its limit left a clean checkout', async () => {
-    const id = await seedTask()
-    const sandbox = new FakeSandbox((c) =>
-      c.includes('status --porcelain') ? { stdout: '' } : undefined,
-    )
-    const cut: CodingHarness = {
-      name: 'f',
-      egress: agentEgress,
-      run: async () => ({ ok: false, timedOut: true, summary: 'claude exited 124' }),
-    }
-
-    const result = await runTask(deps(sandbox, { harness: cut }), id)
-
-    expect(result).toMatchObject({ status: 'failed', stage: 'build' })
-    expect(result.status === 'failed' && result.error).not.toContain('kept in commit')
-    expect(sandbox.backend.commands.some((c) => c.includes('push origin'))).toBe(false)
-    expect(sandbox.backend.commands.some((c) => / commit /.test(c))).toBe(false)
   })
 
   it('starts from the integration branch, workspace, and opens against it by default', async () => {
@@ -1473,15 +1100,6 @@ describe('runTask', () => {
   })
 })
 
-/** What the run recorded when it handed the task over. */
-const handoffDetail = async (taskId: number) =>
-  (
-    await getDb()
-      .select({ detail: stageEvent.detail })
-      .from(stageEvent)
-      .where(and(eq(stageEvent.taskId, taskId), eq(stageEvent.stage, 'handoff')))
-  )[0]?.detail
-
 const reviewsOf = async (taskId: number) =>
   getDb().select().from(review).where(eq(review.taskId, taskId)).orderBy(review.id)
 
@@ -1651,7 +1269,6 @@ describe('runTask review loop', () => {
     expect(stages).not.toContain('done')
     const [row] = await getDb().select().from(task).where(eq(task.id, id))
     expect(row).toMatchObject({ stage: 'handoff', pullRequestUrl: PR_URL })
-    expect(await handoffDetail(id)).toMatchObject({ cause: 'review_plateau' })
   })
 
   const roundsOf = (...sizes: number[]) =>
@@ -1726,7 +1343,6 @@ describe('runTask review loop', () => {
     expect(builder.resumed).toHaveLength(0)
     expect((await reviewsOf(id))[0]).toMatchObject({ verdict: 'invalid' })
     expect(seen.drafts).toEqual([true])
-    expect(await handoffDetail(id)).toMatchObject({ cause: 'review_unusable' })
   })
 
   it('does not take an approval that lists a blocking finding', async () => {
@@ -2522,53 +2138,6 @@ describe('runTask continuing from a branch a person sent back', () => {
     expect(done?.detail).not.toMatchObject({ unchanged: true })
   })
 
-  it('pushes the merge the agent committed itself, with nothing left uncommitted, and checks and reviews it', async () => {
-    const approved = 'a'.repeat(40)
-    const merge = 'b'.repeat(40)
-    const id = await seedTask()
-    branchPushed()
-    await getDb()
-      .update(task)
-      .set({ stage: 'intake', headSha: approved, pullRequestUrl: PR_URL })
-      .where(eq(task.id, id))
-    let merged = false
-    const sandbox = new FakeSandbox(
-      changed((command) => {
-        if (command.includes('ls-remote')) return { stdout: `${approved}\trefs/heads/factory/7\n` }
-        if (command.includes('rev-list --count')) return { stdout: merged ? '1\n' : '0\n' }
-        if (command.endsWith('rev-parse HEAD')) return { stdout: `${merged ? merge : approved}\n` }
-        return undefined
-      }),
-    )
-    const builder: CodingHarness = {
-      name: 'fake-agent',
-      egress: agentEgress,
-      run: async () => {
-        // `git merge` commits by itself, so the checkout is clean and one commit ahead of GitHub.
-        merged = true
-        dirty = false
-        return { ok: true, summary: 'Merged the integration branch and regenerated the docs.' }
-      },
-    }
-
-    const result = await runTask(deps(sandbox, { harness: builder }), id, undefined, {
-      feedback: 'The pull request conflicts with workspace: git merge origin/workspace.',
-    })
-
-    expect(result).toMatchObject({ status: 'done', sha: merge })
-    const commands = sandbox.backend.commands
-    expect(commands.some((c) => c.includes('commit -F'))).toBe(false)
-    expect(
-      commands.some((c) =>
-        c.includes(`push origin factory/7 --force-with-lease=refs/heads/factory/7:${approved}`),
-      ),
-    ).toBe(true)
-    const stages = await stagesOf(id)
-    expect(stages).toContain('verify')
-    expect(stages).toContain('review')
-    expect(stages).not.toContain('failed')
-  })
-
   it('hands to a person work whose required checks failed when the agent finds nothing to change', async () => {
     const id = await seedTask()
     branchPushed()
@@ -2613,89 +2182,7 @@ describe('runTask continuing from a branch a person sent back', () => {
     )[0]
     expect(handoff.detail).toMatchObject({
       reason: expect.stringMatching(/required checks failed and the agent changed nothing/),
-      cause: 'checks_unchanged',
       unchanged: true,
-    })
-  })
-
-  describe('when the recorded pull request is closed and the agent changes nothing', () => {
-    async function sentBackOnClosed(aheadBy: number, plain = false) {
-      const id = await seedTask()
-      branchPushed()
-      repo().pullRequest({ number: 12, headRef: 'factory/7', state: 'closed' })
-      repo().ahead('workspace', 'factory/7', aheadBy)
-      await getDb()
-        .update(task)
-        .set({ stage: 'intake', headSha: 'oldsha1', pullRequestUrl: PR_URL })
-        .where(eq(task.id, id))
-      const builder: CodingHarness = {
-        name: 'fake-agent',
-        egress: agentEgress,
-        run: async () => {
-          dirty = false
-          return { ok: true, summary: 'Nothing to merge.' }
-        },
-      }
-      // The branch moved on after its pull request was closed: its head is not the pull request's.
-      const head = 'f'.repeat(40)
-      const branchHead = (command: string) => {
-        if (command.includes('ls-remote')) return { stdout: `${head}\trefs/heads/factory/7\n` }
-        if (command.endsWith('rev-parse HEAD')) return { stdout: `${head}\n` }
-        return undefined
-      }
-      const result = await runTask(
-        deps(new FakeSandbox(changed(branchHead)), { harness: builder }),
-        id,
-        undefined,
-        plain ? { feedback: '', plain: true } : { feedback: 'Merge workspace.', fromChecks: true },
-      )
-      return { id, result }
-    }
-
-    it('hands over without opening a pull request when the branch has nothing ahead of its base', async () => {
-      const { result } = await sentBackOnClosed(0)
-      expect(result).toMatchObject({
-        status: 'handoff',
-        reason: expect.stringContaining('nothing ahead of workspace'),
-      })
-      expect(githubApi.callsTo('openPullRequest')).toHaveLength(0)
-      expect(githubApi.callsTo('reopenPullRequest')).toHaveLength(0)
-    })
-
-    it('hands over without opening a pull request on a plain continuation too', async () => {
-      const { result } = await sentBackOnClosed(0, true)
-      expect(result).toMatchObject({ status: 'handoff' })
-      expect(githubApi.callsTo('openPullRequest')).toHaveLength(0)
-    })
-
-    it('opens a new pull request when GitHub will not reopen the closed one', async () => {
-      githubApi.fail('reopenPullRequest', new Error('GitHub answered 422 reopening paulo/app#12'))
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-      const { id, result } = await sentBackOnClosed(2)
-      expect(result.status).not.toBe('failed')
-      const logged = warn.mock.calls
-        .map(([line]) => String(line))
-        .filter((line) => line.includes('pull_request_reopen_failed'))
-      warn.mockRestore()
-      expect(logged).toHaveLength(1)
-      expect(JSON.parse(logged[0])).toMatchObject({
-        taskId: id,
-        repository: 'paulo/app',
-        pullRequest: 12,
-        error: expect.stringContaining('GitHub answered 422'),
-      })
-    })
-
-    it('reopens it when the branch is ahead of its base', async () => {
-      const { id, result } = await sentBackOnClosed(2)
-      expect(githubApi.answered('reopenPullRequest').map(([number]) => number)).toEqual([12])
-      expect(result.status).not.toBe('failed')
-      const stages = await stagesOf(id)
-      expect(stages).toContain('verify')
-      expect(stages).toContain('review')
-      // The checks judged the branch's head, not the closed pull request's old one.
-      expect(seen.checkRuns.map((c) => c.headSha)).toContain('f'.repeat(40))
-      expect(seen.checkRuns.map((c) => c.headSha)).not.toContain('oldsha1')
     })
   })
 
@@ -2794,140 +2281,6 @@ describe('runTask continuing from a branch a person sent back', () => {
   })
 })
 
-describe('runTask merging an integration branch that passes the checks again', () => {
-  const base = 'c'.repeat(40)
-  const verified = 'a'.repeat(40)
-  const merge = 'b'.repeat(40)
-  type Queued = { taskId: number; feedback?: string; resume?: boolean; mergeBase?: boolean }
-
-  /** A done task waiting on its checks, sent to merge the fixed base as the cron does, and what that queued. */
-  async function sentToMergeTheBase(): Promise<{ id: number; queued: Queued[] }> {
-    const id = await seedTask()
-    branchPushed()
-    await getDb()
-      .update(task)
-      .set({ stage: 'done', headSha: verified, awaitingCiSha: verified, pullRequestUrl: PR_URL })
-      .where(eq(task.id, id))
-    const queued: Queued[] = []
-    await mergeFixedBase(
-      {
-        db: getDb(),
-        github,
-        api: githubApi,
-        enqueueResume: async () => {},
-        deleteSnapshot: async () => {},
-        inTransaction: (work) =>
-          getDb().transaction((tx) => work(tx as never, async (input) => void queued.push(input))),
-      },
-      id,
-      fixedBaseNote('workspace', ['CI']),
-    )
-    return { id, queued }
-  }
-
-  /** A clone of the integration branch at `base`, then the work branch at `verified`, which a merge moves on. */
-  function mergingSandbox() {
-    let onBranch = false
-    let merged = false
-    dirty = false
-    return new FakeSandbox(
-      changed((command) => {
-        if (command.includes('checkout -B factory/7')) onBranch = true
-        if (command.includes('ls-remote')) return { stdout: `${verified}\trefs/heads/factory/7\n` }
-        if (command.includes(`merge --no-edit ${base}`)) merged = true
-        if (command.includes('rev-list --count')) return { stdout: merged ? '1\n' : '0\n' }
-        if (command.endsWith('rev-parse HEAD')) {
-          return { stdout: `${!onBranch ? base : merged ? merge : verified}\n` }
-        }
-        return undefined
-      }),
-    )
-  }
-
-  it('queues a run that merges the base, with no feedback for an agent', async () => {
-    const { id, queued } = await sentToMergeTheBase()
-
-    expect(queued).toEqual([{ taskId: id, mergeBase: true }])
-  })
-
-  it('records a note with no git command in it', async () => {
-    const { id } = await sentToMergeTheBase()
-
-    const [intake] = (await getDb()
-      .select()
-      .from(stageEvent)
-      .where(and(eq(stageEvent.taskId, id), eq(stageEvent.stage, 'intake')))
-      .orderBy(desc(stageEvent.id))
-      .limit(1)) as { detail: { note: string } }[]
-    expect(intake!.detail.note).toBe(fixedBaseNote('workspace', ['CI']))
-    expect(intake!.detail.note).not.toMatch(/\bgit\b/)
-  })
-
-  it('merges the base it cloned, pushes the merge with no agent asked anything, and checks and reviews it', async () => {
-    const { id, queued } = await sentToMergeTheBase()
-    const sandbox = mergingSandbox()
-    const built: string[] = []
-    const builder: CodingHarness = {
-      name: 'fake-agent',
-      egress: agentEgress,
-      run: async (_backend, input) => {
-        built.push(input.prompt)
-        return { ok: true, summary: 'built' }
-      },
-    }
-    const input = queued[0]!
-
-    const result = await runTask(
-      deps(sandbox, { harness: builder }),
-      id,
-      undefined,
-      runContinuation(undefined, input.feedback, input.resume, input.mergeBase),
-    )
-
-    expect(result).toMatchObject({ status: 'done', sha: merge })
-    expect(built).toEqual([])
-    const commands = sandbox.backend.commands
-    const merging = commands.findIndex((c) => c.includes(`merge --no-edit ${base}`))
-    const pushing = commands.findIndex((c) =>
-      c.includes(`push origin factory/7 --force-with-lease=refs/heads/factory/7:${verified}`),
-    )
-    expect(merging).toBeGreaterThan(-1)
-    expect(pushing).toBeGreaterThan(merging)
-    expect(commands.some((c) => c.includes('commit -F'))).toBe(false)
-    const stages = await stagesOf(id)
-    expect(stages).toContain('verify')
-    expect(stages).toContain('review')
-    expect(stages).not.toContain('build')
-  })
-
-  it('fails for a person, naming the files, when the base conflicts with the branch', async () => {
-    const { id, queued } = await sentToMergeTheBase()
-    const sandbox = new FakeSandbox(
-      changed((command) => {
-        if (command.includes('ls-remote')) return { stdout: `${verified}\trefs/heads/factory/7\n` }
-        if (command.includes('merge --no-edit')) return { exitCode: 1, stdout: 'CONFLICT' }
-        if (command.includes('--diff-filter=U')) return { stdout: 'CHANGELOG.md\n' }
-        return undefined
-      }),
-    )
-    const input = queued[0]!
-
-    const result = await runTask(
-      deps(sandbox),
-      id,
-      undefined,
-      runContinuation(undefined, input.feedback, input.resume, input.mergeBase),
-    )
-
-    expect(result).toMatchObject({
-      status: 'failed',
-      error: expect.stringContaining('CHANGELOG.md'),
-    })
-    expect(pushesOf(sandbox)).toEqual([])
-    expect(retryableFailure({ error: (result as { error: string }).error })).toBeNull()
-  })
-})
-
 describe('an automatic retry of a run that failed creating its sandbox', () => {
   type Queued = { taskId: number; decisionId?: number; feedback?: string; resume?: boolean }
   const blocked = () => {
@@ -2989,199 +2342,6 @@ describe('an automatic retry of a run that failed creating its sandbox', () => {
     // Three failed sandboxes are no attempt of the work: it still comes due again.
     const [card] = (await listTasks(getDb())).filter((c) => c.id === id)
     expect(card.retryAt).not.toBeNull()
-  })
-
-  describe('when the network drops ("fetch failed")', () => {
-    // The failures of #136 were recorded in the `sandbox` stage while the host had no network: what the stage
-    // does before an agent runs (the issue read, the sandbox's creation) threw `fetch failed`.
-    const dropped = () => new TypeError('fetch failed')
-    const issue = {
-      number: 7,
-      title: 'Add truncate',
-      body: 'Write truncate(text, max).',
-      labels: [],
-    }
-    const where = {
-      'reading the issue': (drops: { left: number }) =>
-        deps(new FakeSandbox(changed()), {
-          fetchIssue: async () => {
-            if (drops.left-- > 0) throw dropped()
-            return issue
-          },
-        }),
-      'creating the sandbox': (drops: { left: number }) => {
-        const sandbox = new FakeSandbox(changed())
-        const create = sandbox.create.bind(sandbox)
-        sandbox.create = async (...args: Parameters<typeof create>) => {
-          if (drops.left-- > 0) throw dropped()
-          return create(...args)
-        }
-        return deps(sandbox)
-      },
-    }
-
-    it.each(Object.keys(where) as (keyof typeof where)[])(
-      'runs again without using the allowance while %s fails, and completes once the network is back',
-      async (point) => {
-        const id = await seedTask()
-        const queued: Queued[] = []
-        const action = actionDeps(queued, [])
-        const drops = { left: 5 }
-        const runAgain = () => {
-          const input = queued.at(-1)!
-          return runTask(
-            where[point](drops),
-            id,
-            undefined,
-            runContinuation(undefined, input.feedback, input.resume),
-          )
-        }
-        // More drops than the allowance of automatic runs, and none of them reached any agent.
-        expect(await runTask(where[point](drops), id)).toMatchObject({
-          status: 'failed',
-          stage: 'sandbox',
-        })
-        for (let i = 0; i < 4; i++) {
-          expect(await runDueRetries(action, later())).toEqual({ started: 1, skipped: 0 })
-          expect(await runAgain()).toMatchObject({ status: 'failed', stage: 'sandbox' })
-        }
-        // The network is back: the fifth automatic run reaches the agent and completes.
-        expect(await runDueRetries(action, later())).toEqual({ started: 1, skipped: 0 })
-        expect(await runAgain()).toMatchObject({ status: 'done' })
-        const [row] = await getDb().select().from(task).where(eq(task.id, id))
-        expect(row.stage).toBe('done')
-      },
-    )
-
-    it('counts the runs again once the network has been down longer than any outage, and a person is called', async () => {
-      const id = await seedTask()
-      const queued: Queued[] = []
-      const action = actionDeps(queued, [])
-      const drops = { left: 1000 }
-      const failing = () => where['reading the issue'](drops)
-      expect(await runTask(failing(), id)).toMatchObject({ status: 'failed', stage: 'sandbox' })
-      // The failure is older than the span when the next runs begin.
-      await getDb()
-        .update(stageEvent)
-        .set({ at: new Date(Date.now() - 2 * 3600_000) })
-        .where(eq(stageEvent.taskId, id))
-      let runs = 0
-      for (; runs < 20; runs++) {
-        const [card] = (await listTasks(getDb())).filter((c) => c.id === id)
-        if (card.retryAt === null) break
-        expect(await runDueRetries(action, later())).toEqual({ started: 1, skipped: 0 })
-        const input = queued.at(-1)!
-        await runTask(
-          failing(),
-          id,
-          undefined,
-          runContinuation(undefined, input.feedback, input.resume),
-        )
-      }
-      expect(runs).toBe(3)
-      const [card] = (await listTasks(getDb())).filter((c) => c.id === id)
-      expect(card.retryAt).toBeNull()
-      expect(card.column).toBe('attention')
-    })
-
-    /** A task that failed, with the events given: minutes ago, the stage and its detail. */
-    async function failedWith(issueNumber: number, events: [number, Stage, object?][]) {
-      const id = await seedTask(issueNumber)
-      await getDb().update(task).set({ stage: 'failed' }).where(eq(task.id, id))
-      for (const [ago, stage, detail] of events) {
-        await getDb()
-          .insert(stageEvent)
-          .values({ taskId: id, stage, detail, at: new Date(Date.now() - ago * 60_000) })
-      }
-      return (await listTasks(getDb())).find((c) => c.id === id)!
-    }
-    const dropAt = (error = 'fetch failed') => ({ error })
-    const person = { decision: 'retry', note: '' }
-    const auto = { decision: 'retry', automatic: true }
-    /** One run that failed creating its sandbox, `ago` minutes ago. */
-    const run = (ago: number, detail: object, error?: string): [number, Stage, object?][] => [
-      [ago, 'intake', detail],
-      [ago, 'sandbox'],
-      [ago, 'failed', dropAt(error)],
-    ]
-    const rework = { decision: 'request_changes', note: 'rename it' }
-
-    it('counts the network failures of a rework once they outlast the span, and calls a person', async () => {
-      const review: [number, Stage][] = [[400, 'review']]
-      const tooLong = await failedWith(11, [
-        ...review,
-        ...run(180, rework),
-        ...run(110, { ...rework, automatic: true }),
-        ...run(100, { ...rework, automatic: true }),
-        ...run(90, { ...rework, automatic: true }),
-      ])
-      expect(tooLong.retryAt).toBeNull()
-      expect(tooLong.column).toBe('attention')
-      const brief = await failedWith(12, [
-        ...review,
-        ...run(180, rework),
-        ...run(170, { ...rework, automatic: true }),
-        ...run(160, { ...rework, automatic: true }),
-        ...run(150, { ...rework, automatic: true }),
-      ])
-      expect(brief.retryAt).not.toBeNull()
-    })
-
-    it('starts the free span at the network streak, not at an older failure of another kind', async () => {
-      const card = await failedWith(13, [
-        ...run(600, person, '403: team is blocked: spend_limit'),
-        ...run(595, auto, '403: team is blocked: spend_limit'),
-        ...run(10, auto),
-        ...run(5, auto),
-        ...run(2, auto),
-      ])
-      // One counted run (the blocked one): the short outage after it is still free.
-      expect(card.retryAt).not.toBeNull()
-    })
-
-    it('starts the free span again when a person retries the task', async () => {
-      const card = await failedWith(14, [
-        ...run(300, person),
-        ...run(250, auto),
-        ...run(200, auto),
-        ...run(10, person),
-        ...run(5, auto),
-        ...run(3, auto),
-        ...run(1, auto),
-      ])
-      expect(card.retryAt).not.toBeNull()
-    })
-
-    it('still limits the runs of an agent that fails with it, since that work was attempted', async () => {
-      const id = await seedTask()
-      const queued: Queued[] = []
-      const action = actionDeps(queued, [])
-      const failing = () =>
-        deps(new FakeSandbox(changed()), {
-          harness: {
-            name: 'fake-agent',
-            egress: agentEgress,
-            run: async () => {
-              throw new TypeError('fetch failed')
-            },
-          },
-        })
-      expect(await runTask(failing(), id)).toMatchObject({ status: 'failed' })
-      let runs = 0
-      for (; runs < 10; runs++) {
-        const [card] = (await listTasks(getDb())).filter((c) => c.id === id)
-        if (card.retryAt === null) break
-        expect(await runDueRetries(action, later())).toEqual({ started: 1, skipped: 0 })
-        const input = queued.at(-1)!
-        await runTask(
-          failing(),
-          id,
-          undefined,
-          runContinuation(undefined, input.feedback, input.resume),
-        )
-      }
-      expect(runs).toBe(3)
-    })
   })
 
   it('starts a first run that failed at the sandbox over, with a new branch', async () => {
@@ -3618,47 +2778,6 @@ describe('the factory always makes a pre-release', () => {
     expect(done.detail).toMatchObject({ mergedSha: 'merge0001', developSha: 'develop0001' })
   })
 
-  it('hands approved work that changes agent configuration of the factory to a person, merging nothing (#139)', async () => {
-    const id = await seedTask()
-    const sandbox = new FakeSandbox(
-      changed((c) =>
-        c.includes('diff --name-status')
-          ? { stdout: 'M\tsrc/server/factory/review.ts\nA\tsrc/truncate.js\n' }
-          : undefined,
-      ),
-    )
-
-    const result = await runTask(deps(sandbox, { ownRepository: 'paulo/app' }), id)
-
-    expect(result).toMatchObject({ status: 'handoff' })
-    expect(seen.merges).toEqual([])
-    expect(seen.autoMerges).toEqual([])
-    expect(seen.drafts).toEqual([true])
-    expect(seen.comments.at(-1)).toContain('src/server/factory/review.ts')
-    expect(seen.comments.at(-1)).toContain('pnpm evals:check')
-    const [row] = await getDb().select().from(task).where(eq(task.id, id))
-    expect(row).toMatchObject({ stage: 'handoff', mergedSha: null })
-    const handoff = (
-      await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'handoff'))
-    )[0]
-    expect(handoff.detail).toMatchObject({ cause: 'agent_configuration' })
-  })
-
-  it('integrates the same change in a repository that is not the factory', async () => {
-    const id = await seedTask()
-    const sandbox = new FakeSandbox(
-      changed((c) =>
-        c.includes('diff --name-status')
-          ? { stdout: 'M\tsrc/server/factory/review.ts\n' }
-          : undefined,
-      ),
-    )
-
-    await runTask(deps(sandbox), id)
-
-    expect(seen.merges).toEqual([{ number: 12, sha: 'abc123def' }])
-  })
-
   it('leaves the pull request open for a person when GitHub will not merge it, and still hands it over', async () => {
     repo().conflicting.add('factory/7')
     const id = await seedTask()
@@ -3845,7 +2964,6 @@ describe('the factory always makes a pre-release', () => {
 
   it('keeps the work integrated and says why when develop cannot be advanced', async () => {
     repo().restricted.add('develop')
-    repo().required.set('develop', ['CI'])
     const id = await seedTask()
 
     const result = await runTask(deps(new FakeSandbox(changed())), id)
@@ -3860,8 +2978,7 @@ describe('the factory always makes a pre-release', () => {
       developError: expect.stringContaining('protected'),
       developPullRequest: RELEASE_PR_URL,
     })
-    // A protected branch takes a pull request, which the factory opens and GitHub merges once develop's
-    // checks pass: the factory merges nothing into develop itself while they run.
+    // A protected branch takes a pull request, which the factory opens and never merges.
     expect(seen.pulls).toEqual(['factory/7', 'workspace'])
     expect(seen.bases).toEqual(['workspace', 'develop'])
     expect(seen.merges).toEqual([{ number: 12, sha: 'abc123def' }])
@@ -3880,110 +2997,6 @@ describe('the factory always makes a pre-release', () => {
     const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
     expect(done.detail).toMatchObject({ mergedSha: 'merge0001' })
     expect((done.detail as Record<string, unknown>).developPullRequest).toBeUndefined()
-  })
-
-  describe('when develop takes changes only through a pull request', () => {
-    beforeEach(() => {
-      repo().restricted.add('develop')
-      repo().required.set('develop', ['CI'])
-    })
-    const waits = () => getDb().select().from(promotionWait)
-
-    it('turns auto-merge on for the promotion, pinned to the integration head it saw', async () => {
-      const id = await seedTask()
-
-      await runTask(deps(new FakeSandbox(changed())), id)
-
-      // The integration made `merge0001` the head of workspace; the promotion is #13.
-      expect(seen.autoMerges).toEqual([{ number: 13, sha: 'merge0001' }])
-      const [wait] = await waits()
-      expect(wait).toMatchObject({
-        repository: 'paulo/app',
-        pullRequestNumber: 13,
-        sha: 'merge0001',
-        status: 'waiting',
-      })
-      expect(wait.holdUntil.getTime()).toBeGreaterThan(Date.now())
-      const done = (await getDb().select().from(stageEvent).where(eq(stageEvent.stage, 'done')))[0]
-      expect(done.detail).toMatchObject({ developAutoMerge: 'merge0001' })
-    })
-
-    it('never turns auto-merge on for a promotion from a fork', async () => {
-      repo().pullRequest({
-        number: 5,
-        headRef: 'workspace',
-        headRepo: 'someone/app',
-        baseRef: 'develop',
-      })
-      const id = await seedTask()
-
-      await runTask(deps(new FakeSandbox(changed())), id)
-
-      expect(seen.autoMerges.map((pinned) => pinned.number)).not.toContain(5)
-    })
-
-    it('turns auto-merge on for nothing when only a fork proposes the promotion', async () => {
-      repo().pullRequest({
-        number: 5,
-        headRef: 'workspace',
-        headRepo: 'someone/app',
-        baseRef: 'develop',
-      })
-      githubApi.fail('openPullRequest', new Error('GitHub answered 422 opening a pull request'), {
-        when: (pull) => pull.head === 'workspace',
-      })
-      const id = await seedTask()
-
-      await runTask(deps(new FakeSandbox(changed())), id)
-
-      expect(seen.autoMergeAsks).toBe(0)
-      expect(await waits()).toEqual([])
-    })
-
-    it('holds the integration out while a promotion waits, and merges nothing into workspace', async () => {
-      await getDb()
-        .insert(promotionWait)
-        .values({
-          repository: 'paulo/app',
-          pullRequestNumber: 11,
-          pullRequestUrl: 'https://github.com/paulo/app/pull/11',
-          sha: 'b'.repeat(40),
-          holdUntil: new Date(Date.now() + 30 * 60_000),
-        })
-      const id = await seedTask()
-
-      const result = await runTask(deps(new FakeSandbox(changed())), id)
-
-      expect(result).toMatchObject({ status: 'done' })
-      expect(seen.merges).toEqual([])
-      expect(seen.autoMergeAsks).toBe(0)
-      const [row] = await getDb().select().from(task).where(eq(task.id, id))
-      expect(row).toMatchObject({
-        stage: 'done',
-        awaitingCiSha: 'abc123def',
-        integrationHeld: true,
-        mergedSha: null,
-      })
-    })
-
-    it('integrates as before once the hold of the waiting promotion expired', async () => {
-      await getDb()
-        .insert(promotionWait)
-        .values({
-          repository: 'paulo/app',
-          pullRequestNumber: 11,
-          pullRequestUrl: 'https://github.com/paulo/app/pull/11',
-          sha: 'b'.repeat(40),
-          holdUntil: new Date(Date.now() - 60_000),
-        })
-      const id = await seedTask()
-
-      await runTask(deps(new FakeSandbox(changed())), id)
-
-      expect(seen.merges).toEqual([{ number: 12, sha: 'abc123def' }])
-      const [row] = await getDb().select().from(task).where(eq(task.id, id))
-      expect(row).toMatchObject({ integrationHeld: false, mergedSha: 'merge0001' })
-    })
   })
 
   it('never merges work that was handed over to a person', async () => {

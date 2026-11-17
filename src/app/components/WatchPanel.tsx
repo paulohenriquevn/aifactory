@@ -4,15 +4,21 @@ import { Button } from '@usetheo/ui'
 
 import type { WatchView } from '../../shared/panel'
 import { post } from '../lib/api'
-import { useCopy } from '../lib/copy'
 import { ago, shortSha } from '../lib/format'
+
+const WORDS: Record<WatchView['status'], string> = {
+  watching: 'watching the checks on the default branch',
+  reverting: 'the default branch went red, opening a revert',
+  green: 'the default branch stayed green',
+  red: 'the default branch went red',
+  silent: 'no verdict: the checks never reported',
+}
 
 /**
  * What happened to the default branch after a release. A red one comes with the revert pull request
  * the factory opened, which only a person merges, and a way to say it was dealt with.
  */
 export function WatchPanel({ watches, onDone }: { watches: WatchView[]; onDone: () => void }) {
-  const { t } = useCopy()
   const [message, setMessage] = useState<string>()
   if (watches.length === 0) return null
 
@@ -26,8 +32,8 @@ export function WatchPanel({ watches, onDone }: { watches: WatchView[]; onDone: 
   }
 
   return (
-    <section aria-label={t.watch.label}>
-      <h2 className="mb-2 text-sm font-semibold">{t.watch.title}</h2>
+    <section aria-label="Default branch">
+      <h2 className="mb-2 text-sm font-semibold">Default branch after the release</h2>
       <ul className="space-y-2">
         {watches.map((w) => (
           <li
@@ -39,10 +45,9 @@ export function WatchPanel({ watches, onDone }: { watches: WatchView[]; onDone: 
             }`}
           >
             <div className="flex flex-wrap items-center gap-3">
-              <span className="font-medium">{t.watch.status[w.status]}</span>
+              <span className="font-medium">{WORDS[w.status]}</span>
               <span className="text-xs text-muted-foreground">
-                {w.tag ?? t.watch.release} · {t.watch.merge} {shortSha(w.sha)} ·{' '}
-                {ago(w.endedAt ?? w.startedAt, Date.now(), t.time)}
+                {w.tag ?? 'release'} · merge {shortSha(w.sha)} · {ago(w.endedAt ?? w.startedAt)}
               </span>
             </div>
             {w.detail ? <p className="mt-1 text-foreground">{w.detail}</p> : null}
@@ -55,16 +60,16 @@ export function WatchPanel({ watches, onDone }: { watches: WatchView[]; onDone: 
                     target="_blank"
                     rel="noreferrer"
                   >
-                    {t.watch.revert}
+                    Revert pull request
                   </a>
                 ) : (
-                  <span className="text-destructive">{t.watch.noRevert}</span>
+                  <span className="text-destructive">No revert pull request could be opened.</span>
                 )}
                 {w.acknowledged ? (
-                  <span className="text-muted-foreground">{t.watch.dealtWith}</span>
+                  <span className="text-muted-foreground">dealt with</span>
                 ) : (
                   <Button size="sm" variant="secondary" onClick={() => void handled(w.id)}>
-                    {t.watch.handled}
+                    I dealt with it
                   </Button>
                 )}
               </div>

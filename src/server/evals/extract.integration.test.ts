@@ -113,20 +113,6 @@ describe('deliveredCandidates', () => {
     })
   })
 
-  it("starts from the builder's commit when the first checks ran on a fix commit on top of it", async () => {
-    await seedTask({
-      events: [
-        { stage: 'sandbox', minute: 0 },
-        { stage: 'verify', minute: 5, detail: { sha: 'fixed', fixedFrom: 'built', attempt: 1 } },
-        { stage: 'done', minute: 9, detail: { costUsd: 0.1, attempts: 1 } },
-      ],
-    })
-
-    const [found] = await deliveredCandidates(getDb())
-
-    expect(found).toMatchObject({ firstSha: 'fixed', startSha: 'built' })
-  })
-
   it('leaves out a task that is not delivered and a run resumed after a question', async () => {
     await seedTask({ stage: 'failed', events: straightRun(0) })
     await seedTask({
@@ -181,33 +167,5 @@ describe('toCase', () => {
       egress: ['example.org'],
       original: { taskId: 3, costUsd: 0.4, durationMs: 60_000, attempts: 1, mergedSha: 'm' },
     })
-  })
-
-  it("starts from the parent of the builder's commit and takes the repository's fixes", async () => {
-    const made = await toCase(
-      {
-        taskId: 3,
-        repository: 'o/r',
-        issueNumber: 9,
-        firstSha: 'fixed',
-        startSha: 'built',
-        mergedSha: 'm',
-        costUsd: 0.4,
-        durationMs: 60_000,
-        attempts: 1,
-        checks: [{ name: 'format', command: 'prettier --check .' }],
-      },
-      {
-        issue: async () => ({ title: 'Fix it', body: 'Broken', labels: [] }),
-        parentOf: async (_repo, sha) => (sha === 'built' ? 'base' : 'wrong'),
-        config: async () => ({
-          integrationBranch: 'workspace',
-          egress: [],
-          fixes: ['prettier --write .'],
-        }),
-      },
-    )
-
-    expect(made).toMatchObject({ baseSha: 'base', fixes: ['prettier --write .'] })
   })
 })

@@ -11,19 +11,9 @@ export const METRIC_NAMES = [
   'minutes_to_delivery',
   'cost_per_delivery',
   'change_failure',
-  'change_failure_required_checks',
-  'change_failure_merge_conflict',
-  'change_failure_release_red',
-  'change_failure_other',
   'hours_to_release',
-  'handoff_share',
-  'person_decisions_per_delivery',
 ] as const
 export type MetricName = (typeof METRIC_NAMES)[number]
-
-/** Whether a stored name is one of the indicators measured today: a retired one may still have rows. */
-export const isMetricName = (name: string): name is MetricName =>
-  (METRIC_NAMES as readonly string[]).includes(name)
 
 export type MetricSpec = {
   label: string
@@ -72,49 +62,11 @@ export const METRICS: Record<MetricName, MetricSpec> = {
     worse: 'up',
     minSamples: 3,
   },
-  // The causes of `change_failure`: each delivered run says one of them when it came back, so they add up to it.
-  change_failure_required_checks: {
-    label: 'Delivered work that came back: the required checks failed',
-    unit: 'share',
-    worse: 'up',
-    minSamples: 3,
-  },
-  change_failure_merge_conflict: {
-    label: 'Delivered work that came back: a merge conflict',
-    unit: 'share',
-    worse: 'up',
-    minSamples: 3,
-  },
-  change_failure_release_red: {
-    label: 'Delivered work that came back: the release went red',
-    unit: 'share',
-    worse: 'up',
-    minSamples: 3,
-  },
-  change_failure_other: {
-    label: 'Delivered work that came back: another cause',
-    unit: 'share',
-    worse: 'up',
-    minSamples: 3,
-  },
   hours_to_release: {
     label: 'Hours from the task to its release',
     unit: 'hours',
     worse: 'up',
     minSamples: 1,
-  },
-  handoff_share: {
-    label: 'Finished runs handed to a person',
-    unit: 'share',
-    worse: 'up',
-    minSamples: 3,
-  },
-  // Its samples are the deliveries of the day: a day with none makes no point, whatever a person decided.
-  person_decisions_per_delivery: {
-    label: "A person's decisions per delivered run",
-    unit: 'count',
-    worse: 'up',
-    minSamples: 3,
   },
 }
 
@@ -150,26 +102,4 @@ export const BANDS: BandConfig = {
     eight_on_one_side: 'show',
   },
   issueRepository: 'paulohenriquevn/aifactory',
-}
-
-/** How the last week of each indicator is compared with the weeks before a baseline date. */
-export type ComparisonConfig = {
-  /** The days before the baseline date that make the baseline. */
-  baselineDays: number
-  /** The days, ending today, whose mean is compared. */
-  weekDays: number
-  /** A baseline with fewer points than this says nothing, so no week is compared with it. */
-  minBaselinePoints: number
-  /**
-   * The width of the control band around the baseline mean, in standard errors of a mean of the week's
-   * points: a mean of seven days varies less than one day does, so the band narrows by the root of their count.
-   */
-  sigmas: number
-}
-
-export const COMPARISON: ComparisonConfig = {
-  baselineDays: 28,
-  weekDays: 7,
-  minBaselinePoints: 7,
-  sigmas: 3,
 }

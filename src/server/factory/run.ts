@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto'
-
 import { type SandboxBackend } from '@theokit/agents/sandbox'
 import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 
@@ -24,7 +22,6 @@ import { KnowledgeFeed } from '../knowledge/feed'
 import { parseLearned, withoutLearned } from '../knowledge/format'
 
 import { cloneRepository } from './clone'
-import { mergeIntegration } from './merge-base'
 import { evidenceOfNote } from './ci-wait'
 import { ensureBranches, integrationBranch } from './branches'
 import { uploadChangesetCheck } from './changeset-check'
@@ -39,8 +36,6 @@ import {
   type Handed,
   type Integrated,
 } from './integration'
-import { heldForEvaluation, heldForReview } from '../evals/cases'
-import { integrationHeldUntil } from './promotion-merge'
 import {
   DEFAULT_CHECKS,
   failingChecks,
@@ -49,7 +44,6 @@ import {
   type CheckResult,
   type Verdict,
 } from './evidence'
-import { FIX_COMMIT_MESSAGE, fixDetail, runFixes, type FixedRound } from './fixes'
 import { diffFacts } from './diff-facts'
 import {
   changePlanPrompt,
@@ -84,7 +78,6 @@ import {
   mergeEgress,
   must,
   oneLine,
-  squashTitle,
   pullRequestBody,
   pushWithRetry,
   resolvedComment,
@@ -103,7 +96,7 @@ import {
 } from './agent-time'
 import type { RepoConfig } from './repo-config'
 import { labelsWithRepoChoice } from './repo-config'
-import type { HandoffCause, Parked, RunResult, RunTaskDeps } from './run-types'
+import type { Parked, RunResult, RunTaskDeps } from './run-types'
 import {
   createIsolatedSandbox,
   restoreIsolatedSandbox,
@@ -153,28 +146,6 @@ type Timeouts = NonNullable<RunTaskDeps['timeouts']>
 /** GitHub failing: not a refusal of the work, so the run fails and repeats. */
 const GITHUB_SERVER_ERROR = /^GitHub answered 5\d\d\b/
 
-/** Why approved work is handed to a person instead of integrated, said on the issue and the task. */
-type Held = { headline: string; reason: string; cause: HandoffCause }
-
-/**
- * The hold of approved work that changes the agents' configuration or the quality gates (#139), or nothing.
- * The first waits for an evaluation; the second for the owner's reading, since no evaluation measures a gate.
- */
-export function heldFor(evaluated: string[], reviewed: string[]): Held | undefined {
-  const steps = [
-    evaluated.length > 0 &&
-      `run \`pnpm evals:check\` against the recorded baseline for the agent configuration (${evaluated.join(', ')})`,
-    reviewed.length > 0 &&
-      `read the change to the quality gates (${reviewed.join(', ')}), which no evaluation measures`,
-  ].filter((step): step is string => typeof step === 'string')
-  if (steps.length === 0) return undefined
-  return {
-    headline: 'The reviewer approved this, and it waits for a person',
-    reason: `it changes what the factory never integrates on its own: ${steps.join(', and ')}; then merge the pull request yourself, and the factory takes it to the release`,
-    cause: 'agent_configuration',
-  }
-}
-
 /** The stages that end a run; a task goes through them again when a person sends it back. */
 const ENDING_STAGES = ['done', 'released', 'handoff', 'failed', 'cancelled'] as const
 
@@ -212,8 +183,6 @@ export class Run {
   plan: ChangePlan | undefined
   /** This run wrote the plan, so the first build pass continues the planning session. */
   private planned: { discarded: boolean } | undefined
-  /** Every path the change under review touches, as the last review read it. */
-  private touched: string[] = []
   /** What the agents of this task do, written while they work. Opened by the first agent run. */
   private transcript: Transcript | undefined
 
@@ -381,15 +350,8 @@ export class Run {
     })
   }
   private get title() {
-    return squashTitle(this.c.issue.title, this.c.row.issueNumber)
+    return `${oneLine(this.c.issue.title)} (#${this.c.row.issueNumber})`
   }
-  private get fixes(): string[] {
-    return this.c.repo.fixes ?? []
-  }
-  /** The fix commit pushed for an agent that changed nothing: the work is that commit. */
-  private pushedFix: string | undefined
-  /** The last commit the fixes ran on or made, so they never run twice on the same commit. */
-  private fixedHead: string | undefined
   private get checks() {
     return withChangesetCheck(
       this.c.repo.checks ?? this.c.deps.checks ?? DEFAULT_CHECKS,
@@ -431,11 +393,6 @@ export class Run {
         ...c.repo.egress.map((domain) => ({ domain })),
       ],
     }
-    // The run is named on the task before the sandbox exists, so the supervisor never sees a sandbox whose
-    // run the task does not know.
-    const sandboxRun = randomUUID()
-    await deps.db.update(task).set({ sandboxRun }).where(eq(task.id, c.taskId))
-    spec.owner = { owner: 'task', taskId: c.taskId, run: sandboxRun }
     const startedAt = Date.now()
     const started = resuming
       ? await restoreIsolatedSandbox(deps.sandbox, resuming.snapshotId, spec)
@@ -573,16 +530,14 @@ export class Run {
       quota: result.quota !== undefined,
       sessionId: result.sessionId ?? null,
     })
-    // A builder cut at its limit goes on to `failUnfinished`, which keeps what it wrote before the quota is told.
-    if (result.quota && !(role === 'builder' && result.timedOut)) throw this.quotaStop(who, result)
+    if (result.quota) {
+      const resets = result.quota.resetsAt ? `, resets ${result.quota.resetsAt}` : ''
+      throw new QuotaStop(
+        `the ${who.name} quota ran out${resets}: ${result.quota.message}`,
+        result.quota.resetsAt,
+      )
+    }
     return result
-  }
-
-  private quotaStop(who: CodingHarness, result: HarnessResult): QuotaStop {
-    const quota = result.quota
-    if (!quota) throw new Error('a quota stop needs a quota')
-    const resets = quota.resetsAt ? `, resets ${quota.resetsAt}` : ''
-    return new QuotaStop(`the ${who.name} quota ran out${resets}: ${quota.message}`, quota.resetsAt)
   }
 
   /**
@@ -717,20 +672,7 @@ export class Run {
 
   private async hasNothingToCommit(): Promise<boolean> {
     const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
-    return pending.stdout.trim() === '' && !(await this.hasUnpushedCommits())
-  }
-
-  /**
-   * Whether the branch has commits GitHub does not: the agent may commit by itself, as `git merge` does, and
-   * leave nothing uncommitted. Counted from the head the branch had on GitHub, or from the base on a new one.
-   */
-  private async hasUnpushedCommits(): Promise<boolean> {
-    const since = this.remoteHead || this.baseSha
-    const counted = await must(
-      this.backend,
-      `git -C ${this.repoDir} rev-list --count ${since}..HEAD`,
-    )
-    return Number(counted.stdout.trim()) > 0
+    return pending.stdout.trim() === ''
   }
 
   /** Commits whatever the agent left in the checkout and pushes it. Returns the new head. */
@@ -740,8 +682,7 @@ export class Run {
     state.current = 'push'
     await enterStage(deps.db, taskId, 'push', { branch, ...detail })
     const changes = await must(backend, `git -C ${this.repoDir} status --porcelain`)
-    const uncommitted = changes.stdout.trim() !== ''
-    if (!uncommitted && !(await this.hasUnpushedCommits())) {
+    if (changes.stdout.trim() === '') {
       // A rework that changed nothing is the reviewer's business, not a fact about the issue.
       if (!detail.rework) await this.keepNoChange()
       throw new StageFailure(
@@ -752,16 +693,12 @@ export class Run {
     }
     // Text that came from outside (the issue title, the author) goes in by file, so none of it is
     // ever parsed by a shell (the SDK does not export its quoting helper: usetheokit/theokit#1131).
-    // What the agent committed by itself (a merge, say) goes as it is, with nothing added to it.
-    if (uncommitted) {
-      await backend.uploadFile(GITCONFIG, gitConfig(deps.author))
-      await backend.uploadFile(COMMIT_MESSAGE, `${message}\n`)
-      await must(backend, `${git} add -A`)
-      await must(backend, `${git} commit -F ${COMMIT_MESSAGE}`)
-    }
+    await backend.uploadFile(GITCONFIG, gitConfig(deps.author))
+    await backend.uploadFile(COMMIT_MESSAGE, `${message}\n`)
+    await must(backend, `${git} add -A`)
+    await must(backend, `${git} commit -F ${COMMIT_MESSAGE}`)
     // What is about to leave the sandbox, kept so a refused push can be explained.
-    const since = uncommitted ? 'HEAD~1' : this.remoteHead || this.baseSha
-    const files = (await must(backend, `${git} diff --name-status ${since} HEAD`)).stdout.trim()
+    const files = (await must(backend, `${git} diff --name-status HEAD~1 HEAD`)).stdout.trim()
     try {
       // The lease makes the push fail, instead of overwriting, when someone else pushed during the run.
       const lease = `--force-with-lease=refs/heads/${branch}:${this.remoteHead}`
@@ -776,38 +713,6 @@ export class Run {
     }
     this.remoteHead = (await must(backend, `${git} rev-parse HEAD`)).stdout.trim()
     return this.remoteHead
-  }
-
-  /**
-   * A pass that did not finish fails the run. One cut at its time limit leaves what it wrote in the
-   * checkout, which the sandbox takes away: it is committed and pushed first, and the reason names it.
-   */
-  private async failUnfinished(result: HarnessResult, what: string): Promise<never> {
-    const plain = `${what}: ${result.summary}`
-    // A quota stop keeps its reset, so the retry still waits for it, whatever became of the work.
-    const stop = (note: string) =>
-      result.quota
-        ? new QuotaStop(
-            `${this.quotaStop(this.builder, result).message}\n${note}`,
-            result.quota.resetsAt,
-          )
-        : new StageFailure(`${plain}\n${note}`)
-    if (!result.timedOut || (await this.hasNothingToCommit())) {
-      throw result.quota ? this.quotaStop(this.builder, result) : new StageFailure(plain)
-    }
-    let sha: string
-    try {
-      sha = await this.commitAndPush(
-        `${this.title}: work in progress, the agent reached its time limit`,
-        { timedOut: true },
-      )
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
-      throw stop(`the work could not be kept: ${reason}`)
-    }
-    throw stop(
-      `the work was kept in commit ${sha} on ${this.c.branch}; send the task back to continue from it`,
-    )
   }
 
   /** The first pass of the builder: a new one, or the session resumed with the answer it was waiting for. */
@@ -984,79 +889,6 @@ export class Run {
     return !approved
   }
 
-  /** The task's recorded pull request, read by its number; undefined when none is recorded or it cannot be read as one. */
-  private async recordedPullRequest() {
-    const { row, api } = this.c
-    const number = Number(/\/pull\/(\d+)$/.exec(row.pullRequestUrl ?? '')?.[1])
-    if (!this.c.continuation || !number) return undefined
-    // A pull request that is gone is not one to reopen. One that could not be read is not judged as if its
-    // state were known: the error fails the run, which repeats when GitHub was only failing.
-    return api.readPullRequest(row.repository, this.c.token, number).catch((error: unknown) => {
-      if (/^GitHub answered 404\b/.test(error instanceof Error ? error.message : ''))
-        return undefined
-      throw error
-    })
-  }
-
-  /**
-   * A task sent back on its branch whose recorded pull request is closed (not merged): GitHub keeps the old
-   * head of a closed pull request, so judging it would judge a stale commit. When the agent changed nothing,
-   * the run goes on with the branch's head to the checks and the review; `reopenedOrEmpty` then settles the
-   * pull request before one is opened.
-   */
-  private async closedPullRequestContinued(): Promise<{ sha: string } | undefined> {
-    const { continuation } = this.c
-    if (!continuation || continuation.plain || !this.remoteHead) return undefined
-    const pull = await this.recordedPullRequest()
-    if (!pull || pull.state !== 'closed' || pull.merged) return undefined
-    if (!(await this.hasNothingToCommit())) return undefined
-    return { sha: this.remoteHead }
-  }
-
-  /**
-   * Before a pull request is opened for a run sent back: when the recorded one is closed and unmerged, it is
-   * reopened (GitHub moves its head to the branch) if the branch has something ahead of its base. A branch
-   * with nothing ahead can have no pull request (GitHub rejects an empty one), so the task is handed over
-   * with that said instead of failing after the checks and the review.
-   */
-  private async reopenedOrEmpty(sha: string): Promise<RunResult | undefined> {
-    const { deps, taskId, row, api, branch } = this.c
-    const pull = await this.recordedPullRequest()
-    if (!pull || pull.state === 'open') return undefined
-    const base = integrationBranch(this.c.repo)
-    const ahead = await api.branchAhead(row.repository, this.c.token, base, branch)
-    if (ahead && ahead.aheadBy > 0) {
-      // A merged one stays merged; a closed one that GitHub will not reopen is replaced by a new one.
-      if (!pull.merged) {
-        await api.reopenPullRequest(row.repository, this.c.token, pull.number).catch((error) =>
-          console.warn(
-            JSON.stringify({
-              event: 'pull_request_reopen_failed',
-              taskId,
-              repository: row.repository,
-              pullRequest: pull.number,
-              fallback: 'a new pull request is opened from the branch',
-              error: String(error),
-            }),
-          ),
-        )
-      }
-      return undefined
-    }
-    const reason = `the pull request ${pull.url} is ${pull.merged ? 'merged' : 'closed'} and the branch has nothing ahead of ${base}, so there is nothing to open a pull request for`
-    await enterStage(deps.db, taskId, 'handoff', {
-      branch,
-      sha,
-      reason,
-      cause: 'checks_unchanged' satisfies HandoffCause,
-      pullRequestUrl: pull.url,
-      unchanged: true,
-      agentSummary: this.summary.slice(0, 4_000),
-      costUsd: this.cost,
-    })
-    return { status: 'handoff', branch, sha, pullRequestUrl: pull.url, reason }
-  }
-
   /**
    * A person asked for a change and the agent found nothing to change (the test was already there,
    * say). That is an answer, not a failure: the pull request stays as it was, and the person reads why.
@@ -1065,7 +897,8 @@ export class Run {
     const { deps, taskId, row, api, branch, continuation } = this.c
     // A plain continuation was asked nothing, so leaving the pull request as it is answers nothing.
     if (!continuation || continuation.plain || !row.pullRequestUrl || !row.headSha) return undefined
-    if (!(await this.hasNothingToCommit())) return undefined
+    const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
+    if (pending.stdout.trim() !== '') return undefined
     if (continuation.fromChecks) return this.checksUnanswered(first)
     await api.commentOnIssue(
       row.repository,
@@ -1112,7 +945,6 @@ export class Run {
       branch,
       sha: row.headSha,
       reason,
-      cause: 'checks_unchanged' satisfies HandoffCause,
       pullRequestUrl: row.pullRequestUrl,
       unchanged: true,
       agentSummary: first.summary.slice(0, 4_000),
@@ -1136,22 +968,12 @@ export class Run {
   private async resolvedAlready(first: HarnessResult): Promise<RunResult | undefined> {
     const { deps, taskId, row, api, continuation, state } = this.c
     if (continuation) return undefined
-    if (!(await this.hasNothingToCommit())) return undefined
-    // Fixes that change the start commit make this a change after all: it goes on to be committed, checked
-    // and reviewed like any other, instead of a claim the checks backed only after the fix.
-    const fixed = await this.applyFixes(this.baseSha, {
-      costUsd: first.costUsd,
-      agentSummary: first.summary.slice(0, 4_000),
-      sessionId: this.sessionId,
-    })
-    if (fixed.fixedFrom) {
-      this.pushedFix = fixed.sha
-      return undefined
-    }
+    const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
+    if (pending.stdout.trim() !== '') return undefined
     await this.keepNoChange()
     const said = `The agent said: ${oneLine(first.summary).slice(0, 700)}`
     const at = this.baseSha.slice(0, 7)
-    const checked = await this.verify(this.baseSha, 1, { publish: false, fixed })
+    const checked = await this.verify(this.baseSha, 1, { publish: false })
     if (!checked.verdict.open) {
       throw new StageFailure(
         `the agent made no change to the repository, and the checks did not pass at ${at}: ${checked.verdict.reasons.join('; ')}. ${said}`,
@@ -1225,13 +1047,14 @@ export class Run {
         }),
       }),
     )
-    if (!result.ok) await this.failUnfinished(result, 'the agent did not finish')
+    if (!result.ok) throw new StageFailure(`the agent did not finish: ${result.summary}`)
     await this.keepLearned(result.summary)
     this.sessionId = result.sessionId ?? this.sessionId
     const asked = parseQuestion(withoutLearned(result.summary))
     if (asked) await this.ask(asked, 1)
     this.summary = result.summary
-    return { changed: !(await this.hasNothingToCommit()), summary: result.summary }
+    const pending = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
+    return { changed: pending.stdout.trim() !== '', summary: result.summary }
   }
 
   /** Has the reviewer check, without changing anything, that the code already resolves the issue. */
@@ -1283,11 +1106,10 @@ export class Run {
    * something (the run parks) or when a person's requested change needed no change.
    */
   async start(): Promise<{ result: RunResult } | { sha: string }> {
-    if (this.c.continuation?.mergeBase) return { sha: await this.mergeBase() }
     await this.planChange()
     this.c.state.current = 'build'
     const first = await this.firstPass()
-    if (!first.ok) await this.failUnfinished(first, 'the agent did not finish')
+    if (!first.ok) throw new StageFailure(`the agent did not finish: ${first.summary}`)
     await this.keepLearned(first.summary)
     // A fact the agent left is not part of its question, wherever it put it.
     const asked = parseQuestion(withoutLearned(first.summary))
@@ -1297,13 +1119,10 @@ export class Run {
 
     // Work a review never approved is not left as it is: it goes on to the checks and the review.
     if (await this.unreviewedHeadLeftAsItIs()) return { sha: this.remoteHead }
-    const closed = await this.closedPullRequestContinued()
-    if (closed) return closed
     const unchanged = await this.answeredWithNoChange(first)
     if (unchanged) return { result: unchanged }
     const resolved = await this.resolvedAlready(first)
     if (resolved) return { result: resolved }
-    if (this.pushedFix) return { sha: this.pushedFix }
     // A continuation the agent had nothing to add to goes on with the commit the earlier run pushed.
     if (this.c.continuation?.plain && (await this.hasNothingToCommit())) {
       return { sha: this.remoteHead }
@@ -1314,31 +1133,6 @@ export class Run {
       sessionId: this.sessionId,
     })
     return { sha }
-  }
-
-  /**
-   * The run a fixed integration branch queued (`merge_base` in ci-wait.ts): the factory merges the head of
-   * that branch, as this run cloned it, into the work branch and pushes the merge. No agent runs, because a
-   * clean merge asks for no decision; the checks and the review then read the merge as any work. A conflict,
-   * or a branch that already holds that commit, fails the run with the reason, for a person.
-   */
-  private async mergeBase(): Promise<string> {
-    const { deps, branch, state } = this.c
-    state.current = 'push'
-    const base = `${integrationBranch(this.c.repo)} at ${this.baseSha.slice(0, 7)}`
-    await this.backend.uploadFile(GITCONFIG, gitConfig(deps.author))
-    const merged = await mergeIntegration(this.backend, this.git, this.baseSha)
-    if ('conflicts' in merged) {
-      throw new StageFailure(
-        `merging ${base} into ${branch} conflicts in ${merged.conflicts.join(', ')}, which a person resolves`,
-      )
-    }
-    if ('upToDate' in merged) {
-      throw new StageFailure(
-        `${branch} already holds ${base}, so merging it makes no commit for the required checks to run on again`,
-      )
-    }
-    return this.commitAndPush(`Merge ${base} into ${branch}`, { mergeBase: this.baseSha })
   }
 
   /** Sends the work back to the builder's own session with what was wrong, and pushes the fix. */
@@ -1363,7 +1157,7 @@ export class Run {
         prompt: reworkPrompt({ findings, failedChecks: failed, checks: this.checks }),
       }),
     )
-    if (!result.ok) await this.failUnfinished(result, 'the agent did not finish the rework')
+    if (!result.ok) throw new StageFailure(`the agent did not finish the rework: ${result.summary}`)
     this.sessionId = result.sessionId ?? this.sessionId
     const asked = parseQuestion(result.summary)
     if (asked) await this.ask(asked, attempt)
@@ -1376,38 +1170,13 @@ export class Run {
   }
 
   /**
-   * Runs the repository's fix commands on the checkout, which is at `sha` and clean, and, when they changed
-   * files, commits and pushes that change as its own commit, with `detail` and their outcomes on the push.
-   * A fix that fails changes nothing; the checks that follow decide. A commit the fixes already ran on or
-   * made is not fixed again.
-   */
-  private async applyFixes(sha: string, detail: Record<string, unknown>): Promise<FixedRound> {
-    if (this.fixes.length === 0 || sha === this.fixedHead) return { sha, outcomes: [] }
-    const { outcomes, changed } = await runFixes(
-      this.backend,
-      this.repoDir,
-      this.fixes,
-      this.timeouts.checkMs ?? DEFAULT_CHECK_MS,
-    )
-    const fixed: FixedRound = changed
-      ? {
-          sha: await this.commitAndPush(FIX_COMMIT_MESSAGE, { ...detail, fixes: outcomes }),
-          outcomes,
-          fixedFrom: sha,
-        }
-      : { sha, outcomes }
-    this.fixedHead = fixed.sha
-    return fixed
-  }
-
-  /**
    * Runs the checks on the pushed commit and nothing else, stores each result, and publishes what they
    * add up to as a check run on the commit.
    */
   private async verify(
     sha: string,
     attempt: number,
-    options: { publish: boolean; fixed?: FixedRound } = { publish: true },
+    options: { publish: boolean } = { publish: true },
   ): Promise<Checked> {
     const { deps, taskId, row, api, state } = this.c
     const { db } = deps
@@ -1416,12 +1185,7 @@ export class Run {
       db,
       taskId,
       'verify',
-      {
-        sha,
-        attempt,
-        checks: this.checks.map((c) => c.name),
-        ...fixDetail(options.fixed),
-      },
+      { sha, attempt, checks: this.checks.map((c) => c.name) },
       { headSha: sha },
     )
     const head = (await must(this.backend, `git -C ${this.repoDir} rev-parse HEAD`)).stdout.trim()
@@ -1472,7 +1236,7 @@ export class Run {
     const { deps, taskId, row, issue, branch, state } = this.c
     state.current = 'review'
     await enterStage(deps.db, taskId, 'review', { sha, attempt, reviewer: this.reviewer.name })
-    const { guards, unplanned, required, touched } = await diffFacts(this.backend, this.repoDir, {
+    const { guards, unplanned, required } = await diffFacts(this.backend, this.repoDir, {
       baseSha: this.baseSha,
       plan: this.plan,
       issue,
@@ -1498,7 +1262,6 @@ export class Run {
         }),
       }),
     )
-    this.touched = touched
     // The reviewer reads and does not write. If it wrote anyway, none of it counts.
     await must(this.backend, `git -C ${this.repoDir} reset --hard ${sha}`)
     await must(this.backend, `git -C ${this.repoDir} clean -fd`)
@@ -1556,8 +1319,6 @@ export class Run {
     const restored = titleToRestore(opened, this.title)
     if (restored !== undefined) await markReady(restored)
     const integration = integrationBranch(this.c.repo)
-    const heldUntil = await integrationHeldUntil(deps.db, row.repository, new Date())
-    if (heldUntil) return { heldUntil }
     const required = await api.requiredChecks(row.repository, this.c.token, integration)
     const pull = { repo: row.repository, token: this.c.token, number: pullNumber, sha }
     if (
@@ -1585,15 +1346,12 @@ export class Run {
         throw error
       }
     })
-    const advanced = await advancePreRelease(
-      { api, db: deps.db },
-      {
-        repository: row.repository,
-        token: this.c.token,
-        integration,
-        mergedSha: merged.sha,
-      },
-    )
+    const advanced = await advancePreRelease(api, {
+      repository: row.repository,
+      token: this.c.token,
+      integration,
+      mergedSha: merged.sha,
+    })
     return { mergedSha: merged.sha, ...advanced }
   }
 
@@ -1654,13 +1412,6 @@ export class Run {
     outcome: ReviewVerdict,
   ): Promise<RunResult> {
     const { deps, taskId, row, api, branch, state } = this.c
-    const held = heldFor(
-      heldForEvaluation(row.repository, this.touched, deps.ownRepository),
-      heldForReview(row.repository, this.touched, deps.ownRepository),
-    )
-    if (held) return this.handOver(sha, attempt, here, outcome, [], held)
-    const empty = await this.reopenedOrEmpty(sha)
-    if (empty) return empty
     state.current = 'pr'
     await enterStage(deps.db, taskId, 'pr', { branch, sha })
     const pull = await api.openPullRequest(row.repository, this.c.token, {
@@ -1677,9 +1428,7 @@ export class Run {
       }),
     })
     const integrated = await this.integrate(sha, pull)
-    if (integrated.awaitingChecks || integrated.heldUntil) {
-      return this.awaitChecks(sha, attempt, pull.url, integrated)
-    }
+    if (integrated.awaitingChecks) return this.awaitChecks(sha, attempt, pull.url, integrated)
     const handed = await this.deliver(sha, pull.url, attempt, integrated)
     await enterStage(
       deps.db,
@@ -1735,11 +1484,7 @@ export class Run {
         agentSummary: this.summary,
         ...describeIntegration(integrated),
       },
-      {
-        pullRequestUrl,
-        awaitingCiSha: sha,
-        integrationHeld: integrated.heldUntil !== undefined,
-      },
+      { pullRequestUrl, awaitingCiSha: sha },
     )
     return { status: 'done', branch, sha, pullRequestUrl, summary: this.summary }
   }
@@ -1754,16 +1499,12 @@ export class Run {
     here: StoredCheck[],
     outcome: ReviewVerdict,
     counts: number[] = [],
-    held?: Held,
   ): Promise<RunResult> {
     const { deps, taskId, row, api, branch, state } = this.c
     const reason =
-      held?.reason ??
-      (outcome.verdict === 'invalid'
+      outcome.verdict === 'invalid'
         ? `the review gave no usable verdict: ${outcome.summary}`
-        : `the reviewer still asked for changes after ${attempt} attempt${attempt === 1 ? '' : 's'}${roundsNote(attempt, counts)}`)
-    const empty = await this.reopenedOrEmpty(sha)
-    if (empty) return empty
+        : `the reviewer still asked for changes after ${attempt} attempt${attempt === 1 ? '' : 's'}${roundsNote(attempt, counts)}`
     state.current = 'pr'
     const pull = await api.openPullRequest(row.repository, this.c.token, {
       head: branch,
@@ -1785,9 +1526,7 @@ export class Run {
       this.c.token,
       row.issueNumber,
       [
-        held
-          ? `${held.headline}: ${reason}.`
-          : `The factory could not get this approved: ${reason}.`,
+        `The factory could not get this approved: ${reason}.`,
         '',
         `Its work is in the draft pull request ${pull.url}, with the checks that passed and what the reviewer still found.`,
         '',
@@ -1803,11 +1542,6 @@ export class Run {
         branch,
         sha,
         reason,
-        cause:
-          held?.cause ??
-          ((outcome.verdict === 'invalid'
-            ? 'review_unusable'
-            : 'review_plateau') satisfies HandoffCause),
         pullRequestUrl: pull.url,
         findings: outcome.findings,
         costUsd: this.cost,
@@ -1870,9 +1604,7 @@ export class Run {
     for (let attempt = this.c.resuming?.attempt ?? 1; ; attempt++) {
       const canRework =
         attempt < MAX_ATTEMPTS && this.builder.resume !== undefined && !!this.sessionId
-      const fixed = await this.applyFixes(sha, { attempt })
-      sha = fixed.sha
-      const checked = await this.verify(sha, attempt, { publish: true, fixed })
+      const checked = await this.verify(sha, attempt)
 
       if (!checked.verdict.open) {
         if (!canRework) {

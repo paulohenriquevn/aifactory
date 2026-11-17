@@ -10,7 +10,7 @@ import { GET } from '../routes/panel/codex/login'
 import { CREDENTIAL_RENEWAL_MS, githubEgress } from './credential-renewal'
 import { FakeSandbox } from './fake-sandbox'
 import { codexHarness } from './harness-codex'
-import { heldFor, Run } from './run'
+import { Run } from './run'
 import { StageFailure } from './run-support'
 import type { EgressRule } from './sandbox'
 
@@ -198,28 +198,5 @@ describe('a reviewer pass the provider refused with a 401', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-})
-
-describe('approved work the factory holds for its owner', () => {
-  it('names the evaluation for agent configuration and the reading for a quality gate', () => {
-    const held = heldFor(['src/server/factory/review.ts'], ['quality/crap-baseline.json'])
-    expect(held?.cause).toBe('agent_configuration')
-    expect(held?.reason).toContain(
-      '`pnpm evals:check` against the recorded baseline for the agent configuration (src/server/factory/review.ts)',
-    )
-    expect(held?.reason).toContain(
-      'read the change to the quality gates (quality/crap-baseline.json)',
-    )
-  })
-
-  it('asks for no evaluation when only a gate changed', () => {
-    const held = heldFor([], ['stryker.config.json'])
-    expect(held?.reason).not.toContain('evals:check')
-    expect(held?.reason).toContain('stryker.config.json')
-  })
-
-  it('holds nothing when neither changed', () => {
-    expect(heldFor([], [])).toBeUndefined()
   })
 })

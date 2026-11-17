@@ -72,8 +72,7 @@ async function finish(
 
 /**
  * The release does not happen, and the reason stays on the wait for the panel to show. It is not tried
- * again here: a person asks for the release again, or the release train tries once more on the same head
- * when the reason is one that ends by itself.
+ * again: a person looks at the release pull request and asks for the release again.
  */
 async function refuse(
   deps: AwaitReleaseDeps,

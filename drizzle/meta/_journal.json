@@ -218,48 +218,6 @@
       "when": 1794721343807,
       "tag": "0033_run_limit",
       "breakpoints": true
-    },
-    {
-      "idx": 31,
-      "version": "7",
-      "when": 1794787420710,
-      "tag": "0034_coordinator_action",
-      "breakpoints": true
-    },
-    {
-      "idx": 32,
-      "version": "7",
-      "when": 1794789641685,
-      "tag": "0035_failure_signature",
-      "breakpoints": true
-    },
-    {
-      "idx": 33,
-      "version": "7",
-      "when": 1794794240870,
-      "tag": "0036_promotion_wait",
-      "breakpoints": true
-    },
-    {
-      "idx": 34,
-      "version": "7",
-      "when": 1794851452514,
-      "tag": "0037_stage_event_task_index",
-      "breakpoints": true
-    },
-    {
-      "idx": 35,
-      "version": "7",
-      "when": 1794853629501,
-      "tag": "0038_task_sandbox_run",
-      "breakpoints": true
-    },
-    {
-      "idx": 36,
-      "version": "7",
-      "when": 1794862009965,
-      "tag": "0039_repository_fixes",
-      "breakpoints": true
     }
   ]
 }

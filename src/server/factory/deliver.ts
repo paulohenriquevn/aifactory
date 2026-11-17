@@ -15,7 +15,6 @@ import {
 import type { GithubApp } from '../github/app'
 import { autoMergeOrMergeable, type GithubApi } from '../github/pulls'
 
-import { errorMessage } from './error-message'
 import { PRE_RELEASE_BRANCH, releaseBranchOf } from './branches'
 import { changesetsWaiting, publishedPackagesChanged } from './changed-packages'
 import { usesChangesets } from './changesets'
@@ -171,8 +170,7 @@ type Published = {
  * waits instead: auto-merge is turned on, pinned to the same commit, and `pollAwaitingReleases` finishes the
  * release (the tag, or the publication of a changesets repository) once GitHub merges it.
  *
- * `actor` is who decided: `human` from the panel, `agent:<name>` when an agent's approval was enough, and
- * `agent:coordinator` for the coordinator's release train.
+ * `actor` is who decided: `human` from the panel, `agent:<name>` when an agent's approval was enough.
  */
 export async function release(
   deps: DeliverDeps,
@@ -214,7 +212,7 @@ export async function release(
     })
   } catch (error) {
     throw new ReleaseRefused(
-      `the pull request from ${PRE_RELEASE_BRANCH} to ${target} could not be opened: ${errorMessage(error)}`,
+      `the pull request from ${PRE_RELEASE_BRANCH} to ${target} could not be opened: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
   const pr = await deps.api.findPullRequest(row.repository, token, PRE_RELEASE_BRANCH)
@@ -255,7 +253,9 @@ export async function release(
     })
   } catch (error) {
     await deps.db.update(task).set({ stage: 'done' }).where(eq(task.id, taskId))
-    throw new ReleaseRefused(`GitHub did not merge it: ${errorMessage(error)}`)
+    throw new ReleaseRefused(
+      `GitHub did not merge it: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
   return completeRelease(deps, {
     row,
@@ -342,7 +342,7 @@ async function waitForChecks(
       sha: input.sha,
     })
   } catch (error) {
-    const why = errorMessage(error)
+    const why = error instanceof Error ? error.message : String(error)
     await deps.db
       .update(releaseWait)
       .set({ status: 'refused', detail: why, endedAt: new Date() })
@@ -530,6 +530,6 @@ async function createOwnRelease(
     const promotion = { label: 'Release pull request', url: pr.url }
     return { created: await createOwnTag(deps.api, { ...input, tag, promotion }) }
   } catch (error) {
-    return { releaseError: errorMessage(error) }
+    return { releaseError: error instanceof Error ? error.message : String(error) }
   }
 }

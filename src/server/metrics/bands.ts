@@ -29,7 +29,7 @@ const DAY_MS = 86_400_000
 const TIER_ORDER: Tier[] = ['act', 'show', 'log']
 
 /** The day `days` days before `day`, both as `YYYY-MM-DD`. */
-export function daysBefore(day: string, days: number): string {
+function daysBefore(day: string, days: number): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10)
 }
 
@@ -43,18 +43,8 @@ export function baselineOf(
   config: BandConfig,
 ): Baseline | null {
   const from = daysBefore(latestDay, config.windowDays)
-  return statsOf(
-    before.filter((p) => p.day >= from).map((p) => p.value),
-    config.minBaselinePoints,
-  )
-}
-
-/**
- * The mean and standard deviation of `values`. Null with fewer than `minPoints` of them, or when they are all
- * equal and no distance can be measured.
- */
-export function statsOf(values: number[], minPoints: number): Baseline | null {
-  if (values.length < minPoints) return null
+  const values = before.filter((p) => p.day >= from).map((p) => p.value)
+  if (values.length < config.minBaselinePoints) return null
   const mean = values.reduce((sum, v) => sum + v, 0) / values.length
   const sd = Math.sqrt(values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length)
   if (sd === 0) return null

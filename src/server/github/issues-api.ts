@@ -1,4 +1,4 @@
-import type { FetchLike, GithubApp } from './app'
+import type { FetchLike } from './app'
 
 export type NewIssue = {
   title: string
@@ -24,15 +24,13 @@ export type IssuesApi = {
     milestone: { title: string; description: string },
   ): Promise<number>
   addLabels(repo: string, token: string, issueNumber: number, labels: string[]): Promise<void>
-  /** Replaces the body of an issue with `body`. */
-  updateIssueBody(repo: string, token: string, issueNumber: number, body: string): Promise<void>
 }
 
 /** Runs on the factory host with an installation token for one repository. */
 export function createIssuesApi(fetchImpl: FetchLike = (url, init) => fetch(url, init)): IssuesApi {
-  const call = (repo: string, token: string, path: string, body: unknown, method = 'POST') =>
+  const call = (repo: string, token: string, path: string, body: unknown) =>
     fetchImpl(`https://api.github.com/repos/${repo}${path}`, {
-      method,
+      method: 'POST',
       body: JSON.stringify(body),
       headers: {
         accept: 'application/vnd.github+json',
@@ -86,27 +84,5 @@ export function createIssuesApi(fetchImpl: FetchLike = (url, init) => fetch(url,
         [200],
       )
     },
-
-    async updateIssueBody(repo, token, issueNumber, body) {
-      await expect(
-        await call(repo, token, `/issues/${issueNumber}`, { body }, 'PATCH'),
-        `updating the body of ${repo}#${issueNumber}`,
-        [200],
-      )
-    },
-  }
-}
-
-/**
- * Opens an issue as the App, with a token scoped to the repository the issue goes to. What the factory
- * files on its own (a metric out of its band, a failure that repeats) goes through here.
- */
-export function issueOpener(
-  github: Pick<GithubApp, 'installationToken'>,
-  issues: Pick<IssuesApi, 'createIssue'>,
-): (repository: string, issue: NewIssue) => Promise<CreatedIssue> {
-  return async (repository, issue) => {
-    const { token } = await github.installationToken(repository)
-    return issues.createIssue(repository, token, issue)
   }
 }

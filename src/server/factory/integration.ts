@@ -6,20 +6,18 @@ import type { GithubApi } from '../github/pulls'
 import { PRE_RELEASE_BRANCH } from './branches'
 import { release } from './deliver'
 import type { ReleaseMode } from './deliver'
-import { pinPromotion, type Pinned, type PromotionDeps } from './promotion-merge'
 
 /** What the factory handed over, or why it could not. A failure to hand over never fails the task. */
 export type Handed = { tag: string; url: string } | { error: string }
 
 /** Where the pre-release branch is after an integration, or why it could not follow. */
-export type Advanced = Pinned & {
+export type Advanced = {
   /** The pre-release branch advanced, and this is where it is. */
   developSha?: string
   developError?: string
   /**
    * Where the work waits to reach the pre-release branch when GitHub would not let the factory advance it
-   * (a protected branch): a pull request from the integration branch, which GitHub merges through
-   * auto-merge pinned to the head the factory saw (`pinPromotion`).
+   * (a protected branch): a pull request from the integration branch, which the factory only opens.
    */
   developPullRequest?: string
 }
@@ -35,11 +33,6 @@ export type Integrated = Advanced & {
    * they pass, and the `integrate-after-ci` cron finishes the integration then.
    */
   awaitingChecks?: string[]
-  /**
-   * A promotion into the pre-release branch holds new integrations out until then, so the pull request
-   * waits unmerged and the `integrate-after-ci` cron integrates it once the hold ends.
-   */
-  heldUntil?: Date
 }
 
 export const describeIntegration = (integrated: Integrated) => ({
@@ -49,11 +42,6 @@ export const describeIntegration = (integrated: Integrated) => ({
   ...(integrated.developError ? { developError: integrated.developError } : {}),
   ...(integrated.developPullRequest ? { developPullRequest: integrated.developPullRequest } : {}),
   ...(integrated.awaitingChecks ? { awaitingChecks: integrated.awaitingChecks } : {}),
-  ...(integrated.developAutoMerge ? { developAutoMerge: integrated.developAutoMerge } : {}),
-  ...(integrated.developAutoMergeError
-    ? { developAutoMergeError: integrated.developAutoMergeError }
-    : {}),
-  ...(integrated.heldUntil ? { heldUntil: integrated.heldUntil.toISOString() } : {}),
 })
 
 export const describeDelivery = (handed: Handed) =>
@@ -65,8 +53,9 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 
 /**
  * A protected pre-release branch only takes a pull request, so the factory opens one from the integration
- * branch, or finds the one already open. It is one standing pull request: later integrations add to it.
- * Failing to open it is not an error: the work is integrated either way.
+ * branch, or finds the one already open, and leaves the merge to whoever the branch's rules ask. It is one
+ * standing pull request: later integrations add to it. Failing to open it is not an error: the work is
+ * integrated either way.
  */
 async function proposePreRelease(
   api: GithubApi,
@@ -90,14 +79,12 @@ async function proposePreRelease(
 
 /**
  * What follows a merge into the integration branch, however it was made: the pre-release branch advances to
- * include it, or, when GitHub will not let the factory write there, the promotion pull request is opened and
- * GitHub merges it through auto-merge, pinned to the head the factory saw, once the required checks pass.
+ * include it, or, when GitHub will not let the factory write there, a pull request waits for whoever may.
  */
 export async function advancePreRelease(
-  deps: PromotionDeps & { api: GithubApi },
+  api: GithubApi,
   input: { repository: string; token: string; integration: string; mergedSha: string },
 ): Promise<Advanced> {
-  const { api } = deps
   try {
     const develop = await api.mergeBranch(
       input.repository,
@@ -107,16 +94,14 @@ export async function advancePreRelease(
     )
     return { developSha: develop.sha }
   } catch (error) {
-    const developPullRequest = await proposePreRelease(
-      api,
-      input.repository,
-      input.token,
-      input.integration,
-    )
     return {
       developError: message(error),
-      developPullRequest,
-      ...(developPullRequest ? await pinPromotion(deps, input) : {}),
+      developPullRequest: await proposePreRelease(
+        api,
+        input.repository,
+        input.token,
+        input.integration,
+      ),
     }
   }
 }

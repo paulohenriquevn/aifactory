@@ -115,9 +115,7 @@ export function pullRequestBody(input: {
     ? ['<details><summary>Plan</summary>', '', input.plan, '', '</details>', '']
     : []
   return [
-    // No closing keyword: where the integration branch is the repository's default one, GitHub would close
-    // the issue at integration. The factory closes it when a release ships the change, naming the version.
-    `For #${input.issueNumber}. The factory closes the issue when a release ships this change.`,
+    `Closes #${input.issueNumber}`,
     '',
     ...(input.handoff ? [`**This needs a person:** ${input.handoff}.`, ''] : []),
     `Checks the factory ran on \`${input.sha.slice(0, 7)}\`:`,
@@ -170,10 +168,6 @@ export function resolvedComment(input: {
 
 export const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 
-/** The title of the squash commit that integrates an issue's work: the issue's title on one line, and its number. */
-export const squashTitle = (issueTitle: string, issueNumber: number) =>
-  `${oneLine(issueTitle)} (#${issueNumber})`
-
 /** The commit identity as a git config file. Newlines would start a new setting, so refuse them. */
 export function gitConfig(author: { name: string; email: string }): string {
   if (/[\r\n]/.test(author.name + author.email)) {
@@ -189,12 +183,6 @@ export type Continuation = {
   fromChecks?: boolean
   /** The run only continues a branch an earlier run pushed before it finished: nobody asked for anything. */
   plain?: boolean
-  /**
-   * The required checks failed only because the integration branch failed them too, and it passes them now
-   * (`merge_base` in ci-wait.ts): the run merges that branch into the work branch itself, with no agent, and
-   * checks and reviews the merge.
-   */
-  mergeBase?: boolean
 }
 
 /**
@@ -206,9 +194,7 @@ export function runContinuation(
   decided: { kind: string; note: string } | undefined,
   feedback: string | undefined,
   resume?: boolean,
-  mergeBase?: boolean,
 ): Continuation | undefined {
-  if (mergeBase) return { feedback: '', mergeBase: true }
   if (decided?.kind === 'request_changes') return { feedback: decided.note }
   if (feedback) return { feedback, fromChecks: true }
   return resume ? { feedback: '', plain: true } : undefined

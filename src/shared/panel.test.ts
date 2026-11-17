@@ -111,11 +111,6 @@ describe('a failure that passes by itself', () => {
       retryableFailure({ error: 'the sandbox did not start: 403: team is blocked: spend_limit' }),
     ).toBe('environment')
     expect(retryableFailure({ error: '403: team is blocked: spend_limit' })).toBe('environment')
-    expect(retryableFailure({ error: "404: template 'aifactory-sandbox' not found" })).toBe(
-      'environment',
-    )
-    expect(retryableFailure({ error: "404: template 'invoice' not found" })).toBeNull()
-    expect(retryableFailure({ error: 'expected 200 but got 404 from /api/x' })).toBeNull()
     expect(retryableFailure({ error: 'GitHub answered 403 reading the issue' })).toBeNull()
   })
 

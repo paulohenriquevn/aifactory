@@ -1,21 +1,8 @@
 // @vitest-environment jsdom
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render as rtlRender,
-  screen,
-  waitFor,
-} from '@testing-library/react'
-import type { ReactElement } from 'react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatgptConnect } from './ChatgptConnect'
-import { CopyProvider, LANGUAGE_KEY } from '../../lib/copy'
-import { ptBR } from '../../lib/copy/pt-BR'
-// The owner's language is Portuguese here; the dictionary keys say what is on the screen.
-window.localStorage.setItem(LANGUAGE_KEY, 'pt-BR')
-const render = (ui: ReactElement) => rtlRender(ui, { wrapper: CopyProvider })
 
 afterEach(() => {
   cleanup()
@@ -37,13 +24,13 @@ describe('connecting the ChatGPT subscription', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ChatgptConnect onConnected={() => {}} />)
 
-    fireEvent.click(screen.getByRole('button', { name: ptBR.chatgpt.connect }))
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar o ChatGPT' }))
 
     await waitFor(() => expect(screen.getByText('ABCD-1234')).toBeDefined())
     expect(screen.getByRole('link').getAttribute('href')).toBe(
       'https://auth.openai.com/codex/device',
     )
-    expect(screen.queryByRole('button', { name: ptBR.chatgpt.connect })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Conectar o ChatGPT' })).toBeNull()
     expect(fetchMock.mock.calls[0]).toEqual([
       '/api/panel/chat/connection',
       expect.objectContaining({ method: 'POST' }),
@@ -56,9 +43,9 @@ describe('connecting the ChatGPT subscription', () => {
       vi.fn(async () => reply({ status: 'error', message: 'o código expirou' })),
     )
     render(<ChatgptConnect onConnected={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: ptBR.chatgpt.connect }))
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar o ChatGPT' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('o código expirou'))
-    expect(screen.getByRole('button', { name: ptBR.chatgpt.connect })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Conectar o ChatGPT' })).toBeDefined()
   })
 
   it('shows a request that failed as a failure', async () => {
@@ -67,7 +54,7 @@ describe('connecting the ChatGPT subscription', () => {
       vi.fn(async () => reply({ error: 'falhou' }, 500)),
     )
     render(<ChatgptConnect onConnected={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: ptBR.chatgpt.connect }))
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar o ChatGPT' }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeDefined())
   })
 
@@ -91,7 +78,7 @@ describe('connecting the ChatGPT subscription', () => {
       }),
     )
     render(<ChatgptConnect onConnected={onConnected} />)
-    fireEvent.click(screen.getByRole('button', { name: ptBR.chatgpt.connect }))
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar o ChatGPT' }))
     await waitFor(() => expect(screen.getByText('X-1')).toBeDefined())
 
     await act(async () => {

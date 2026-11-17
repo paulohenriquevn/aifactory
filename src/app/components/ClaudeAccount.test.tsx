@@ -34,14 +34,14 @@ const mount = () => {
 describe('changing the Claude Code account from the panel', () => {
   it('offers to sign in with another account when nothing is going on', async () => {
     mount()
-    expect(await screen.findByRole('button', { name: en.account.signInOther })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Entrar com outra conta' })).toBeTruthy()
   })
 
   it('shows the link to open once the login starts', async () => {
     api.post.mockResolvedValueOnce(waiting)
     mount()
-    fireEvent.click(await screen.findByRole('button', { name: en.account.signInOther }))
-    const link = await screen.findByRole('link', { name: en.account.claude.openLogin })
+    fireEvent.click(await screen.findByRole('button', { name: 'Entrar com outra conta' }))
+    const link = await screen.findByRole('link', { name: 'Abrir a página de login' })
     expect(link.getAttribute('href')).toBe(LINK)
     expect(api.post).toHaveBeenCalledWith('/api/panel/claude/login')
   })
@@ -49,17 +49,17 @@ describe('changing the Claude Code account from the panel', () => {
   it('picks up a login that was already waiting before the page was reloaded', async () => {
     api.get.mockResolvedValueOnce(waiting)
     mount()
-    expect(await screen.findByRole('link', { name: en.account.claude.openLogin })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: 'Abrir a página de login' })).toBeTruthy()
   })
 
   it('sends the pasted code, clears the box and tells the page the account changed', async () => {
     api.get.mockResolvedValueOnce(waiting)
     api.post.mockResolvedValueOnce({ status: 'done' })
     const onChanged = mount()
-    const box = await screen.findByRole('textbox', { name: en.account.claude.codeLabel })
+    const box = await screen.findByRole('textbox', { name: 'Código da página de login' })
     fireEvent.change(box, { target: { value: 'abc123#xyz' } })
-    fireEvent.click(screen.getByRole('button', { name: en.account.claude.connect }))
-    expect(await screen.findByText(en.account.claude.done)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar' }))
+    expect(await screen.findByText(/a fábrica já usa a conta nova/)).toBeTruthy()
     expect(api.post).toHaveBeenCalledWith('/api/panel/claude/login/code', { code: 'abc123#xyz' })
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
@@ -67,7 +67,7 @@ describe('changing the Claude Code account from the panel', () => {
   it('cannot send an empty code', async () => {
     api.get.mockResolvedValueOnce(waiting)
     mount()
-    const send = await screen.findByRole('button', { name: en.account.claude.connect })
+    const send = await screen.findByRole('button', { name: 'Conectar' })
     expect((send as HTMLButtonElement).disabled).toBe(true)
   })
 
@@ -75,8 +75,8 @@ describe('changing the Claude Code account from the panel', () => {
     api.get.mockResolvedValueOnce(waiting)
     api.del.mockResolvedValueOnce({ status: 'idle' })
     mount()
-    fireEvent.click(await screen.findByRole('button', { name: en.account.cancel }))
-    expect(await screen.findByRole('button', { name: en.account.signInOther })).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancelar' }))
+    expect(await screen.findByRole('button', { name: 'Entrar com outra conta' })).toBeTruthy()
     expect(api.del).toHaveBeenCalledWith('/api/panel/claude/login')
   })
 
@@ -84,22 +84,20 @@ describe('changing the Claude Code account from the panel', () => {
     api.get.mockResolvedValueOnce({ status: 'error', message: 'O link expirou. Comece de novo.' })
     mount()
     expect((await screen.findByRole('alert')).textContent).toBe('O link expirou. Comece de novo.')
-    expect(screen.getByRole('button', { name: en.account.tryAgain })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeTruthy()
   })
 
   it('shows a request that failed as an error, not as silence', async () => {
     api.post.mockRejectedValueOnce(new Error('panel session expired'))
     mount()
-    fireEvent.click(await screen.findByRole('button', { name: en.account.signInOther }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Entrar com outra conta' }))
     expect((await screen.findByRole('alert')).textContent).toBe('panel session expired')
   })
 
   it('says while the account is being checked', async () => {
     api.get.mockResolvedValueOnce({ status: 'checking' })
     mount()
-    expect((await screen.findByRole('status')).textContent).toBe(
-      en.account.checking(en.account.oneMinute),
-    )
+    expect((await screen.findByRole('status')).textContent).toMatch(/Conferindo a conta/)
   })
 })
 

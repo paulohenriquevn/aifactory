@@ -100,7 +100,6 @@ const detail = (over: Partial<TaskDetail> = {}): TaskDetail => ({
   plans: [],
   questions: [],
   decisions: [],
-  coordinatorActions: [],
   deliveries: [],
   watches: [],
   runs: [],
@@ -270,9 +269,7 @@ describe('task actions', () => {
     const mark = screen.getByRole('button', { name: 'Mark as resolved' }) as HTMLButtonElement
     expect(mark.disabled).toBe(true)
 
-    fireEvent.change(screen.getByLabelText(/Resolved another way/), {
-      target: { value: 'Fixed by hand in #1389.' },
-    })
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Fixed by hand in #1389.' } })
     fireEvent.click(mark)
 
     await waitFor(() => expect(calls).toHaveLength(1))
@@ -296,35 +293,10 @@ describe('task actions', () => {
     await waitFor(() => expect(calls).toHaveLength(1))
     expect(confirm).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('button', { name: 'Approve this commit' })).toBeNull()
-    // After a withdrawal the failed task can be sent back again with the right note.
-    expect(screen.getByRole('button', { name: 'Send back' })).toBeTruthy()
 
     cleanup()
     const running = detail({ task: { ...base, stage: 'build', column: 'working', headSha: null } })
     const { container } = render(<TaskActions detail={running} onDone={noop} />)
-    expect(container.textContent).toBe('')
-  })
-})
-
-describe('withdrawing a send-back from the panel', () => {
-  it('offers the withdrawal only for a send-back that waits in intake, and asks first', async () => {
-    const waiting = {
-      ...detail({ task: { ...base, stage: 'intake', column: 'working', headSha: 'abc' } }),
-      sendBackPending: true,
-    }
-    const calls = serve({ 'POST /api/panel/tasks/5/withdraw': { decisionId: 3 } })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
-    render(<TaskActions detail={waiting} onDone={() => {}} />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Withdraw send-back' }))
-    expect(calls).toHaveLength(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Withdraw send-back' }))
-    await waitFor(() => expect(calls).toHaveLength(1))
-    expect(confirm).toHaveBeenCalledTimes(2)
-
-    cleanup()
-    const plain = detail({ task: { ...base, stage: 'intake', column: 'working', headSha: null } })
-    const { container } = render(<TaskActions detail={plain} onDone={() => {}} />)
     expect(container.textContent).toBe('')
   })
 })
@@ -1128,14 +1100,12 @@ describe('inbox', () => {
         task: { ...base, id: 1, stage: 'waiting' },
         kind: 'question',
         summary: 'Should max count the ellipsis?',
-        coordinatorReason: null,
         at: '2026-11-04T10:00:00Z',
       },
       {
         task: { ...base, id: 2, stage: 'failed' },
         kind: 'failed',
         summary: 'Out of quota. resets tomorrow',
-        coordinatorReason: null,
         at: '2026-11-04T10:01:00Z',
       },
     ]

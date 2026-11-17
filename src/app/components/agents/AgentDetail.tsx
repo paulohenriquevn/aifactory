@@ -3,14 +3,17 @@ import { useState } from 'react'
 
 import type { AgentEntry, AgentPrompt, AgentRole, AgentSettings } from '../../../shared/panel'
 
-import { useCopy } from '../../lib/copy'
 import { EngineChooser } from './EngineChooser'
 import { PromptBlock } from './PromptBlock'
 
 const ROLES = ['builder', 'planner', 'reviewer'] as const satisfies readonly AgentRole[]
 const roleOf = (id: string): AgentRole | undefined => ROLES.find((r) => r === id)
 
-const TONE = { reads: 'default', asks: 'warning', sandbox: 'primary' } as const
+const EFFECT = {
+  reads: { label: 'só lê', tone: 'default' },
+  asks: { label: 'muda algo, pede seu OK', tone: 'warning' },
+  sandbox: { label: 'age só dentro do sandbox', tone: 'primary' },
+} as const
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -35,7 +38,6 @@ export function AgentDetail({
   query: string
   onSettingsSaved: () => void
 }) {
-  const { t } = useCopy()
   const role = roleOf(agent.id)
   const [chosen, setChosen] = useState(0)
   const index = Math.min(chosen, agent.prompts.length - 1)
@@ -48,18 +50,18 @@ export function AgentDetail({
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold">{agent.name}</h2>
           <Badge variant={agent.runsIn === 'sandbox' ? 'primary' : 'accent'}>
-            {agent.runsIn === 'sandbox' ? t.agents.runsInSandbox : t.agents.runsOnServer}
+            {agent.runsIn === 'sandbox' ? 'Roda no sandbox' : 'Roda no servidor'}
           </Badge>
         </div>
         <p className="mt-2 text-sm text-foreground/90">{agent.role}</p>
       </header>
 
       <dl className="grid gap-5 rounded-xl border border-border bg-card p-4 md:grid-cols-2">
-        <Fact label={t.agents.when}>{agent.when}</Fact>
-        <Fact label={t.agents.engine}>
+        <Fact label="Quando entra em ação">{agent.when}</Fact>
+        <Fact label="Modelo ou agente">
           <span className="font-mono text-[13px]">{agent.engine.value}</span>
           <span className="mt-1 block text-xs text-muted-foreground">
-            {t.agents.howToChange(agent.engine.change)}
+            Como mudar: {agent.engine.change}
           </span>
         </Fact>
       </dl>
@@ -73,14 +75,14 @@ export function AgentDetail({
         />
       ) : null}
 
-      <section aria-label={t.agents.canDo}>
-        <h3 className="mb-2 text-sm font-semibold">{t.agents.canDo}</h3>
+      <section aria-label="O que pode fazer">
+        <h3 className="mb-2 text-sm font-semibold">O que pode fazer</h3>
         <ul className="divide-y divide-border rounded-xl border border-border bg-card">
           {agent.tools.map((tool) => (
             <li key={tool.name} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-2.5">
               <code className="shrink-0 font-mono text-[13px] text-foreground">{tool.name}</code>
-              <Badge variant={TONE[tool.effect]} className="shrink-0">
-                {t.agents.effects[tool.effect]}
+              <Badge variant={EFFECT[tool.effect].tone} className="shrink-0">
+                {EFFECT[tool.effect].label}
               </Badge>
               <span className="min-w-0 basis-full text-xs text-muted-foreground">
                 {tool.description}
@@ -90,14 +92,14 @@ export function AgentDetail({
         </ul>
       </section>
 
-      <section aria-label={t.agents.instructions}>
+      <section aria-label="Instruções">
         <h3 className="mb-2 text-sm font-semibold">
-          {t.agents.instructions} {agent.prompts.length > 1 ? `(${agent.prompts.length})` : ''}
+          Instruções {agent.prompts.length > 1 ? `(${agent.prompts.length})` : ''}
         </h3>
         {agent.prompts.length > 1 ? (
           <div
             role="tablist"
-            aria-label={t.agents.instructionsOf}
+            aria-label="Instruções do agente"
             className="mb-3 flex flex-wrap gap-1.5"
           >
             {agent.prompts.map((p, i) => (
@@ -120,7 +122,7 @@ export function AgentDetail({
       {context.map((c) => (
         <details key={c.id} className="rounded-xl border border-border bg-card">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-            {t.agents.alsoReceives} {c.title}
+            Também recebe: {c.title}
             <span className="ml-2 text-xs font-normal text-muted-foreground">{c.when}</span>
           </summary>
           <div className="border-t border-border p-3">
@@ -129,8 +131,8 @@ export function AgentDetail({
         </details>
       ))}
 
-      <section aria-label={t.agents.whereInCode}>
-        <h3 className="mb-2 text-sm font-semibold">{t.agents.whereInCode}</h3>
+      <section aria-label="Onde está no código">
+        <h3 className="mb-2 text-sm font-semibold">Onde está no código</h3>
         <ul className="space-y-1 text-xs text-muted-foreground">
           {agent.source.map((file) => (
             <li key={file}>
@@ -138,7 +140,9 @@ export function AgentDetail({
             </li>
           ))}
         </ul>
-        <p className="mt-2 text-xs text-muted-foreground">{t.agents.readOnly}</p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          As instruções só se leem aqui: para mudar uma, o texto está nesses arquivos.
+        </p>
       </section>
     </article>
   )

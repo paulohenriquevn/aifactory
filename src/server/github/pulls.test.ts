@@ -94,36 +94,12 @@ describe('a 5xx from GitHub', () => {
     expect(JSON.stringify(settings)).toContain('trunk')
   })
 
-  it('asks a read again after the network dropped it', async () => {
-    let calls = 0
-    const fetch = async () => {
-      calls += 1
-      if (calls === 1) throw new TypeError('fetch failed')
-      return new Response(JSON.stringify({ default_branch: 'trunk' }), { status: 200 })
-    }
-    const settings = await createGithubApi(fetch, noWait).repositorySettings('o/r', 't')
-    expect(calls).toBe(2)
-    expect(JSON.stringify(settings)).toContain('trunk')
-  })
-
   it('gives up on a read that keeps failing after 3 tries and says GitHub answered 502', async () => {
     const { fetch, count } = sequence([502])
     await expect(createGithubApi(fetch, noWait).commitChecks('o/r', 't', 'abc')).rejects.toThrow(
       /GitHub answered 502/,
     )
     expect(count()).toBe(3)
-  })
-
-  it('never asks a write again after the network dropped it', async () => {
-    let calls = 0
-    const down = async (): Promise<Response> => {
-      calls += 1
-      throw new TypeError('fetch failed')
-    }
-    await expect(createGithubApi(down, noWait).createCheckRun('o/r', 't', check)).rejects.toThrow(
-      'fetch failed',
-    )
-    expect(calls).toBe(1)
   })
 
   it('never asks a write again', async () => {
@@ -300,19 +276,6 @@ describe('markReadyForReview', () => {
     await expect(createGithubApi(fetch).markReadyForReview('o/r', 't', 12, 'T')).rejects.toThrow(
       /o\/r#12 ready for review: Resource not accessible by integration/,
     )
-  })
-})
-
-describe('reopenPullRequest', () => {
-  it('sets the pull request open and throws when GitHub refuses', async () => {
-    const ok = fakeFetch({ 'PATCH /pulls/12': { status: 200 } })
-    await createGithubApi(ok.fetch).reopenPullRequest('o/r', 'tok', 12)
-    expect(ok.calls[0].body).toEqual({ state: 'open' })
-
-    const refused = fakeFetch({ 'PATCH /pulls/12': { status: 422 } })
-    await expect(
-      createGithubApi(refused.fetch).reopenPullRequest('o/r', 'tok', 12),
-    ).rejects.toThrow(/reopening o\/r#12/)
   })
 })
 

@@ -10,7 +10,6 @@ export type TaskPatch = Partial<{
   resolvedSha: string
   mergedSha: string
   awaitingCiSha: string | null
-  integrationHeld: boolean
 }>
 
 /**

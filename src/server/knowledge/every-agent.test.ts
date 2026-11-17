@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { GUIDE_IDS } from '../../shared/guides'
-import { SCOPE_DRAFTER_SPEC } from '../coordinator/draft'
 import { assistantTools } from '../factory/assistant'
 import { CHAT_SPEC } from '../factory/chat-agent'
 import { guideSpec } from '../factory/guides'
@@ -44,8 +43,8 @@ describe('every agent of the factory reads the knowledge base', () => {
     expect(direct).toEqual(['src/server/factory/assistant.ts'])
   })
 
-  it('in the panel: the chat, every guide and the scope drafter have the two tools of the base', () => {
-    for (const spec of [CHAT_SPEC, SCOPE_DRAFTER_SPEC, ...GUIDE_IDS.map((id) => guideSpec(id))]) {
+  it('in the panel: the chat and every guide have the two tools of the base', () => {
+    for (const spec of [CHAT_SPEC, ...GUIDE_IDS.map((id) => guideSpec(id))]) {
       expect(Object.keys(assistantTools(spec))).toEqual(
         expect.arrayContaining(['knowledge_search', 'knowledge_read']),
       )

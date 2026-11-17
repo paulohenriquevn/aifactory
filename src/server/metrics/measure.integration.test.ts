@@ -6,7 +6,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import {
-  decision,
   evidence,
   ingress,
   metricPoint,
@@ -19,7 +18,7 @@ import {
 import { metricsReport } from '../panel/metrics'
 
 import { BANDS } from './config'
-import { compareWithBaseline, loadDecisions, loadHistories, measure } from './measure'
+import { loadHistories, measure } from './measure'
 
 beforeAll(async () => {
   getStorageManager().configure(storageFromUrl(readDatabaseUrl()))
@@ -38,16 +37,6 @@ let seeded = 0
 
 /** A task with one run, started at 10:00 on day `d` and delivered half an hour later for `cost`. */
 async function delivered(d: number, cost: number, repository = 'paulo/app') {
-  return taskEndingIn('done', d, { costUsd: cost }, repository)
-}
-
-/** A task with one run, started at 10:00 on day `d` and ended half an hour later in `stage`. */
-async function taskEndingIn(
-  stage: 'done' | 'handoff',
-  d: number,
-  detail: Record<string, unknown>,
-  repository = 'paulo/app',
-) {
   const db = getDb()
   const [i] = await db
     .insert(ingress)
@@ -67,13 +56,13 @@ async function taskEndingIn(
       repository,
       issueNumber: seeded,
       issueTitle: 't',
-      stage,
+      stage: 'done',
       createdAt: dayAt(d, 0),
     })
     .returning({ id: task.id })
   await db.insert(stageEvent).values([
     { taskId: t.id, stage: 'intake', at: dayAt(d, 0) },
-    { taskId: t.id, stage, detail, at: dayAt(d, 30) },
+    { taskId: t.id, stage: 'done', detail: { costUsd: cost }, at: dayAt(d, 30) },
   ])
   return t.id
 }
@@ -98,7 +87,7 @@ const openIssue = async (repository: string, title: string, body: string) => {
 
 beforeEach(async () => {
   await getPool().query(
-    'truncate table metric_signal, metric_point, decision, watch, review, evidence, stage_event, task, ingress restart identity cascade',
+    'truncate table metric_signal, metric_point, watch, review, evidence, stage_event, task, ingress restart identity cascade',
   )
   opened.length = 0
   failures = 0
@@ -192,9 +181,8 @@ describe('measure', () => {
       )
     expect(points).toHaveLength(20)
     expect(points.find((p) => p.day === '2026-11-08')).toMatchObject({ value: 5, samples: 3 })
-    // Cost, minutes to delivery, change failure and its four causes, handoff share and decisions per
-    // delivery, for the repository and for all: 20 days each.
-    expect(first.points).toBe(360)
+    // Cost, minutes to delivery and change failure, for the repository and for all: 20 days each.
+    expect(first.points).toBe(120)
   })
 
   it('records a failure to open the issue and tries again on the next pass', async () => {
@@ -227,143 +215,6 @@ describe('measure', () => {
     await delivered(-60, 100)
 
     expect((await measure({ db: getDb(), now: () => NOW, openIssue })).points).toBe(0)
-  })
-})
-
-describe('handoff share and decisions per delivery', () => {
-  it('writes both with the existing points, and they read back', async () => {
-    const ids = [await delivered(19, 1), await delivered(19, 1), await delivered(19, 1)]
-    await taskEndingIn('handoff', 19, { reason: 'the agent asked a question' })
-    await getDb()
-      .insert(decision)
-      .values([
-        { taskId: ids[0], kind: 'approve', at: dayAt(19, 40) },
-        { taskId: ids[1], kind: 'retry', at: dayAt(19, 50) },
-        // The factory's own: in trial mode it records what an agent would have released.
-        { taskId: ids[2], kind: 'would_release', note: 'agent:r: checks green', at: dayAt(19, 60) },
-      ])
-
-    await measure({ db: getDb(), now: () => NOW, openIssue })
-
-    const points = await getDb()
-      .select({
-        metric: metricPoint.metric,
-        value: metricPoint.value,
-        samples: metricPoint.samples,
-      })
-      .from(metricPoint)
-      .where(and(eq(metricPoint.repository, 'paulo/app'), eq(metricPoint.day, '2026-11-08')))
-    expect(points).toEqual(
-      expect.arrayContaining([
-        { metric: 'cost_per_delivery', value: 1, samples: 3 },
-        { metric: 'handoff_share', value: 0.25, samples: 4 },
-        { metric: 'person_decisions_per_delivery', value: expect.closeTo(2 / 3, 6), samples: 3 },
-      ]),
-    )
-  })
-
-  it('gives no decisions point for a day with decisions and no delivery', async () => {
-    const handedOff = [
-      await taskEndingIn('handoff', 19, {}),
-      await taskEndingIn('handoff', 19, {}),
-      await taskEndingIn('handoff', 19, {}),
-    ]
-    await getDb()
-      .insert(decision)
-      .values(handedOff.map((taskId) => ({ taskId, kind: 'resolve' as const, at: dayAt(19, 40) })))
-
-    await measure({ db: getDb(), now: () => NOW, openIssue })
-
-    const metrics = await getDb()
-      .select({ metric: metricPoint.metric, value: metricPoint.value })
-      .from(metricPoint)
-      .where(eq(metricPoint.repository, 'paulo/app'))
-    expect(metrics).toEqual([{ metric: 'handoff_share', value: 1 }])
-  })
-})
-
-describe('loadDecisions', () => {
-  it('reads each decision since the day given, with the repository of its task', async () => {
-    const id = await delivered(19, 1, 'paulo/other')
-    await getDb()
-      .insert(decision)
-      .values([
-        { taskId: id, kind: 'release', note: 'human -> v1.0.0', at: dayAt(19, 40) },
-        { taskId: id, kind: 'approve', at: dayAt(2, 0) },
-      ])
-
-    expect(await loadDecisions(getDb(), new Date(FIRST + 5 * DAY_MS))).toEqual([
-      { repository: 'paulo/other', kind: 'release', note: 'human -> v1.0.0', at: dayAt(19, 40) },
-    ])
-  })
-})
-
-describe('compareWithBaseline', () => {
-  /** A daily point of `metric` for `paulo/app`, `d` days after the first seeded day. */
-  const pointOn = (metric: string, d: number, value: number) => ({
-    metric,
-    repository: 'paulo/app',
-    day: new Date(FIRST + d * DAY_MS).toISOString().slice(0, 10),
-    value,
-    samples: 5,
-  })
-  /** The baseline date is day 13 (2026-11-02): its four weeks are days -15 to 12, the week days 13 to 19. */
-  const BASELINE_FROM = '2026-11-02'
-
-  async function seed(metric: string, weekValue: number) {
-    const baseline = Array.from({ length: 28 }, (_, i) =>
-      pointOn(metric, i - 15, i % 2 ? 0.4 : 0.2),
-    )
-    const week = Array.from({ length: 7 }, (_, i) => pointOn(metric, i + 13, weekValue))
-    await getDb()
-      .insert(metricPoint)
-      .values([...baseline, ...week])
-  }
-
-  it('says better when the week of handoff share is below the lower band of its baseline', async () => {
-    await seed('handoff_share', 0.1)
-
-    const result = await measure({ db: getDb(), now: () => NOW, baselineFrom: BASELINE_FROM })
-
-    expect(result.comparisons).toEqual([
-      expect.objectContaining({
-        metric: 'handoff_share',
-        repository: 'paulo/app',
-        kind: 'compared',
-        verdict: 'better',
-        weekPoints: 7,
-      }),
-    ])
-  })
-
-  it('says no change when the week is inside the band', async () => {
-    await seed('handoff_share', 0.3)
-
-    const [comparison] = await compareWithBaseline(getDb(), NOW, BASELINE_FROM)
-
-    expect(comparison).toMatchObject({ metric: 'handoff_share', verdict: 'no_change' })
-  })
-
-  it('reads only the four weeks before the baseline date, and nothing of a metric it does not know', async () => {
-    await seed('handoff_share', 0.1)
-    // A wild day long before the baseline would move it, if it were read.
-    await getDb()
-      .insert(metricPoint)
-      .values([pointOn('handoff_share', -40, 50), pointOn('retired_metric', 19, 1)])
-
-    const [comparison] = await compareWithBaseline(getDb(), NOW, BASELINE_FROM)
-
-    expect(comparison).toMatchObject({
-      verdict: 'better',
-      baseline: { mean: expect.closeTo(0.3, 6), points: 28 },
-    })
-    expect(await compareWithBaseline(getDb(), NOW, BASELINE_FROM)).toHaveLength(1)
-  })
-
-  it('compares nothing without a baseline date', async () => {
-    await seed('handoff_share', 0.1)
-
-    expect((await measure({ db: getDb(), now: () => NOW })).comparisons).toEqual([])
   })
 })
 

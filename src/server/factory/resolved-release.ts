@@ -3,18 +3,15 @@ import { and, asc, eq, gt, isNotNull, isNull } from 'drizzle-orm'
 import type { Database } from '../db'
 import { repository, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
-import type { Issue } from '../github/issues'
 import type { GithubApi } from '../github/pulls'
 
-import { errorMessage } from './error-message'
 import { releaseBranchOf } from './branches'
 import { enterStage } from './stages'
 
 /**
  * A task that finished with no change: `done`, resolved at a commit of the integration branch, nothing
- * merged. Its issue was closed when it was resolved by the agent, but not when a person resolved it from the
- * panel, and no tag carries it, so what makes it released is its resolving commit reaching the release
- * branch. A release closes the issue that is still open (`afterRelease`).
+ * merged. Its issue was closed when it was resolved, and no tag carries it, so what makes it released is
+ * its resolving commit reaching the release branch.
  */
 const resolvedNotReleased = and(
   eq(task.stage, 'done'),
@@ -36,26 +33,15 @@ export type ReleaseBranchView = {
   actor: string
   /** The commit a release promoted, when a release is what brought the commit there. */
   mergeSha?: string
-  /**
-   * Runs for each task as it is released, with its issue. A release that has a tag uses it to tell the
-   * issue where the fix is; a catch-up has none. It runs after the stage changed. It returns what went wrong, never throws.
-   */
-  afterRelease?: (row: {
-    id: number
-    repository: string
-    issueNumber: number
-  }) => Promise<string | undefined>
 }
 
 export type ResolvedReleased = {
   released: number[]
-  /** What `afterRelease` reported, as `#<issue>: <why>`. The release stands. */
-  issueErrors?: string[]
   /** Tasks that could not be checked, as `task <id> (<repo>#<issue>): <why>`. A later pass tries again. */
   errors: string[]
 }
 
-const message = errorMessage
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /**
  * Releases each of the tasks whose resolving commit `releaseRef` contains. A commit is compared once,
@@ -81,38 +67,12 @@ async function releaseEach(
         resolvedSha: sha,
         ...(view.mergeSha ? { mergeSha: view.mergeSha } : {}),
       })
-      // The issue is told only once the task is released: a transition that failed leaves it for a retry.
-      const issueError = await view.afterRelease?.(row)
       result.released.push(row.id)
-      if (issueError) (result.issueErrors ??= []).push(issueError)
     } catch (error) {
       result.errors.push(`task ${row.id} (${row.repository}#${row.issueNumber}): ${message(error)}`)
     }
   }
   return result
-}
-
-/**
- * Tells an issue where the fix is and closes it, only when it is still open: the agent closed the issue it
- * found fixed, a person resolving from the panel did not. A state GitHub does not say is not taken as open.
- * A failure is returned as `#<issue>: <why>`, not thrown: the release already happened.
- */
-export async function closeOpenIssue(
-  api: Pick<GithubApi, 'commentOnIssue' | 'closeIssue'>,
-  readIssue: (issueNumber: number) => Promise<Pick<Issue, 'state'>>,
-  repo: string,
-  token: string,
-  issueNumber: number,
-  body: string,
-): Promise<string | undefined> {
-  try {
-    if ((await readIssue(issueNumber)).state !== 'open') return undefined
-    await api.commentOnIssue(repo, token, issueNumber, body)
-    await api.closeIssue(repo, token, issueNumber)
-    return undefined
-  } catch (error) {
-    return `#${issueNumber}: ${message(error)}`
-  }
 }
 
 const columns = {
@@ -149,7 +109,7 @@ export type CatchUpPage = {
  * each is compared with the head of its repository's release branch (the owner's choice, or the default
  * branch). `next` is where the following pass starts, and 0 once a pass reaches the last task, so a task
  * whose commit is not there yet is looked at again later. A released task no longer matches, so running it
- * again changes nothing. Its issue is left alone: no tag is known here to tell it the version.
+ * again changes nothing.
  */
 export async function catchUpResolved(
   deps: {
@@ -172,12 +132,7 @@ export async function catchUpResolved(
     try {
       const { token } = await deps.app.installationToken(repo)
       const branch = await releaseBranchOf(deps.api, repo, token, mine[0])
-      const view = {
-        repository: repo,
-        token,
-        releaseRef: branch,
-        releaseBranch: branch,
-      }
+      const view = { repository: repo, token, releaseRef: branch, releaseBranch: branch }
       const done = await releaseEach(deps, { ...view, actor: 'factory' }, mine)
       result.released.push(...done.released)
       result.errors.push(...done.errors)

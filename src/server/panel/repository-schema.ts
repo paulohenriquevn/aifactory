@@ -11,7 +11,6 @@ export const checksSchema = z.array(check).max(20)
 export const repositoryPatchSchema = z.object({
   enabled: z.boolean().optional(),
   checks: checksSchema.nullable().optional(),
-  fixes: z.array(z.string().max(600)).max(20).optional(),
   egress: z.array(z.string().max(253)).max(50).optional(),
   baseBranch: z.string().max(100).nullable().optional(),
   releaseBranch: z.string().max(100).nullable().optional(),

@@ -242,18 +242,6 @@ describe('claudeCodeHarness resume and quota', () => {
   })
 })
 
-describe('a pass cut at its time limit', () => {
-  it('is marked timed out when claude exits 124 without a result', () => {
-    expect(parseClaudeResult(124, '', 'timed out after 2700000 ms')).toMatchObject({
-      ok: false,
-      timedOut: true,
-    })
-  })
-  it('is not marked for another failure', () => {
-    expect(parseClaudeResult(1, '', 'boom').timedOut).toBeUndefined()
-  })
-})
-
 describe('buildPrompt', () => {
   it('names the branch and the issue, and forbids the agent from pushing', () => {
     const prompt = buildPrompt({
@@ -282,15 +270,13 @@ describe('buildPrompt', () => {
       ],
     })
     expect(prompt).toContain(
-      '- The factory runs these checks on your commit after your pass, and sends the work back when one fails:\n  - `pnpm test`\n  - `pnpm check`',
+      '- Before you finish, run what the factory runs on your commit, in the repository root, and fix what fails:\n  - `pnpm test`\n  - `pnpm check`',
     )
-    expect(prompt).toContain('Do not run them yourself')
-    expect(prompt).toContain('run the generator, and the build it needs')
   })
 
   it('names no commands when the factory has none to run', () => {
     const prompt = buildPrompt({ repo: 'o/r', issueNumber: 1, title: 't', body: 'b', branch: 'x' })
-    expect(prompt).not.toContain('The factory runs these checks')
+    expect(prompt).not.toContain('Before you finish, run what the factory runs')
   })
 
   it('lets the agent ask by default, with a QUESTION: line', () => {

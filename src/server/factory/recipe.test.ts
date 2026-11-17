@@ -161,16 +161,3 @@ describe('the edges of a recipe', () => {
     ).toEqual({ checks: [{ name: 'test', command: 'make test' }], egress: ['pypi.org'] })
   })
 })
-
-describe('readRecipe on a dropped connection', () => {
-  it('asks again after the network dropped the read', async () => {
-    let calls = 0
-    const fetch = async () => {
-      calls += 1
-      if (calls === 1) throw new TypeError('fetch failed')
-      return new Response('', { status: 404 })
-    }
-    expect(await readRecipe(REPO, 't', fetch, async () => {})).toBeUndefined()
-    expect(calls).toBe(2)
-  })
-})

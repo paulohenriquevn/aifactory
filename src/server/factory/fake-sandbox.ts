@@ -3,12 +3,9 @@ import { SandboxBackend } from '@theokit/agents/sandbox'
 import type {
   IsolatedSandbox,
   IsolatedSandboxProvider,
-  ListedSandbox,
   SandboxSpec,
   StreamingOptions,
 } from './sandbox'
-import { THIS_PROCESS } from './sandbox-lease'
-import { metadataFor } from './sandbox-reaper'
 
 export type Reply = { stdout?: string; stderr?: string; exitCode?: number }
 
@@ -51,10 +48,6 @@ export class FakeSandbox implements IsolatedSandboxProvider {
   /** Every set of egress rules a running sandbox was given after it started. */
   egressUpdates: SandboxSpec['egress'][] = []
   readonly backend: FakeBackend
-  /** The sandboxes that are up, as a listing says: created and not stopped. */
-  up = new Map<string, ListedSandbox>()
-  killed: string[] = []
-  private created = 0
 
   constructor(
     answer: (command: string) => Reply | undefined = () => ({}),
@@ -65,17 +58,10 @@ export class FakeSandbox implements IsolatedSandboxProvider {
 
   async create(spec: SandboxSpec): Promise<IsolatedSandbox> {
     this.specs.push(spec)
-    const id = `sbx-${++this.created}`
-    this.up.set(id, {
-      id,
-      startedAt: new Date(),
-      metadata: metadataFor(spec.owner, THIS_PROCESS),
-    })
     return {
       backend: this.backend,
       stop: async () => {
         this.stopped += 1
-        this.up.delete(id)
       },
       updateEgress: async (egress) => {
         this.egressUpdates.push(egress)
@@ -91,15 +77,6 @@ export class FakeSandbox implements IsolatedSandboxProvider {
   async restore(snapshotId: string, spec: SandboxSpec): Promise<IsolatedSandbox> {
     this.restored.push(snapshotId)
     return this.create(spec)
-  }
-
-  async listSandboxes(): Promise<ListedSandbox[]> {
-    return [...this.up.values()]
-  }
-
-  async killSandbox(id: string): Promise<void> {
-    this.killed.push(id)
-    this.up.delete(id)
   }
 
   async deleteSnapshot(snapshotId: string): Promise<void> {

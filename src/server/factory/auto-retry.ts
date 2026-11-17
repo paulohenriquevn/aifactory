@@ -54,10 +54,9 @@ const MERGE_CONFLICT = /Pull Request has merge conflicts/
  * environment failure, so a pull request that conflicts every time goes to a person.
  */
 export function rerunsAfterConflict(integrationError: unknown, automaticRetries: number): boolean {
-  return isMergeConflict(integrationError) && automaticRunsLeft(automaticRetries)
-}
-
-/** Whether an integration error is GitHub's refusal to merge a pull request that conflicts with its base. */
-export function isMergeConflict(integrationError: unknown): boolean {
-  return typeof integrationError === 'string' && MERGE_CONFLICT.test(integrationError)
+  return (
+    typeof integrationError === 'string' &&
+    MERGE_CONFLICT.test(integrationError) &&
+    automaticRunsLeft(automaticRetries)
+  )
 }

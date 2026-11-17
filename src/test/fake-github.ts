@@ -1,5 +1,4 @@
 import type { AppAccess, AppEvents, GithubApp } from '../server/github/app'
-import type { Issue } from '../server/github/issues'
 import type { IssuesApi } from '../server/github/issues-api'
 import {
   AutoMergeRefused,
@@ -58,14 +57,11 @@ export const AUTO_MERGE_REFUSALS = {
   clean: 'Pull request Pull request is in clean status',
   unstable: 'Pull request Pull request is in unstable status',
   draft: 'Pull request Pull request is a draft',
-  /** What the fake answers when the head is no longer the one auto-merge was asked to be pinned to. */
-  headMoved: 'Pull request head is not the expected head',
 } as const
 
 export type FakeIssue = {
   number: number
   title: string
-  body: string
   state: 'open' | 'closed'
   /** Why it was closed: `completed` is what the factory asks for. */
   stateReason?: string
@@ -292,14 +288,7 @@ export class FakeRepository {
   issue(number: number, over: Partial<Omit<FakeIssue, 'number'>> = {}): FakeIssue {
     let issue = this.issues.get(number)
     if (!issue) {
-      issue = {
-        number,
-        title: `Issue ${number}`,
-        body: '',
-        state: 'open',
-        labels: [],
-        comments: [],
-      }
+      issue = { number, title: `Issue ${number}`, state: 'open', labels: [], comments: [] }
       this.issues.set(number, issue)
       this.nextNumber = Math.max(this.nextNumber, number + 1)
     }
@@ -553,27 +542,6 @@ export class FakeGithub implements GithubApi {
   /** Creates a label, as the panel's `IssuesApi` does. One that is already there stays as it is. */
   ensureLabel: IssuesApi['ensureLabel'] = async (repo, _token, label) => {
     this.repo(repo).labels.add(label.name)
-  }
-
-  /** Opens an issue, as the panel's `IssuesApi` does, with the next number of the repository. */
-  createIssue: IssuesApi['createIssue'] = async (repo, _token, issue) => {
-    const created = this.repo(repo).issue(this.repo(repo).nextNumber, {
-      title: issue.title,
-      body: issue.body,
-      labels: [...(issue.labels ?? [])],
-    })
-    return { number: created.number, url: `https://github.com/${repo}/issues/${created.number}` }
-  }
-
-  /** Replaces the body of an issue, as the panel's `IssuesApi` does. */
-  updateIssueBody: IssuesApi['updateIssueBody'] = async (repo, _token, number, body) => {
-    this.repo(repo).issue(number, { body })
-  }
-
-  /** Reads an issue as `fetchIssue` does. */
-  readIssue = async (repo: string, number: number): Promise<Issue> => {
-    const { title, body, labels, state } = this.repo(repo).issue(number)
-    return { number, title, body, labels: [...labels], state }
   }
 
   /** Every repository the fake holds, declared or reached by a call. */
@@ -858,8 +826,6 @@ export class FakeGithub implements GithubApi {
         const refuse = (why: string) => new AutoMergeRefused(repo, number, why)
         if (pull.draft) throw refuse(AUTO_MERGE_REFUSALS.draft)
         if (!r.allowAutoMerge) throw refuse(AUTO_MERGE_REFUSALS.notAllowed)
-        const head = r.headOf(pull)
-        if (head && head !== sha) throw refuse(AUTO_MERGE_REFUSALS.headMoved)
         const state = r.mergeableState(pull)
         if (state === 'clean') throw refuse(AUTO_MERGE_REFUSALS.clean)
         if (state === 'unstable') throw refuse(AUTO_MERGE_REFUSALS.unstable)
@@ -881,16 +847,6 @@ export class FakeGithub implements GithubApi {
         const pull = this.pullOrRefuse(r, number, `reading ${repo}#${number}`)
         pull.draft = false
         pull.title = title
-      },
-    )
-  }
-
-  async reopenPullRequest(repo: string, token: string, number: number): Promise<void> {
-    return this.call(
-      { method: 'reopenPullRequest', repo, token, args: [number], failed: false },
-      (r) => {
-        const pull = this.pullOrRefuse(r, number, `reading ${repo}#${number}`)
-        pull.state = 'open'
       },
     )
   }

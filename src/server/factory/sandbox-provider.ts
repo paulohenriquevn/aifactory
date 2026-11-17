@@ -1,7 +1,6 @@
 import { dockerSandboxProvider } from './docker-sandbox'
 import { e2bSandboxProvider } from './e2b-sandbox'
 import type { IsolatedSandboxProvider } from './sandbox'
-import { withLease } from './sandbox-lease'
 import { vercelSandboxProvider } from './vercel-sandbox'
 
 /**
@@ -17,6 +16,6 @@ export function sandboxProviderFromEnv(
   const choice = env.FACTORY_SANDBOX?.trim() || 'vercel'
   if (choice === 'vercel') return vercelSandboxProvider()
   if (choice === 'docker') return dockerSandboxProvider({ env })
-  if (choice === 'e2b') return withLease(e2bSandboxProvider(env))
+  if (choice === 'e2b') return e2bSandboxProvider(env)
   throw new Error(`FACTORY_SANDBOX is "${choice}": use vercel, docker or e2b`)
 }

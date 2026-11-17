@@ -1,11 +1,8 @@
-import { randomUUID } from 'node:crypto'
-
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 
 import {
   DEFAULT_CHECK_MS,
   DEFAULT_REVIEW_MS,
-  NoTimeForAgent,
   agentTimeLeft,
   fitToSession,
 } from '../factory/agent-time'
@@ -20,7 +17,6 @@ import {
 import { cloneRepository } from '../factory/clone'
 import { uploadChangesetCheck } from '../factory/changeset-check'
 import { failingChecks, runChecks, type CheckResult } from '../factory/evidence'
-import { FIX_COMMIT_MESSAGE, runFixes } from '../factory/fixes'
 import { diffFacts } from '../factory/diff-facts'
 import type { CheckRun, RequiredByCheck } from '../factory/required-files'
 import {
@@ -91,10 +87,6 @@ class CaseRun {
   reviewRounds = 0
   /** The findings that block, in each review round so far. */
   private readonly blockingCounts: number[] = []
-  /** The last commit this case made or found, from which the next round counts what the builder committed. */
-  private committed: string | undefined
-  /** The last commit the fixes ran on or made, so they never run twice on the same commit, as in `Run`. */
-  private fixedHead: string | undefined
   private sessionId: string | undefined
   /** What the builder meant to change, written before it changed anything. */
   private plan: ChangePlan | undefined
@@ -213,50 +205,18 @@ class CaseRun {
     this.summary = result.summary
   }
 
-  /**
-   * Commits what the builder left, in the sandbox only, and answers the commit. A commit the builder made by
-   * itself (a merge does) counts as its change and goes as it is, the same as `Run.commitAndPush`.
-   */
+  /** Commits what the builder left, in the sandbox only, and answers the commit. */
   private async commit(): Promise<string> {
     const changes = await must(this.backend, `git -C ${this.repoDir} status --porcelain`)
-    const uncommitted = changes.stdout.trim() !== ''
-    const since = this.committed ?? this.c.baseSha
-    const ahead = await must(this.backend, `git -C ${this.repoDir} rev-list --count ${since}..HEAD`)
-    if (!uncommitted && !(Number(ahead.stdout.trim()) > 0)) {
-      // As `Run.resolvedAlready`: on the first pass, fixes that change the starting commit make the change.
-      const fixed = this.committed === undefined ? await this.applyFixes(this.c.baseSha) : undefined
-      if (fixed && fixed !== this.c.baseSha) return fixed
-      throw new Stopped('the agent made no change')
-    }
-    if (uncommitted) await this.commitAll(`evaluation of ${this.c.id}, attempt ${this.attempts}`)
-    this.committed = (await must(this.backend, `${this.git} rev-parse HEAD`)).stdout.trim()
-    return this.committed
-  }
-
-  /** Commits everything in the checkout, in the sandbox only. The message goes in by file. */
-  private async commitAll(message: string): Promise<void> {
+    if (changes.stdout.trim() === '') throw new Stopped('the agent made no change')
     await this.backend.uploadFile(GITCONFIG, gitConfig(this.deps.author))
-    await this.backend.uploadFile(COMMIT_MESSAGE, `${message}\n`)
+    await this.backend.uploadFile(
+      COMMIT_MESSAGE,
+      `evaluation of ${this.c.id}, attempt ${this.attempts}\n`,
+    )
     await must(this.backend, `${this.git} add -A`)
     await must(this.backend, `${this.git} commit -F ${COMMIT_MESSAGE}`)
-  }
-
-  /** The repository's fix commands, then their change as its own commit in the sandbox, as `Run.applyFixes`. */
-  private async applyFixes(sha: string): Promise<string> {
-    const fixes = this.c.fixes ?? []
-    if (fixes.length === 0 || sha === this.fixedHead) return sha
-    const { changed } = await runFixes(
-      this.backend,
-      this.repoDir,
-      fixes,
-      this.limits.checkMs ?? DEFAULT_CHECK_MS,
-    )
-    this.fixedHead = sha
-    if (!changed) return sha
-    await this.commitAll(FIX_COMMIT_MESSAGE)
-    this.committed = (await must(this.backend, `${this.git} rev-parse HEAD`)).stdout.trim()
-    this.fixedHead = this.committed
-    return this.committed
+    return (await must(this.backend, `${this.git} rev-parse HEAD`)).stdout.trim()
   }
 
   /** Runs the checks on the commit and keeps every result, as the factory keeps its evidence. */
@@ -318,7 +278,7 @@ class CaseRun {
   /** Checks, reviews and reworks until the case is approved or out of attempts, as `Run.loop` does. */
   async loop(): Promise<CaseEnd> {
     for (;;) {
-      const sha = await this.applyFixes(await this.commit())
+      const sha = await this.commit()
       const failed = await this.check(sha)
       if (failed.length > 0) {
         if (!this.canRework()) {
@@ -380,16 +340,12 @@ class CaseRun {
 
 const names = (checks: CheckResult[]) => [...new Set(checks.map((c) => c.name))]
 
-/** Names this process's evaluation runs; the sandbox's metadata also carries the process, which says whether it lives. */
-const PROCESS_RUN = randomUUID()
-
 /** What the sandbox of a case may reach: GitHub without a credential, the agents, the registry. */
 async function specFor(deps: EvalDeps, c: EvalCase): Promise<SandboxSpec> {
   const agents =
     deps.reviewer.name === deps.builder.name ? [deps.builder] : [deps.builder, deps.reviewer]
   const agentEgress = (await Promise.all(agents.map((a) => a.egress()))).flat()
   return {
-    owner: { owner: 'eval', caseId: c.id, runId: PROCESS_RUN },
     timeoutMs: fitToSession(deps.timeouts ?? DEFAULT_TIMEOUTS, deps.sandbox.maxSessionMs).sandboxMs,
     cacheKey: c.repository,
     egress: [
@@ -443,7 +399,7 @@ export async function runCase(deps: EvalDeps, c: EvalCase): Promise<CaseResult> 
       await run.build()
       return run.result(await run.loop())
     } catch (error) {
-      if (!(error instanceof Stopped || error instanceof NoTimeForAgent)) throw error
+      if (!(error instanceof Stopped)) throw error
       return run.result({ stopped: error.message })
     }
   } catch (error) {

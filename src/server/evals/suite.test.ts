@@ -73,48 +73,6 @@ describe('runSuite', () => {
     expect(ran.results.map((r) => r.id)).toEqual(['a'])
     expect(ran.skipped).toEqual(['b', 'c'])
   })
-
-  it('runs again, once, a case the environment failed, and keeps the second result', async () => {
-    const calls: string[] = []
-    const ran = await runSuite(
-      ['a', 'b'],
-      async (id) => {
-        calls.push(id)
-        const first = calls.filter((c) => c === id).length === 1
-        return id === 'a' && first
-          ? { ...result(id, 0.2), passed: false, reason: 'fetch failed' }
-          : result(id, 0.1)
-      },
-      { budgetUsd: 10, concurrency: 1, sandboxUsdPerMs: 0 },
-    )
-
-    expect(calls).toEqual(['a', 'a', 'b'])
-    expect(ran.results.map((r) => [r.id, r.passed])).toEqual([['a', true], ['b', true]])
-  })
-
-  it('does not run again a case the agents failed', async () => {
-    const calls: string[] = []
-    await runSuite(
-      ['a'],
-      async (id) => {
-        calls.push(id)
-        return { ...result(id, 0.1), passed: false, reason: 'the agent made no change' }
-      },
-      { budgetUsd: 10, concurrency: 1, sandboxUsdPerMs: 0 },
-    )
-
-    expect(calls).toEqual(['a'])
-  })
-
-  it('counts what the first, failed run of a case cost against the budget', async () => {
-    const ran = await runSuite(
-      ['a', 'b'],
-      async (id) => ({ ...result(id, 0.6), passed: false, reason: 'ETIMEDOUT' }),
-      { budgetUsd: 1, concurrency: 1, sandboxUsdPerMs: 0 },
-    )
-
-    expect(ran.skipped).toEqual(['b'])
-  })
 })
 
 const baseline: Baseline = {

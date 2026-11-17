@@ -1,7 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
   boolean,
-  index,
   integer,
   jsonb,
   pgTable,
@@ -86,14 +85,6 @@ export const task = pgTable(
      * it is merged, sent back or handed to a person.
      */
     awaitingCiSha: text('awaiting_ci_sha'),
-    /**
-     * The verified pull request was not merged into the integration branch because a promotion into the
-     * pre-release branch held new integrations out (`promotion_wait.hold_until`). It waits with
-     * `awaiting_ci_sha` set, and the `integrate-after-ci` cron integrates it once the hold ends.
-     */
-    integrationHeld: boolean('integration_held').notNull().default(false),
-    /** The run that holds the task's sandbox, written before it starts one: the sandbox's metadata names it. */
-    sandboxRun: text('sandbox_run'),
     /** What the run has spent so far, agents included. It grows while the run is going. */
     costUsd: real('cost_usd').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -102,21 +93,15 @@ export const task = pgTable(
 )
 
 /** Every stage a task entered, in order. `task.stage` is only the latest of these. */
-export const stageEvent = pgTable(
-  'stage_event',
-  {
-    id: serial('id').primaryKey(),
-    taskId: integer('task_id')
-      .notNull()
-      .references(() => task.id),
-    stage: text('stage', { enum: TASK_STAGES }).notNull(),
-    detail: jsonb('detail'),
-    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  // The board reads each task's history through subqueries keyed on the task, a stage and the order of its
-  // events; without this index each one scans the whole table, and the panel's poll took 20 seconds.
-  (table) => [index('stage_event_task_stage_id').on(table.taskId, table.stage, table.id)],
-)
+export const stageEvent = pgTable('stage_event', {
+  id: serial('id').primaryKey(),
+  taskId: integer('task_id')
+    .notNull()
+    .references(() => task.id),
+  stage: text('stage', { enum: TASK_STAGES }).notNull(),
+  detail: jsonb('detail'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+})
 
 /**
  * What the factory itself observed about a commit: a check it ran, on that SHA, with its real exit
@@ -213,15 +198,7 @@ export const decision = pgTable('decision', {
     .notNull()
     .references(() => task.id),
   kind: text('kind', {
-    enum: [
-      'approve',
-      'request_changes',
-      'withdrawn',
-      'retry',
-      'release',
-      'would_release',
-      'resolve',
-    ],
+    enum: ['approve', 'request_changes', 'retry', 'release', 'would_release', 'resolve'],
   }).notNull(),
   /** The head commit when the person decided. */
   sha: text('sha'),
@@ -308,7 +285,7 @@ export const releaseWait = pgTable(
     /** The branch the release lands on. */
     releaseBranch: text('release_branch').notNull(),
     bump: text('bump', { enum: ['patch', 'minor', 'major'] }).notNull(),
-    /** Who decided the release: `human` or `agent:<name>` (`agent:coordinator` for the release train). */
+    /** Who decided the release: `human` or `agent:<name>`. */
     actor: text('actor').notNull(),
     /** The repository publishes with changesets, so the release becomes a publication once it lands. */
     changesets: boolean('changesets').notNull(),
@@ -324,39 +301,6 @@ export const releaseWait = pgTable(
   },
   (table) => [
     uniqueIndex('release_wait_one_per_repository')
-      .on(table.repository)
-      .where(sql`${table.status} = 'waiting'`),
-  ],
-)
-
-/**
- * The promotion of the integration branch into the pre-release branch when the pre-release branch takes
- * changes only through a pull request. The factory turns auto-merge on, pinned to the head it saw, on its
- * own pull request from the integration branch of the same repository, and GitHub merges it once the
- * required checks pass. Until `hold_until` new integrations are held out of the integration branch, so those
- * checks can finish; the hold expires on its own. A repository has at most one waiting promotion.
- */
-export const promotionWait = pgTable(
-  'promotion_wait',
-  {
-    id: serial('id').primaryKey(),
-    repository: text('repository').notNull(),
-    pullRequestNumber: integer('pull_request_number').notNull(),
-    pullRequestUrl: text('pull_request_url').notNull(),
-    /** The head of the promotion pull request the factory saw: auto-merge is pinned to it. */
-    sha: text('sha').notNull(),
-    /** Until when new integrations are held out of the integration branch. */
-    holdUntil: timestamp('hold_until', { withTimezone: true }).notNull(),
-    status: text('status', { enum: ['waiting', 'merged', 'closed'] })
-      .notNull()
-      .default('waiting'),
-    /** What the last look found: why auto-merge could not be pinned, or how the wait ended. */
-    detail: text('detail'),
-    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
-    endedAt: timestamp('ended_at', { withTimezone: true }),
-  },
-  (table) => [
-    uniqueIndex('promotion_wait_one_per_repository')
       .on(table.repository)
       .where(sql`${table.status} = 'waiting'`),
   ],
@@ -447,25 +391,6 @@ export const agentEvent = pgTable(
 )
 
 /**
- * A process that creates sandboxes says it is alive here, every half minute. A sandbox names the process in
- * its metadata, so the supervisor can tell a sandbox whose owner died, on any host, from one in use. On its own
- * host the supervisor asks the system whether `pid` still runs since `started`; elsewhere it goes by the beat.
- */
-export const sandboxLease = pgTable('sandbox_lease', {
-  id: text('id').primaryKey(),
-  host: text('host').notNull(),
-  pid: integer('pid').notNull(),
-  /** When the process started, in clock ticks since boot, so a later process with the same id is not taken for it. */
-  started: text('started'),
-  beatAt: timestamp('beat_at', { withTimezone: true }).notNull(),
-  /**
-   * When a supervisor pass first found the lease quiet. A beat clears it. A quiet lease is killed only once it
-   * stays quiet for a lease window after this, so a process that comes back after an outage keeps its sandboxes.
-   */
-  staleSeenAt: timestamp('stale_seen_at', { withTimezone: true }),
-})
-
-/**
  * What the supervisor found wrong with the factory itself. `stalled` is work that stopped moving.
  * `orphaned` is something that waits for a thing that is gone: a job nobody queued, a resume that never
  * ran, a snapshot no question needs. A finding stays open while it is true and resolves when it is not.
@@ -509,8 +434,6 @@ export const repository = pgTable('repository', {
   enabled: boolean('enabled').notNull().default(false),
   /** The checks a commit must pass: `[{ name, command }]`. Empty means `npm test`. */
   checks: jsonb('checks').$type<{ name: string; command: string }[]>(),
-  /** Commands that rewrite files (a formatter) and decide nothing, run before each round of checks. */
-  fixes: jsonb('fixes').$type<string[]>().notNull().default([]),
   /** Domains the sandbox may reach besides GitHub, the agent and the npm registry. */
   egress: jsonb('egress').$type<string[]>().notNull().default([]),
   /** The domains of the project's `.factory/setup.json` the owner approved; only these reach the firewall. */
@@ -744,95 +667,3 @@ export const metricSignal = pgTable(
   },
   (t) => [unique('metric_signal_once').on(t.metric, t.repository, t.day, t.rule)],
 )
-
-/**
- * What the coordinator recognises as an exception of a task (`coordinator/exceptions.ts`), and the three of
- * a repository's release train (`coordinator/release-train.ts`): work ready for a release, the one retry of a
- * refused release on the same head, and a red release branch that holds the train.
- */
-export const EXCEPTION_KINDS = [
-  'checks_unchanged',
-  'review_plateau',
-  'review_unusable',
-  'handoff',
-  'stalled',
-  'orphaned',
-  'environment',
-  'failure',
-  'unknown',
-  'release_ready',
-  'release_retry',
-  'release_blocked',
-  'queue_blocked',
-] as const
-
-/** The closed set of actions the coordinator decides between (`coordinator/decide.ts`). */
-export const COORDINATOR_ACTIONS = [
-  'send_back',
-  'review_again',
-  'retry_from_finding',
-  'scope',
-  'release',
-  'prioritise',
-  'escalate',
-] as const
-
-/**
- * What became of a decision: `applied` went through the panel's own action, `trial` was only recorded
- * because the coordinator runs in trial mode, `refused` was refused by the transition table, `failed` threw,
- * and `escalated` left the task with a person.
- */
-export const COORDINATOR_OUTCOMES = ['applied', 'trial', 'refused', 'failed', 'escalated'] as const
-
-/**
- * One decision of the coordinator, applied or not, so every action taken with nobody watching can be read
- * afterwards. One exception gets one decision per head of the task, besides the trial one: a later pass that
- * sees it again on the same commit records nothing. A release belongs to a repository, not a task: it is
- * recorded on the repository's oldest task with integrated work, and its head is the pre-release branch's.
- */
-export const coordinatorAction = pgTable(
-  'coordinator_action',
-  {
-    id: serial('id').primaryKey(),
-    taskId: integer('task_id')
-      .notNull()
-      .references(() => task.id),
-    exceptionKind: text('exception_kind', { enum: EXCEPTION_KINDS }).notNull(),
-    /** The head the exception was seen on, or `none` for a task that never pushed. */
-    headSha: text('head_sha').notNull(),
-    action: text('action', { enum: COORDINATOR_ACTIONS }).notNull(),
-    /** Why, as a person reads it. */
-    reason: text('reason').notNull(),
-    /** What a model drafted for the action (`scope`), or the answer it gave that did not parse. */
-    draft: jsonb('draft'),
-    outcome: text('outcome', { enum: COORDINATOR_OUTCOMES }).notNull(),
-    costUsd: real('cost_usd').notNull().default(0),
-    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  // A trial decision applied nothing, so it leaves the head free for the one `auto` applies.
-  (t) => [
-    uniqueIndex('coordinator_action_once_per_head')
-      .on(t.taskId, t.exceptionKind, t.headSha)
-      .where(sql`${t.outcome} <> 'trial'`),
-  ],
-)
-
-/**
- * A failure that repeated across tasks and the issue the coordinator filed for it on the factory's own
- * repository (`coordinator/evolve.ts`): one row per signature, so it is filed once. The row is written
- * before the issue is opened and removed when opening fails, so two passes never file the same signature.
- * When the issue has been closed for a week, both counts and `measured_at` are recorded.
- */
-export const failureSignature = pgTable('failure_signature', {
-  id: serial('id').primaryKey(),
-  signature: text('signature').notNull().unique(),
-  /** The repository the issue was filed on. */
-  repository: text('repository').notNull(),
-  /** Empty only while the issue is being opened. */
-  issueNumber: integer('issue_number'),
-  filedAt: timestamp('filed_at', { withTimezone: true }).notNull().defaultNow(),
-  /** The signature's events in the week before `filed_at`, and in the week after the issue closed. */
-  countBefore: integer('count_before'),
-  countAfter: integer('count_after'),
-  measuredAt: timestamp('measured_at', { withTimezone: true }),
-})

@@ -120,7 +120,6 @@ export async function runPlan(deps: PlanDeps, planId: number): Promise<void> {
       release: config.releaseBranch,
     })
     const sandbox = await createIsolatedSandbox(deps.sandbox, {
-      owner: { owner: 'plan', planId },
       cacheKey: row.repository,
       timeoutMs: (deps.timeoutMs ?? 15 * 60_000) + 5 * 60_000,
       egress: [

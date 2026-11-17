@@ -5,30 +5,46 @@ import { Link } from 'react-router'
 import type { FindingView, HealthReport } from '../../shared/panel'
 import { MetricsSection } from '../components/MetricsSection'
 import { post } from '../lib/api'
-import { useCopy } from '../lib/copy'
 import { ago, money } from '../lib/format'
 import { useResource } from '../lib/live'
 
 type Action = 'retry' | 'resume' | 'delete_snapshot' | 'mark_revert_unknown'
 
-/** What a person does about each kind of finding; the words come from the dictionary. */
-const ACTION: Record<FindingView['subject'], Action> = {
-  run: 'retry',
-  queued_run: 'retry',
-  answer_resume: 'resume',
-  snapshot: 'delete_snapshot',
-  revert: 'mark_revert_unknown',
+const KIND: Record<FindingView['subject'], string> = {
+  run: 'A run stopped moving',
+  queued_run: 'A task is queued and nothing will run it',
+  answer_resume: 'An answer was never resumed',
+  snapshot: 'A snapshot nothing needs',
+  revert: 'A revert was never confirmed',
 }
 
+/** What a person can do about each kind of finding, and how sure they should be first. */
+const ACTION: Record<FindingView['subject'], { action: Action; label: string; confirm?: string }> =
+  {
+    run: {
+      action: 'retry',
+      label: 'Start again',
+      confirm:
+        'Start this task again? Its branch is deleted. If the run is somehow still alive, two would race.',
+    },
+    queued_run: { action: 'retry', label: 'Start again' },
+    answer_resume: { action: 'resume', label: 'Resume again' },
+    snapshot: {
+      action: 'delete_snapshot',
+      label: 'Delete the snapshot',
+      confirm: 'Delete this snapshot? It cannot be recovered.',
+    },
+    revert: { action: 'mark_revert_unknown', label: 'Show it as red' },
+  }
+
 function FindingRow({ finding, onDone }: { finding: FindingView; onDone: () => void }) {
-  const { t } = useCopy()
   const [message, setMessage] = useState<string>()
-  const todo: { label: string; confirm?: string } = t.health.actions[finding.subject]
+  const todo = ACTION[finding.subject]
 
   async function resolve() {
     if (todo.confirm && !window.confirm(todo.confirm)) return
     try {
-      await post(`/api/panel/findings/${finding.id}/resolve`, { action: ACTION[finding.subject] })
+      await post(`/api/panel/findings/${finding.id}/resolve`, { action: todo.action })
       onDone()
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
@@ -42,11 +58,9 @@ function FindingRow({ finding, onDone }: { finding: FindingView; onDone: () => v
           <span className="mr-2 rounded bg-warning/30 px-1.5 py-0.5 text-xs uppercase">
             {finding.kind}
           </span>
-          {t.health.kind[finding.subject]}
+          {KIND[finding.subject]}
         </span>
-        <span className="text-xs text-muted-foreground">
-          {t.health.since(ago(finding.firstSeenAt, Date.now(), t.time))}
-        </span>
+        <span className="text-xs text-muted-foreground">since {ago(finding.firstSeenAt)}</span>
       </div>
       {finding.taskId !== null ? (
         <div className="mt-1 text-xs">
@@ -54,7 +68,7 @@ function FindingRow({ finding, onDone }: { finding: FindingView; onDone: () => v
             to={`/tasks/${finding.taskId}`}
             className="text-foreground underline underline-offset-2"
           >
-            {finding.taskTitle ?? t.health.task(finding.taskId)}
+            {finding.taskTitle ?? `Task ${finding.taskId}`}
           </Link>
         </div>
       ) : null}
@@ -71,29 +85,25 @@ function FindingRow({ finding, onDone }: { finding: FindingView; onDone: () => v
   )
 }
 
-/** Some runs reported a cost and some did not. */
-const partlyReported = (g: { reportedRuns: number; runs: number }) =>
-  g.reportedRuns !== 0 && g.reportedRuns < g.runs
-
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`
 
 export default function HealthPage() {
-  const { t } = useCopy()
-  const h = t.health
   const report = useResource<HealthReport>('/api/panel/health')
   const data = report.data
   return (
     <div className="space-y-8">
-      <h1 className="text-xl font-semibold">{h.title}</h1>
+      <h1 className="text-xl font-semibold">Health</h1>
       {report.error ? <p className="text-sm text-destructive">{report.error}</p> : null}
       {!data ? (
-        <p className="text-sm text-muted-foreground">{h.loading}</p>
+        <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
-          <section aria-label={h.findings}>
-            <h2 className="mb-2 text-sm font-semibold">{h.findings}</h2>
+          <section aria-label="Findings">
+            <h2 className="mb-2 text-sm font-semibold">Findings</h2>
             {data.findings.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{h.nothingWrong}</p>
+              <p className="text-sm text-muted-foreground">
+                Nothing is wrong with the factory right now.
+              </p>
             ) : (
               <ul className="space-y-2">
                 {data.findings.map((f) => (
@@ -103,14 +113,14 @@ export default function HealthPage() {
             )}
           </section>
 
-          <section aria-label={h.cost.title}>
-            <h2 className="mb-2 text-sm font-semibold">{h.cost.title}</h2>
+          <section aria-label="Cost">
+            <h2 className="mb-2 text-sm font-semibold">Cost</h2>
             <dl className="grid grid-cols-4 gap-3 text-sm">
               {[
-                [h.cost.last24, money(data.cost.last24HoursUsd)],
-                [h.cost.last7, money(data.cost.last7DaysUsd)],
-                [h.cost.allTime, money(data.cost.totalUsd)],
-                [h.cost.perTask(data.cost.tasks), money(data.cost.avgPerTaskUsd)],
+                ['Last 24 hours', money(data.cost.last24HoursUsd)],
+                ['Last 7 days', money(data.cost.last7DaysUsd)],
+                ['All time', money(data.cost.totalUsd)],
+                [`Per task (${data.cost.tasks})`, money(data.cost.avgPerTaskUsd)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-lg border border-border bg-card p-3">
                   <dt className="text-xs text-muted-foreground">{label}</dt>
@@ -122,13 +132,13 @@ export default function HealthPage() {
               <table className="mt-4 w-full text-left text-sm">
                 <thead className="text-xs text-muted-foreground">
                   <tr>
-                    <th className="py-1 pr-3">{h.cost.agent}</th>
-                    <th className="py-1 pr-3">{h.cost.role}</th>
-                    <th className="py-1 pr-3">{h.cost.runs}</th>
-                    <th className="py-1 pr-3">{h.cost.cost}</th>
-                    <th className="py-1 pr-3">{h.cost.averageTime}</th>
-                    <th className="py-1 pr-3">{h.cost.failed}</th>
-                    <th className="py-1 pr-3">{h.cost.quota}</th>
+                    <th className="py-1 pr-3">Agent</th>
+                    <th className="py-1 pr-3">Role</th>
+                    <th className="py-1 pr-3">Runs</th>
+                    <th className="py-1 pr-3">Cost</th>
+                    <th className="py-1 pr-3">Average time</th>
+                    <th className="py-1 pr-3">Failed</th>
+                    <th className="py-1 pr-3">Out of quota</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -139,14 +149,14 @@ export default function HealthPage() {
                       <td className="py-1 pr-3">{g.runs}</td>
                       <td className="py-1 pr-3">
                         {g.reportedRuns === 0 ? (
-                          <span className="text-muted-foreground">{h.cost.notReported}</span>
+                          <span className="text-muted-foreground">not reported</span>
                         ) : (
                           money(g.costUsd)
                         )}
-                        {partlyReported(g) ? (
+                        {g.reportedRuns > 0 && g.reportedRuns < g.runs ? (
                           <span className="text-xs text-muted-foreground">
                             {' '}
-                            {h.cost.partlyReported(g.reportedRuns, g.runs)}
+                            ({g.reportedRuns} of {g.runs} reported)
                           </span>
                         ) : null}
                       </td>
@@ -158,7 +168,7 @@ export default function HealthPage() {
                 </tbody>
               </table>
             ) : (
-              <p className="mt-3 text-sm text-muted-foreground">{h.cost.none}</p>
+              <p className="mt-3 text-sm text-muted-foreground">No agent has run yet.</p>
             )}
           </section>
 

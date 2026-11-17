@@ -26,13 +26,10 @@ import type {
   ExecuteResult,
   IsolatedSandbox,
   IsolatedSandboxProvider,
-  ListedSandbox,
   SandboxSpec,
   StreamingOptions,
 } from './sandbox'
 import { assertIsolated } from './sandbox'
-import { THIS_PROCESS } from './sandbox-lease'
-import { E2B_SANDBOX_LIMIT, metadataFor } from './sandbox-reaper'
 
 /** The exit code the TheoKit backends report for a command that hit its timeout. */
 const TIMED_OUT = 124
@@ -257,27 +254,15 @@ export function e2bMaxSessionMs(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isFinite(set) && set > 0 ? set : E2B_FREE_SESSION_MS
 }
 
-/** What a sandbox is created with, the owner included, so a listing says who it belongs to. */
-export function sandboxOptions(spec: SandboxSpec, env: NodeJS.ProcessEnv = process.env) {
-  return {
-    apiKey: env.E2B_API_KEY,
-    timeoutMs: Math.min(spec.timeoutMs, e2bMaxSessionMs(env)),
-    envs: SANDBOX_ENV,
-    network: networkFor(spec),
-    metadata: metadataFor(spec.owner, THIS_PROCESS),
-  }
-}
-
-/** How many sandboxes the account allows at once: 10 unless `E2B_MAX_SANDBOXES` says its plan allows more. */
-export function e2bSandboxLimit(env: NodeJS.ProcessEnv = process.env): number {
-  const set = Number(env.E2B_MAX_SANDBOXES)
-  return Number.isInteger(set) && set > 0 ? set : E2B_SANDBOX_LIMIT
-}
-
 /** Needs `E2B_API_KEY`, and the template built by scripts/build-e2b-template.mts. */
 export function e2bSandboxProvider(env: NodeJS.ProcessEnv = process.env): IsolatedSandboxProvider {
   const maxSessionMs = e2bMaxSessionMs(env)
-  const options = (spec: SandboxSpec) => sandboxOptions(spec, env)
+  const options = (spec: SandboxSpec) => ({
+    apiKey: env.E2B_API_KEY,
+    timeoutMs: Math.min(spec.timeoutMs, maxSessionMs),
+    envs: SANDBOX_ENV,
+    network: networkFor(spec),
+  })
   const remove = (snapshotId: string) =>
     Sandbox.deleteSnapshot(snapshotId, { apiKey: env.E2B_API_KEY }).then(() => {})
   // Snapshots a sandbox of this process was restored from. Deleting one now would fail; the sandbox deletes
@@ -286,24 +271,6 @@ export function e2bSandboxProvider(env: NodeJS.ProcessEnv = process.env): Isolat
   return {
     name: 'e2b',
     maxSessionMs,
-    maxSandboxes: e2bSandboxLimit(env),
-    async listSandboxes() {
-      const paginator = Sandbox.list({ apiKey: env.E2B_API_KEY })
-      const found: ListedSandbox[] = []
-      while (paginator.hasNext) {
-        for (const info of await paginator.nextItems()) {
-          found.push({
-            id: info.sandboxId,
-            startedAt: info.startedAt,
-            metadata: info.metadata ?? {},
-          })
-        }
-      }
-      return found
-    },
-    async killSandbox(id) {
-      await Sandbox.kill(id, { apiKey: env.E2B_API_KEY })
-    },
     async create(spec) {
       return wrap(await Sandbox.create(E2B_TEMPLATE, options(spec)), spec)
     },

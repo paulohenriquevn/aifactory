@@ -1,5 +1,3 @@
-import { SANDBOX_TEMPLATE_MISSING } from './panel'
-
 /**
  * The sentences of the repository doctor for an item that is not fine. The doctor sends the code and the
  * values with each item, so the panel can say the same thing in the owner's language; the English here is
@@ -37,7 +35,6 @@ export const DOCTOR_SAY_CODES = [
   'ok_none',
   'ok_recipe',
   'ok_sandbox',
-  'ok_sandbox_slots',
 ] as const
 
 /** Every thing the doctor tries to read; an item it could not read says which, so the panel can name it. */
@@ -52,7 +49,6 @@ export const DOCTOR_TRIED_CODES = [
   'installation',
   'events',
   'runs',
-  'sandboxes',
   'token',
   'merge_settings',
 ] as const
@@ -75,7 +71,6 @@ export const DOCTOR_TRIED_EN: DoctorTriedSentences = {
   installation: (v) => `reading the installation of the GitHub App on ${v.repo}`,
   events: () => 'reading the events the GitHub App subscribes to',
   runs: (v) => `reading the failed runs of ${v.repo}`,
-  sandboxes: () => 'reading the sandboxes the account has up',
   token: (v) => `minting a token for ${v.repo}`,
   merge_settings: (v) => `reading the merge settings of ${v.repo}`,
 }
@@ -225,11 +220,9 @@ export const DOCTOR_SAY_EN: DoctorSentences = {
   },
   sandbox_refused: {
     cause: (v) =>
-      `The sandbox provider refused the last run of this repository (task ${v.taskId}, ${v.at}): ${v.error}${v.up ? ` ${v.up} of ${v.limit} sandboxes are up, ${v.atWork} with an owner at work.` : ''}`,
-    repair: (v) =>
-      SANDBOX_TEMPLATE_MISSING.test(v.error ?? '')
-        ? 'Build the sandbox template: node --env-file=.env.local scripts/build-e2b-template.mts. The task retries itself once the provider has it.'
-        : 'Add credit to the sandbox provider, or fix its key on the server. The task retries itself once the provider accepts.',
+      `The sandbox provider refused the last run of this repository (task ${v.taskId}, ${v.at}): ${v.error}`,
+    repair: () =>
+      'Add credit to the sandbox provider, or fix its key on the server. The task retries itself once the provider accepts.',
   },
   ok_issues: { cause: () => 'Issues are on.', repair: () => '' },
   ok_app_access: {
@@ -288,11 +281,6 @@ export const DOCTOR_SAY_EN: DoctorSentences = {
   },
   ok_sandbox: {
     cause: () => 'The sandbox provider has not refused the latest run.',
-    repair: () => '',
-  },
-  ok_sandbox_slots: {
-    cause: (v) =>
-      `The sandbox provider has not refused the latest run. ${v.up} of ${v.limit} sandboxes are up, ${v.atWork} with an owner at work.`,
     repair: () => '',
   },
 }

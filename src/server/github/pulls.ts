@@ -1,5 +1,4 @@
 import type { FetchLike } from './app'
-import { retryRead } from './retry-read'
 
 export type CheckRun = {
   name: string
@@ -265,8 +264,6 @@ export type GithubApi = {
   /** Takes a draft pull request out of draft and gives it `title`. Throws when GitHub will not. */
   markReadyForReview(repo: string, token: string, number: number, title: string): Promise<void>
   disableAutoMerge(repo: string, token: string, number: number): Promise<void>
-  /** Reopens a closed pull request; GitHub then moves its head to the branch's. Throws when GitHub will not. */
-  reopenPullRequest(repo: string, token: string, number: number): Promise<void>
   /** Every check run and commit status on a commit, with what each said. */
   checkReports(repo: string, token: string, sha: string): Promise<CheckReport[]>
   /** The check runs and commit statuses a commit has so far. */
@@ -338,6 +335,8 @@ function mergeFields(number: number, merge: PullRequestMerge): Record<string, st
 
 /** Runs on the factory host with an installation token, never in the sandbox. */
 /** A read that GitHub answers with a 5xx is asked again this many times, with a pause. Writes never are. */
+const READ_ATTEMPTS = 3
+const READ_RETRY_MS = 2_000
 
 /** How many times a merge is asked for when another merge moved the base a moment before. */
 const MERGE_ATTEMPTS = 4
@@ -373,21 +372,20 @@ export function createGithubApi(
 ): GithubApi {
   const call = async (repo: string, token: string, path: string, init: RequestInit = {}) => {
     const isRead = (init.method ?? 'GET') === 'GET'
-    return retryRead(
-      () =>
-        fetchImpl(`https://api.github.com/repos/${repo}${path}`, {
-          ...init,
-          headers: {
-            accept: 'application/vnd.github+json',
-            'x-github-api-version': '2022-11-28',
-            authorization: `Bearer ${token}`,
-            ...(init.body ? { 'content-type': 'application/json' } : {}),
-            ...(init.headers as Record<string, string> | undefined),
-          },
-        }),
-      wait,
-      isRead,
-    )
+    for (let attempt = 1; ; attempt += 1) {
+      const response = await fetchImpl(`https://api.github.com/repos/${repo}${path}`, {
+        ...init,
+        headers: {
+          accept: 'application/vnd.github+json',
+          'x-github-api-version': '2022-11-28',
+          authorization: `Bearer ${token}`,
+          ...(init.body ? { 'content-type': 'application/json' } : {}),
+          ...(init.headers as Record<string, string> | undefined),
+        },
+      })
+      if (!isRead || response.status < 500 || attempt >= READ_ATTEMPTS) return response
+      await wait(READ_RETRY_MS * attempt)
+    }
   }
 
   async function ensure(response: Response, action: string, status: number[]) {
@@ -1058,17 +1056,6 @@ export function createGithubApi(
         [201],
       )
       return String(((await response.json()) as { id: number }).id)
-    },
-
-    async reopenPullRequest(repo, token, number) {
-      await ensure(
-        await call(repo, token, `/pulls/${number}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ state: 'open' }),
-        }),
-        `reopening ${repo}#${number}`,
-        [200],
-      )
     },
 
     async closeIssue(repo, token, issueNumber) {

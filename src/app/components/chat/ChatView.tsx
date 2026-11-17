@@ -8,7 +8,6 @@ import type { ChatMessageView, ChatModel } from '../../../shared/panel'
 import { AGENT_PATH, chatApi, displayed, promptWith, SUGGESTIONS } from '../../lib/chat'
 import { useChatgptConnection } from '../../lib/chatgpt-connection'
 import { useChats } from '../../lib/chats'
-import { useCopy } from '../../lib/copy'
 
 import { ChatgptConnect } from './ChatgptConnect'
 import { ModelPicker } from './ModelPicker'
@@ -23,12 +22,11 @@ import { PillComposer } from './PillComposer'
  */
 export function ChatView({ chatId }: { chatId?: string }) {
   const navigate = useNavigate()
-  const { t } = useCopy()
   const { reload } = useChats()
   const [model, setModel] = useState<ChatModel>('openrouter')
   const [restored, setRestored] = useState<ChatMessageView[]>([])
   const [loading, setLoading] = useState(chatId !== undefined)
-  const [loadError, setLoadError] = useState(false)
+  const [loadError, setLoadError] = useState<string>()
   const [value, setValue] = useState('')
   const { needsConnection, recheck: checkConnection } = useChatgptConnection(model)
 
@@ -61,7 +59,7 @@ export function ChatView({ chatId }: { chatId?: string }) {
         setRestored(detail.messages)
         setModel(detail.chat.model)
       })
-      .catch(() => alive && setLoadError(true))
+      .catch(() => alive && setLoadError('Não encontrei essa conversa.'))
       .finally(() => alive && setLoading(false))
     return () => {
       alive = false
@@ -118,17 +116,17 @@ export function ChatView({ chatId }: { chatId?: string }) {
         onSubmit={send}
         running={running}
         onStop={() => agent.abort()}
-        placeholder={t.chat.askFactory}
+        placeholder="Pergunte à fábrica"
         trailing={<ModelPicker model={model} onChange={changeModel} />}
       />
     </div>
   )
 
-  if (loading) return <p className="p-6 text-sm text-foreground/60">{t.chat.loading}</p>
+  if (loading) return <p className="p-6 text-sm text-foreground/60">Carregando…</p>
   if (loadError) {
     return (
       <p role="alert" className="p-6 text-sm text-destructive">
-        {t.chat.notFound}
+        {loadError}
       </p>
     )
   }
@@ -136,7 +134,7 @@ export function ChatView({ chatId }: { chatId?: string }) {
   if (empty) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 pb-24">
-        <h1 className="mb-8 text-[26px] font-normal tracking-tight">{t.chat.ready}</h1>
+        <h1 className="mb-8 text-[26px] font-normal tracking-tight">Pronto quando você quiser.</h1>
         <div className="w-full max-w-[770px]">{composer}</div>
         <ul className="mt-6 w-full max-w-[770px] space-y-1">
           {SUGGESTIONS.map((text) => (

@@ -11,15 +11,7 @@ import {
 import { shellEscapePosix } from '@theokit/agents/sandbox'
 import { describe, expect, it } from 'vitest'
 
-import {
-  E2BBackend,
-  e2bMaxSessionMs,
-  e2bSandboxLimit,
-  networkFor,
-  SANDBOX_ENV,
-  sandboxOptions,
-} from './e2b-sandbox'
-import { THIS_PROCESS } from './sandbox-lease'
+import { E2BBackend, e2bMaxSessionMs, networkFor, SANDBOX_ENV } from './e2b-sandbox'
 
 const spec = (egress: { domain: string; headers?: Record<string, string> }[]) => ({
   egress,
@@ -308,40 +300,5 @@ describe('E2BBackend after the stream to a running command drops', () => {
     )
     await expect(backend.execute('true')).rejects.toThrow('something else')
     expect(connects).toHaveLength(0)
-  })
-})
-
-describe('sandboxOptions', () => {
-  it('sends the owner as metadata, with the host that created the sandbox', () => {
-    const options = sandboxOptions(
-      { ...spec([{ domain: 'github.com' }]), owner: { owner: 'task', taskId: 7, run: 'abc' } },
-      { E2B_API_KEY: 'k' },
-    )
-    expect(options.metadata).toMatchObject({
-      app: 'aifactory',
-      owner: 'task',
-      taskId: '7',
-      run: 'abc',
-    })
-    expect(options.metadata).toMatchObject({ host: THIS_PROCESS.host, lease: THIS_PROCESS.lease })
-    expect(options.apiKey).toBe('k')
-  })
-
-  it('names an evaluation and a proof the same way', () => {
-    const eval_ = sandboxOptions({
-      ...spec([{ domain: 'a.dev' }]),
-      owner: { owner: 'eval', caseId: 'c1', runId: 'r1' },
-    })
-    expect(eval_.metadata).toMatchObject({ owner: 'eval', caseId: 'c1', runId: 'r1' })
-    const proof = sandboxOptions({
-      ...spec([{ domain: 'a.dev' }]),
-      owner: { owner: 'prove-checks', repository: 'a/b' },
-    })
-    expect(proof.metadata).toMatchObject({ owner: 'prove-checks', repository: 'a/b' })
-  })
-
-  it('limits the account to 10 sandboxes unless the plan says more', () => {
-    expect(e2bSandboxLimit({})).toBe(10)
-    expect(e2bSandboxLimit({ E2B_MAX_SANDBOXES: '100' })).toBe(100)
   })
 })

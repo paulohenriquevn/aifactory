@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react'
-import type { ReactElement } from 'react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -28,11 +27,6 @@ vi.mock('theokit/client', () => ({
 import { ChatsProvider } from '../../lib/chats'
 
 import { ChatView } from './ChatView'
-import { CopyProvider, LANGUAGE_KEY } from '../../lib/copy'
-import { ptBR } from '../../lib/copy/pt-BR'
-// The owner's language is Portuguese here; the dictionary keys say what is on the screen.
-window.localStorage.setItem(LANGUAGE_KEY, 'pt-BR')
-const render = (ui: ReactElement) => rtlRender(ui, { wrapper: CopyProvider })
 
 const fresh = (): Agent => ({
   thread: [],
@@ -92,7 +86,7 @@ const tree = (chatId?: string) => (
 describe('the empty conversation', () => {
   it('greets, offers things to ask, and sends a suggestion as the first message', () => {
     render(tree())
-    expect(screen.getByText(ptBR.chat.ready)).toBeDefined()
+    expect(screen.getByText('Pronto quando você quiser.')).toBeDefined()
     fireEvent.click(screen.getByText('Como está a fábrica agora?'))
     expect(agent.send).toHaveBeenCalledWith({ message: 'Como está a fábrica agora?' })
     expect(paths[0]).toBe('/api/agents/chat')
@@ -100,11 +94,11 @@ describe('the empty conversation', () => {
 
   it('sends what is typed, and ignores a blank message', () => {
     render(tree())
-    fireEvent.change(screen.getByLabelText(ptBR.composer.message), { target: { value: '   ' } })
-    fireEvent.keyDown(screen.getByLabelText(ptBR.composer.message), { key: 'Enter' })
+    fireEvent.change(screen.getByLabelText('Mensagem'), { target: { value: '   ' } })
+    fireEvent.keyDown(screen.getByLabelText('Mensagem'), { key: 'Enter' })
     expect(agent.send).not.toHaveBeenCalled()
-    fireEvent.change(screen.getByLabelText(ptBR.composer.message), { target: { value: 'oi' } })
-    fireEvent.keyDown(screen.getByLabelText(ptBR.composer.message), { key: 'Enter' })
+    fireEvent.change(screen.getByLabelText('Mensagem'), { target: { value: 'oi' } })
+    fireEvent.keyDown(screen.getByLabelText('Mensagem'), { key: 'Enter' })
     expect(agent.send).toHaveBeenCalledWith({ message: 'oi' })
   })
 
@@ -140,7 +134,7 @@ describe('a conversation that was kept', () => {
       ],
     })
     render(tree(id))
-    expect(screen.getByText(ptBR.chat.loading)).toBeDefined()
+    expect(screen.getByText('Carregando…')).toBeDefined()
     await waitFor(() => expect(screen.getByText('Oi, dono.')).toBeDefined())
     expect(screen.getByText('olá')).toBeDefined()
     expect(screen.queryByText(/Conversa até aqui/)).toBeNull()
@@ -233,7 +227,7 @@ describe('choosing the ChatGPT subscription', () => {
     render(tree())
     fireEvent.keyDown(screen.getByRole('button', { name: 'Modelo' }), { key: 'Enter' })
     fireEvent.click(await screen.findByRole('menuitem', { name: /ChatGPT/ }))
-    await waitFor(() => expect(screen.getByLabelText(ptBR.chatgpt.label)).toBeDefined())
+    await waitFor(() => expect(screen.getByLabelText('Conectar o ChatGPT')).toBeDefined())
     expect(paths.at(-1)).toBe('/api/agents/chat-codex')
   })
 
@@ -245,6 +239,6 @@ describe('choosing the ChatGPT subscription', () => {
     await waitFor(() =>
       expect(calls.some((c) => c.url === '/api/panel/chat/connection')).toBe(true),
     )
-    expect(screen.queryByLabelText(ptBR.chatgpt.label)).toBeNull()
+    expect(screen.queryByLabelText('Conectar o ChatGPT')).toBeNull()
   })
 })

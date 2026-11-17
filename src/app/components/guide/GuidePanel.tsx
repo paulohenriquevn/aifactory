@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router'
 
 import type { GuideId } from '../../../shared/guides'
-import { useCopy } from '../../lib/copy'
 import { guideFor, GUIDES } from '../../lib/guides'
 import { useGuideState } from '../../lib/guide-state'
 import { useEscape } from '../../lib/keys'
@@ -18,7 +17,6 @@ import { GuideThread } from './GuideThread'
  */
 export function GuidePanel() {
   const { pathname, search } = useLocation()
-  const { t } = useCopy()
   const { open, setOpen, markSeen } = useGuideState()
   const guide = guideFor(pathname)
   const [started, setStarted] = useState<GuideId[]>([])
@@ -48,11 +46,11 @@ export function GuidePanel() {
         </span>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-medium">{guide.name}</h2>
-          <p className="truncate text-xs text-foreground/55">{t.guide.subtitle}</p>
+          <p className="truncate text-xs text-foreground/55">Explica e ajusta esta página</p>
         </div>
         <button
           type="button"
-          aria-label={t.guide.close}
+          aria-label="Fechar o guia"
           onClick={() => setOpen(false)}
           className="rounded-lg p-2 text-foreground/80 hover:bg-muted/60"
         >

@@ -3,20 +3,16 @@ import { and, desc, gte, inArray } from 'drizzle-orm'
 import type { Database } from '../db'
 import { metricPoint, metricSignal } from '../db/schema'
 import { evaluate, strongest, type Point } from '../metrics/bands'
-import {
-  BANDS,
-  isMetricName as isMetric,
-  METRIC_NAMES,
-  METRICS,
-  type BandConfig,
-  type MetricName,
-} from '../metrics/config'
+import { BANDS, METRIC_NAMES, METRICS, type BandConfig, type MetricName } from '../metrics/config'
 import { firstDay } from '../metrics/measure'
 import { ALL_REPOSITORIES } from '../metrics/series'
 import type { MetricBand, MetricRow, MetricsReport, MetricSignalView } from '../../shared/panel'
 
 /** Days of signals the panel lists. */
 const SIGNAL_DAYS = 14
+
+const isMetric = (name: string): name is MetricName =>
+  (METRIC_NAMES as readonly string[]).includes(name)
 
 function bandOf(points: Point[], metric: MetricName, config: BandConfig) {
   const state = evaluate(points, METRICS[metric].worse, config)

@@ -43,15 +43,6 @@ export function actionDeps(env: NodeJS.ProcessEnv = process.env): ActionDeps {
   }
 }
 
-/** The sandbox provider for the doctor to count slots with; a misconfigured one leaves the count out. */
-function providerIfConfigured(env: NodeJS.ProcessEnv) {
-  try {
-    return sandboxProviderFromEnv(env)
-  } catch {
-    return undefined
-  }
-}
-
 /** What the doctor of a repository reads with, and repairs with. */
 export function doctorDeps(env: NodeJS.ProcessEnv = process.env): DoctorDeps {
   return {
@@ -59,7 +50,6 @@ export function doctorDeps(env: NodeJS.ProcessEnv = process.env): DoctorDeps {
     github: githubAppFromEnv(env),
     api: createGithubApi(),
     issues: createIssuesApi(),
-    sandboxes: providerIfConfigured(env),
   }
 }
 

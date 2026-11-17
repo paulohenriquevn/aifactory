@@ -1,1 +1,0 @@
-CREATE INDEX IF NOT EXISTS "stage_event_task_stage_id" ON "stage_event" USING btree ("task_id","stage","id");

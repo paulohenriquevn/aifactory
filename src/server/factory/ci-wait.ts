@@ -35,23 +35,7 @@ export type FailedReport = CheckReport & {
 
 /** What to do about a task whose pull request waits for the repository's required checks. */
 export type WaitingStep =
-  /**
-   * `baseRed` names the required checks that failed on the verified commit and fail on the head of the
-   * integration branch too: the change did not cause them, so the task waits for the base, not for a fix.
-   */
-  | { kind: 'wait'; baseRed?: string[] }
-  /**
-   * A required check failed and the head of the integration branch must be read to tell whose failure it
-   * is. Asked only then, so a base that cannot be read blocks no other step.
-   */
-  | { kind: 'needs_base' }
-  /**
-   * Every failed required check was blamed on the base, and the base passes them now. The pull request's
-   * runs still carry the old failure and only a new commit runs them again, so a run merges the fixed base
-   * into the task's branch with no agent (`mergeIntegration`), and that merge is verified and reviewed like
-   * any work.
-   */
-  | { kind: 'merge_base'; checks: string[] }
+  | { kind: 'wait' }
   /** GitHub merged the verified commit: what follows a direct merge runs now. */
   | { kind: 'finish'; mergedSha: string }
   /**
@@ -59,14 +43,9 @@ export type WaitingStep =
    * check reported (`checksFeedback`) as feedback.
    */
   | { kind: 'send_back'; failed: string[]; reports: CheckReport[] }
-  /** The pull request conflicts with its base: the task runs again to merge the new base into its branch. */
+  /** The pull request conflicts with its base: the task starts again from the new base. */
   | { kind: 'start_over'; reason: string }
   | { kind: 'person'; reason: string; stopAutoMerge: boolean; reports?: CheckReport[] }
-  /**
-   * A promotion into the pre-release branch held the integration out and the hold expired: the verified
-   * commit is integrated now, as the run would have done.
-   */
-  | { kind: 'integrate' }
 
 export type WaitingIntegration = {
   /** The commit the factory verified and reviewed: the only one it lets merge. */
@@ -76,25 +55,10 @@ export type WaitingIntegration = {
   required: string[]
   /** Every check reported on the verified commit. */
   reports: CheckReport[]
-  /**
-   * Every check reported on the head of the integration branch. Undefined until it was read, which is asked
-   * for (`needs_base`) only when a required check failed.
-   */
-  baseReports?: CheckReport[]
-  /**
-   * The checks an earlier pass found red on the base while they failed on this verified commit, every one
-   * of them. Their failure on the pull request stays the base's until the base passes them.
-   */
-  blamedOnBase: string[]
   /** How long the pull request has waited. */
   waitedMs: number
   /** Automatic runs since a person last started the task. */
   automaticRuns: number
-  /**
-   * Whether a promotion into the pre-release branch held the integration out (`task.integration_held`):
-   * `holding` while the hold runs, `released` once it expired. Undefined for an integration never held.
-   */
-  held?: 'holding' | 'released'
 }
 
 const short = (sha: string) => sha.slice(0, 7)
@@ -155,10 +119,7 @@ export function readRequired(input: Pick<WaitingIntegration, 'required' | 'repor
  * The next step for a pull request that waits for the repository's required checks. The factory only ever
  * lets GitHub merge the commit it verified; anything else (a new push, a closed pull request, auto-merge
  * turned off by somebody) goes to a person. A failed check and a conflict run again on their own, as many
- * times as an environment failure, then go to a person too. A failed check that fails on the head of the
- * integration branch too is the base's: the task waits, and once the base passes it the factory merges the
- * base into its branch, with no agent told to fix anything. A pull request a promotion held out has no
- * auto-merge yet: it waits while the hold runs and is integrated once it ends.
+ * times as an environment failure, then go to a person too.
  */
 export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep {
   const done = settled(input)
@@ -174,9 +135,6 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
           stopAutoMerge: true,
         }
   }
-  if (input.held && !input.pull.autoMerge) {
-    return input.held === 'holding' ? { kind: 'wait' } : { kind: 'integrate' }
-  }
   if (!input.pull.autoMerge) {
     return {
       kind: 'person',
@@ -184,26 +142,18 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
       stopAutoMerge: false,
     }
   }
-  return decideOnChecks(input, runsLeft, runs)
-}
-
-/** What the required checks of an open pull request with auto-merge on decide: see `decideWaitingIntegration`. */
-function decideOnChecks(input: WaitingIntegration, runsLeft: boolean, runs: string): WaitingStep {
   const { failed, silent } = readRequired(input)
-  // Whose failure it is needs the base, read only now: a base that cannot be read blocks no other step.
-  if (failed.length > 0 && input.baseReports === undefined) return { kind: 'needs_base' }
-  const blame = blameFailures(failed, input.baseReports ?? [], input.blamedOnBase)
-  if (blame.own.length > 0) {
-    const reports = blame.own.flatMap((name) => failedRuns(input.reports, name))
+  if (failed.length > 0) {
     if (!runsLeft) {
       return {
         kind: 'person',
-        reason: `the required checks still fail after ${runs}: ${blame.own.join(', ')}`,
+        reason: `the required checks still fail after ${runs}: ${failed.join(', ')}`,
         stopAutoMerge: true,
-        reports,
+        reports: failed.flatMap((name) => failedRuns(input.reports, name)),
       }
     }
-    return { kind: 'send_back', failed: blame.own, reports }
+    const reports = failed.flatMap((name) => failedRuns(input.reports, name))
+    return { kind: 'send_back', failed, reports }
   }
   if (silent.length > 0 && input.waitedMs > CI_SILENCE_MS) {
     return {
@@ -212,49 +162,7 @@ function decideOnChecks(input: WaitingIntegration, runsLeft: boolean, runs: stri
       stopAutoMerge: true,
     }
   }
-  if (blame.red.length > 0) return { kind: 'wait', baseRed: blame.red }
-  if (blame.fixed.length === 0 || blame.unsettled.length > 0) return { kind: 'wait' }
-  return runsLeft
-    ? { kind: 'merge_base', checks: blame.fixed }
-    : {
-        kind: 'person',
-        reason: `the integration branch passes ${blame.fixed.join(', ')} again, and the pull request still has to merge it after ${runs}`,
-        stopAutoMerge: true,
-      }
-}
-
-/**
- * Whose a failed required check is, by what the head of the integration branch says of the same check:
- * `red` when a run of it failed there too, `unsettled` while it runs there (or, once blamed, until it reports
- * again), `fixed` when the base passes a check blamed on it before, and `own` otherwise: the change's.
- */
-type Blame = Record<'own' | 'red' | 'unsettled' | 'fixed', string[]>
-
-function blameFailures(failed: string[], base: CheckReport[], blamed: string[]): Blame {
-  const blame: Blame = { own: [], red: [], unsettled: [], fixed: [] }
-  for (const name of failed) {
-    const runs = base.filter((r) => r.name === name)
-    if (runs.some((r) => r.state === 'failure')) blame.red.push(name)
-    else if (runs.some((r) => r.state === 'pending')) blame.unsettled.push(name)
-    else if (!blamed.includes(name)) blame.own.push(name)
-    else if (runs.length > 0) blame.fixed.push(name)
-    else blame.unsettled.push(name)
-  }
-  return blame
-}
-
-/**
- * What the task's record says when the checks its pull request failed were the base's and the base passes
- * them now: the factory merges the base into the branch itself (`mergeIntegration`), so the checks run again
- * on a commit that has the fix. No agent reads it, and nobody is told to fix anything.
- */
-export function fixedBaseNote(base: string, checks: string[]): string {
-  const one = checks.length === 1
-  return [
-    `The required check${one ? '' : 's'} ${checks.join(', ')} failed on this pull request while ${one ? 'it' : 'they'} failed on ${base} too, so the failure was not this change's.`,
-    `${base} passes ${one ? 'it' : 'them'} now, and a check runs again only on a new commit.`,
-    `The factory merges ${base} into this branch and checks and reviews the merge.`,
-  ].join(' ')
+  return { kind: 'wait' }
 }
 
 const unread = (r: FailedReport) => r.evidence !== undefined && 'unreadable' in r.evidence

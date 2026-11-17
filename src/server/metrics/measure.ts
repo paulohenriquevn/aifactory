@@ -1,31 +1,11 @@
-import { and, between, eq, gte, inArray, isNotNull, or, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNotNull, or, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import {
-  decision,
-  evidence,
-  metricPoint,
-  metricSignal,
-  review,
-  stageEvent,
-  task,
-  watch,
-} from '../db/schema'
+import { evidence, metricPoint, metricSignal, review, stageEvent, task, watch } from '../db/schema'
 
 import { evaluate, TAIL, type Baseline, type Broken, type Point } from './bands'
-import { compareWeek, comparisonWindows, type WeekComparison } from './comparison'
-import {
-  BANDS,
-  COMPARISON,
-  isMetricName,
-  METRIC_NAMES,
-  METRICS,
-  type BandConfig,
-  type ComparisonConfig,
-  type MetricName,
-  type MetricSpec,
-} from './config'
-import { observe, personDecisions, type DecisionRow, type TaskHistory } from './history'
+import { BANDS, METRICS, type BandConfig, type MetricName, type MetricSpec } from './config'
+import { observe, type TaskHistory } from './history'
 import { ALL_REPOSITORIES, dailySeries, type Series } from './series'
 
 const DAY_MS = 86_400_000
@@ -37,13 +17,7 @@ export type MeasureDeps = {
   metrics?: Record<MetricName, MetricSpec>
   /** Opens an issue in a repository and answers its URL. Without it an `act` signal is only recorded. */
   openIssue?: (repository: string, title: string, body: string) => Promise<string>
-  /** The baseline date (`YYYY-MM-DD`, `FACTORY_BASELINE_FROM`). Without it no week is compared. */
-  baselineFrom?: string
-  comparison?: ComparisonConfig
 }
-
-/** One series' last week against the weeks before the baseline date. */
-export type Comparison = { metric: MetricName; repository: string } & WeekComparison
 
 export type Signal = { metric: MetricName; repository: string; day: string } & Broken
 
@@ -52,8 +26,6 @@ export type MeasureResult = {
   /** The signals recorded on this pass. One already recorded for the same day and rule is not here. */
   signals: Signal[]
   issues: string[]
-  /** Each series with a point in the week or the baseline, against the baseline; none without a date. */
-  comparisons: Comparison[]
 }
 
 /** The first day the indicators cover: the band's window and the tail it reads, ending today. */
@@ -119,73 +91,6 @@ export async function loadHistories(db: Database, since: Date): Promise<TaskHist
     evidence: checks.filter((c) => c.taskId === t.id),
     releaseWentRed: redIds.has(t.id),
   }))
-}
-
-/** Every decision recorded since `since`, with the repository of its task. */
-export async function loadDecisions(db: Database, since: Date): Promise<DecisionRow[]> {
-  return db
-    .select({
-      repository: task.repository,
-      kind: decision.kind,
-      note: decision.note,
-      at: decision.at,
-    })
-    .from(decision)
-    .innerJoin(task, eq(task.id, decision.taskId))
-    .where(gte(decision.at, since))
-}
-
-/**
- * Each series' week against its baseline, read from the saved points: the baseline weeks are usually older
- * than the window `measure` recomputes. Series of a metric no longer measured are left out.
- */
-export async function compareWithBaseline(
-  db: Database,
-  now: Date,
-  baselineFrom: string,
-  metrics: Record<MetricName, MetricSpec> = METRICS,
-  config: ComparisonConfig = COMPARISON,
-): Promise<Comparison[]> {
-  const { baseline, week } = comparisonWindows(now, baselineFrom, config)
-  const rows = await db
-    .select()
-    .from(metricPoint)
-    .where(
-      or(
-        between(metricPoint.day, baseline.from, baseline.to),
-        between(metricPoint.day, week.from, week.to),
-      ),
-    )
-    .orderBy(metricPoint.day)
-  const groups = new Map<
-    string,
-    { metric: MetricName; repository: string; baseline: Point[]; week: Point[] }
-  >()
-  for (const row of rows) {
-    if (!isMetricName(row.metric)) continue
-    const key = JSON.stringify([row.metric, row.repository])
-    const g = groups.get(key) ?? {
-      metric: row.metric,
-      repository: row.repository,
-      baseline: [],
-      week: [],
-    }
-    const p = { day: row.day, value: row.value, samples: row.samples }
-    if (row.day <= baseline.to) g.baseline.push(p)
-    if (row.day >= week.from) g.week.push(p)
-    groups.set(key, g)
-  }
-  return [...groups.values()]
-    .sort(
-      (a, b) =>
-        METRIC_NAMES.indexOf(a.metric) - METRIC_NAMES.indexOf(b.metric) ||
-        a.repository.localeCompare(b.repository),
-    )
-    .map((g) => ({
-      metric: g.metric,
-      repository: g.repository,
-      ...compareWeek(g.baseline, g.week, metrics[g.metric].worse, config),
-    }))
 }
 
 async function savePoints(db: Database, series: Series[]): Promise<number> {
@@ -333,30 +238,21 @@ async function signal(deps: MeasureDeps, s: Series, config: BandConfig, spec: Me
 
 /**
  * One pass of the factory measuring itself: the indicators of every task active in the window, saved as daily
- * points, the control bands read on each series, and, given a baseline date, each series' last week against
- * the weeks before it. Detection involves no model.
+ * points, and the control bands read on each series. Detection involves no model.
  */
 export async function measure(deps: MeasureDeps): Promise<MeasureResult> {
   const config = deps.config ?? BANDS
   const metrics = deps.metrics ?? METRICS
   const now = (deps.now ?? (() => new Date()))()
   const since = firstDay(now, config)
-  const [histories, decisions] = await Promise.all([
-    loadHistories(deps.db, since),
-    loadDecisions(deps.db, since),
-  ])
-  const observations = [...histories.flatMap(observe), ...personDecisions(decisions)].filter(
-    (o) => o.at >= since && o.at <= now,
-  )
+  const observations = (await loadHistories(deps.db, since))
+    .flatMap(observe)
+    .filter((o) => o.at >= since && o.at <= now)
   const series = dailySeries(observations, metrics)
-  const points = await savePoints(deps.db, series)
   const result: MeasureResult = {
-    points,
+    points: await savePoints(deps.db, series),
     signals: [],
     issues: [],
-    comparisons: deps.baselineFrom
-      ? await compareWithBaseline(deps.db, now, deps.baselineFrom, metrics, deps.comparison)
-      : [],
   }
   // Each repository first, so the series of all of them knows whether a repository already filed the day.
   const ordered = [
@@ -369,20 +265,4 @@ export async function measure(deps: MeasureDeps): Promise<MeasureResult> {
     result.issues.push(...out.issues)
   }
   return result
-}
-
-/**
- * What a pass logs: what it detected, when it detected anything, and the comparison with the baseline, when
- * there is one. A quiet pass logs nothing.
- */
-export function measureLog(result: MeasureResult, baselineFrom: string | undefined): string[] {
-  const { comparisons, ...detected } = result
-  const lines: string[] = []
-  if (detected.signals.length > 0 || detected.issues.length > 0) {
-    lines.push(JSON.stringify({ event: 'measure', ...detected }))
-  }
-  if (comparisons.length > 0) {
-    lines.push(JSON.stringify({ event: 'measure_comparison', baselineFrom, comparisons }))
-  }
-  return lines
 }

@@ -5,7 +5,6 @@ import { useAgent } from 'theokit/client'
 import { guidePath } from '../../../shared/guides'
 import type { ChatMessageView, ChatModel } from '../../../shared/panel'
 import { displayed, promptWith } from '../../lib/chat'
-import { useCopy } from '../../lib/copy'
 import { useChatgptConnection } from '../../lib/chatgpt-connection'
 import { useGuideState } from '../../lib/guide-state'
 import {
@@ -69,7 +68,6 @@ export function GuideThread({
   pathname: string
   search: string
 }) {
-  const { t } = useCopy()
   const { model: preferred, setModel: prefer } = useGuideState()
   const [model, setModel] = useState<ChatModel>(preferred)
   const [restored, setRestored] = useState<ChatMessageView[]>([])
@@ -128,9 +126,11 @@ export function GuideThread({
           {messages.length === 0 ? (
             <div>
               <p className="text-[15px] leading-relaxed text-foreground/90">{guide.about}</p>
-              <p className="mt-2 text-[13px] text-foreground/55">{t.guide.hint}</p>
-              <Chips title={t.guide.understand} items={starters.understand} onPick={pick} />
-              <Chips title={t.guide.act} items={starters.act} onPick={pick} />
+              <p className="mt-2 text-[13px] text-foreground/55">
+                Pergunte o que quiser sobre esta página. Eu só mudo algo depois do seu OK.
+              </p>
+              <Chips title="Entender" items={starters.understand} onPick={pick} />
+              <Chips title="Fazer" items={starters.act} onPick={pick} />
             </div>
           ) : (
             <Messages messages={messages} running={running} model={guide.name} />
@@ -147,7 +147,7 @@ export function GuideThread({
           onSubmit={send}
           running={running}
           onStop={() => agent.abort()}
-          placeholder={t.guide.placeholder}
+          placeholder="Pergunte ao guia"
           trailing={<ModelPicker model={model} onChange={changeModel} />}
         />
         {guide.note ? <p className="mt-2 px-3 text-xs text-foreground/50">{guide.note}</p> : null}

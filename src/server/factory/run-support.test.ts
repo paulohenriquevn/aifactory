@@ -1,7 +1,7 @@
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { pullRequestBody, pushWithRetry, resolvedComment, runContinuation } from './run-support'
+import { pushWithRetry, resolvedComment, runContinuation } from './run-support'
 
 const failing = (times: number) => {
   let calls = 0
@@ -102,37 +102,8 @@ describe('runContinuation', () => {
     expect(runContinuation(undefined, 'CI failed', true)).toMatchObject({ fromChecks: true })
   })
 
-  it('merges the integration branch, with no feedback, when the job says so', () => {
-    expect(runContinuation(undefined, undefined, undefined, true)).toEqual({
-      feedback: '',
-      mergeBase: true,
-    })
-  })
-
   it('starts from the beginning for any other decision, or none', () => {
     expect(runContinuation({ kind: 'retry', note: '' }, undefined)).toBeUndefined()
     expect(runContinuation(undefined, undefined)).toBeUndefined()
-  })
-})
-
-describe('pullRequestBody', () => {
-  const body = () =>
-    pullRequestBody({
-      issueNumber: 114,
-      sha: 'abc1234def',
-      rows: [],
-      agentSummary: 'Changed the run.',
-      review: {
-        reviewer: 'codex',
-        attempt: 1,
-        outcome: { verdict: 'approve', summary: 'Fine.', findings: [] },
-      },
-    })
-
-  it('names the issue without a keyword that makes GitHub close it on merge', () => {
-    // Where the integration branch is the default one, a closing keyword closes the issue at integration,
-    // before any release has shipped it; the factory closes it on release, naming the version.
-    expect(body()).toContain('#114')
-    expect(body()).not.toMatch(/\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\b:?\s+#114\b/i)
   })
 })

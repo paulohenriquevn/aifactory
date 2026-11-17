@@ -3,7 +3,6 @@ import { useState } from 'react'
 
 import type { RecipeView } from '../../shared/panel'
 import { post } from '../lib/api'
-import { useCopy } from '../lib/copy'
 import { useResource } from '../lib/live'
 
 /**
@@ -12,7 +11,6 @@ import { useResource } from '../lib/live'
  * which ones would open before the owner says yes.
  */
 export function RecipeCard({ fullName }: { fullName: string }) {
-  const { t } = useCopy()
   const resource = useResource<RecipeView>(`/api/panel/repositories/${fullName}/recipe`, {
     stream: false,
     everyMs: 120_000,
@@ -35,25 +33,34 @@ export function RecipeCard({ fullName }: { fullName: string }) {
   }
 
   if (resource.error) return <p className="text-sm text-destructive">{resource.error}</p>
-  if (!view) return <p className="text-sm text-muted-foreground">{t.recipe.reading}</p>
+  if (!view) return <p className="text-sm text-muted-foreground">Reading .factory/setup.json…</p>
   if (view.problem) {
-    return <Alert intent="destructive" title={t.recipe.unusable} description={view.problem} />
+    return (
+      <Alert intent="destructive" title="The recipe cannot be used" description={view.problem} />
+    )
   }
   if (!view.recipe) {
-    return <p className="text-sm text-muted-foreground">{t.recipe.none}</p>
+    return (
+      <p className="text-sm text-muted-foreground">
+        No <code>.factory/setup.json</code> on the default branch, so the settings above are all a
+        run uses.
+      </p>
+    )
   }
   const { recipe } = view
   return (
-    <section aria-label={t.recipe.label} className="space-y-2 text-sm">
-      <h3 className="font-medium">{t.recipe.from}</h3>
+    <section aria-label="Recipe" className="space-y-2 text-sm">
+      <h3 className="font-medium">
+        From <code>.factory/setup.json</code> on the default branch
+      </h3>
       {recipe.install ? (
         <p>
-          {t.recipe.install} <code>{recipe.install}</code>
+          Install: <code>{recipe.install}</code>
         </p>
       ) : null}
       {recipe.checks ? (
         <p>
-          {t.recipe.checks}{' '}
+          Checks, when none is set above:{' '}
           {recipe.checks.map((c) => (
             <code key={c.name} className="mr-2">
               {c.name}: {c.command}
@@ -66,7 +73,7 @@ export function RecipeCard({ fullName }: { fullName: string }) {
           {recipe.egress.map((domain) => (
             <li key={domain}>
               <Badge variant={view.pending.includes(domain) ? 'warning' : 'success'}>
-                {domain} {view.pending.includes(domain) ? t.recipe.waits : t.recipe.open}
+                {domain} {view.pending.includes(domain) ? 'waits for you' : 'open'}
               </Badge>
             </li>
           ))}
@@ -74,9 +81,10 @@ export function RecipeCard({ fullName }: { fullName: string }) {
       ) : null}
       {view.pending.length > 0 ? (
         <div className="flex flex-wrap items-center gap-3">
-          <span>{t.recipe.alsoReach(view.pending.join(', '))}</span>
+          <span>The next run would also reach {view.pending.join(', ')}.</span>
           <Button size="sm" disabled={busy} onClick={() => void approve(view.pending)}>
-            {t.recipe.approve(view.pending.length)}
+            Approve{' '}
+            {view.pending.length === 1 ? 'this domain' : `these ${view.pending.length} domains`}
           </Button>
         </div>
       ) : null}

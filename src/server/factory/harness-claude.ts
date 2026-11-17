@@ -194,7 +194,6 @@ export function parseClaudeResult(exitCode: number, stdout: string, stderr: stri
       ),
       ...(parsed.session_id ? { sessionId: parsed.session_id } : {}),
       ...(quota ? { quota } : {}),
-      ...(!ok && exitCode === TIMED_OUT ? { timedOut: true } : {}),
     }
   } catch {
     const tail = (stderr || stdout).trim().slice(-1000)
@@ -202,7 +201,6 @@ export function parseClaudeResult(exitCode: number, stdout: string, stderr: stri
     return {
       ok: false,
       summary: `claude exited ${exitCode} without a JSON result: ${tail}`,
-      ...(exitCode === TIMED_OUT ? { timedOut: true } : {}),
       ...(quota ? { quota } : {}),
     }
   }

@@ -56,8 +56,6 @@ export type RepositoryPatch = {
   enabled?: boolean
   /** `null` clears the owner's checks, so the default (`npm test`) applies. */
   checks?: { name: string; command: string }[] | null
-  /** The commands that rewrite files before each round of checks; empty clears them. */
-  fixes?: string[]
   egress?: string[]
   /** `null` clears it, so the default branch applies. */
   baseBranch?: string | null
@@ -75,41 +73,23 @@ const CHECK_NAME = /^[a-z0-9][a-z0-9_-]{0,30}$/
 const MAX_CHECKS = 8
 const MAX_DOMAINS = 20
 
-/** A command the sandbox runs as the owner typed it: one line, not empty, at most 500 characters. */
-function oneLineCommand(command: string): boolean {
-  const trimmed = command.trim()
-  return trimmed !== '' && trimmed.length <= 500 && !trimmed.includes('\n')
-}
-
-function checksProblem(checks: NonNullable<RepositoryPatch['checks']>): string | undefined {
-  if (checks.length > MAX_CHECKS) return `at most ${MAX_CHECKS} checks`
-  const names = new Set<string>()
-  for (const check of checks) {
-    if (!CHECK_NAME.test(check.name)) {
-      return `"${check.name}" is not a check name: use lowercase letters, digits, - and _`
-    }
-    if (names.has(check.name)) return `two checks are named "${check.name}"`
-    names.add(check.name)
-    if (!oneLineCommand(check.command)) {
-      return `the command of "${check.name}" must be one line of at most 500 characters`
-    }
-  }
-  return undefined
-}
-
-/** Fixes take the limits of checks: as many, and each command as long. */
-function fixesProblem(fixes: string[]): string | undefined {
-  if (fixes.length > MAX_CHECKS) return `at most ${MAX_CHECKS} fixes`
-  if (!fixes.every(oneLineCommand)) return 'each fix must be one line of at most 500 characters'
-  return undefined
-}
-
 /** Why a patch cannot be saved, or nothing when it can. The panel shows the message as it is. */
 export function patchProblem(patch: RepositoryPatch, agents: string[]): string | undefined {
-  const listed =
-    (patch.checks ? checksProblem(patch.checks) : undefined) ??
-    (patch.fixes ? fixesProblem(patch.fixes) : undefined)
-  if (listed) return listed
+  if (patch.checks) {
+    if (patch.checks.length > MAX_CHECKS) return `at most ${MAX_CHECKS} checks`
+    const names = new Set<string>()
+    for (const check of patch.checks) {
+      if (!CHECK_NAME.test(check.name)) {
+        return `"${check.name}" is not a check name: use lowercase letters, digits, - and _`
+      }
+      if (names.has(check.name)) return `two checks are named "${check.name}"`
+      names.add(check.name)
+      const command = check.command.trim()
+      if (command === '' || command.length > 500 || command.includes('\n')) {
+        return `the command of "${check.name}" must be one line of at most 500 characters`
+      }
+    }
+  }
   const minutes = patch.runLimitMinutes
   if (minutes != null && (minutes < MIN_RUN_MINUTES || minutes > MAX_RUN_MINUTES)) {
     return `a run may last from ${MIN_RUN_MINUTES} to ${MAX_RUN_MINUTES} minutes`
@@ -164,7 +144,6 @@ export async function listRepositories(deps: WorkDeps): Promise<RepositoriesView
       reachable: github !== undefined,
       enabled: row?.enabled ?? false,
       checks: row?.checks ?? null,
-      fixes: row?.fixes ?? [],
       egress: row?.egress ?? [],
       baseBranch: row?.baseBranch ?? null,
       releaseBranch: row?.releaseBranch ?? null,
@@ -285,7 +264,6 @@ export async function saveRepository(
   const values = {
     ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
     ...checks.values,
-    ...(patch.fixes === undefined ? {} : { fixes: patch.fixes.map((f) => f.trim()) }),
     ...(patch.egress === undefined
       ? {}
       : { egress: [...new Set(patch.egress.map((d) => d.toLowerCase()))] }),

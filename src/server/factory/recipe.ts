@@ -2,7 +2,6 @@ import { z } from 'zod'
 
 import type { RecipeWhy } from '../../shared/doctor-say'
 import type { FetchLike } from '../github/app'
-import { retryRead } from '../github/retry-read'
 
 import type { CheckSpec } from './evidence'
 import { DOMAIN, type RepoConfig } from './repo-config'
@@ -110,19 +109,19 @@ export async function readRecipe(
   fetchImpl: FetchLike = fetch,
   wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
 ): Promise<Recipe | undefined> {
-  // A read GitHub answers with a 5xx, or the network drops, is asked again with a pause.
-  const response = await retryRead(
-    () =>
-      fetchImpl(`https://api.github.com/repos/${repo}/contents/${RECIPE_PATH}`, {
-        headers: {
-          accept: 'application/vnd.github.raw+json',
-          'x-github-api-version': '2022-11-28',
-          authorization: `Bearer ${token}`,
-        },
-      }),
-    wait,
-    true,
-  )
+  let response: Response
+  for (let attempt = 1; ; attempt += 1) {
+    response = await fetchImpl(`https://api.github.com/repos/${repo}/contents/${RECIPE_PATH}`, {
+      headers: {
+        accept: 'application/vnd.github.raw+json',
+        'x-github-api-version': '2022-11-28',
+        authorization: `Bearer ${token}`,
+      },
+    })
+    // A read GitHub answers with a 5xx is asked again with a pause.
+    if (response.status < 500 || attempt >= 3) break
+    await wait(2_000 * attempt)
+  }
   if (response.status === 404) return undefined
   if (response.status !== 200) {
     throw new RecipeError(repo, `GitHub answered ${response.status} reading it`, {

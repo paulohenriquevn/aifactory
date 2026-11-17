@@ -1,29 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  formatChecks,
-  formatDomains,
-  formatFixes,
-  parseChecks,
-  parseDomains,
-  parseFixes,
-} from './repo-form'
-
-describe('fixes as text', () => {
-  it('reads one command per line, trimmed, and drops blank lines', () => {
-    expect(parseFixes('  pnpm prettier --write .  \n\n   \npnpm eslint --fix .')).toEqual([
-      'pnpm prettier --write .',
-      'pnpm eslint --fix .',
-    ])
-    expect(parseFixes('')).toEqual([])
-  })
-
-  it('writes one command per line, which reads back the same', () => {
-    const fixes = ['pnpm prettier --write .', 'pnpm eslint --fix .']
-    expect(formatFixes(fixes)).toBe('pnpm prettier --write .\npnpm eslint --fix .')
-    expect(parseFixes(formatFixes(fixes))).toEqual(fixes)
-  })
-})
+import { formatChecks, formatDomains, parseChecks, parseDomains } from './repo-form'
 
 describe('checks as text', () => {
   it('reads one check per line as name: command, and keeps a colon inside the command', () => {

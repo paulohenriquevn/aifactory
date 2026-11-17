@@ -15,46 +15,6 @@ function released(t: Copy, answer: unknown): string {
   return checks ? t.taskActions.releaseWaits(checks.join(', ')) : t.taskActions.released
 }
 
-/** Which actions the task's state offers. The server checks each one again when it is asked. */
-function actionsOf(detail: TaskDetail) {
-  const { task } = detail
-  const hasPullRequest = (task.stage === 'done' || task.stage === 'handoff') && !!task.headSha
-  const canResolve = task.stage === 'failed' || task.stage === 'handoff'
-  const releaseWaiting = task.releaseWait?.status === 'waiting'
-  return {
-    hasPullRequest,
-    canResolve,
-    // Done but never merged (GitHub refused the pull request): the work is not delivered.
-    canRetry: canResolve || (task.stage === 'done' && !task.integrated && !task.resolved),
-    canWithdraw: task.stage === 'intake' && detail.sendBackPending === true,
-    // A failed task can be sent back too, which is how a withdrawn note is corrected.
-    canSendBack: (hasPullRequest || task.stage === 'failed') && !task.integrated,
-    releaseWaiting,
-    releaseRefused: task.releaseWait?.status === 'refused' ? task.releaseWait.reason : null,
-    canRelease: task.stage === 'done' && task.preRelease !== null && !releaseWaiting,
-  }
-}
-
-/** A send-back that waits for its run: the owner can take it back to correct the note. */
-function WithdrawSendBack({ busy, onWithdraw }: { busy: boolean; onWithdraw: () => void }) {
-  const { t } = useCopy()
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-2">
-      <p className="text-sm text-muted-foreground">{t.taskActions.sendBackWaiting}</p>
-      <Button
-        size="sm"
-        variant="secondary"
-        disabled={busy}
-        onClick={() => {
-          if (window.confirm(t.taskActions.confirmWithdraw)) onWithdraw()
-        }}
-      >
-        {t.taskActions.withdraw}
-      </Button>
-    </div>
-  )
-}
-
 /**
  * What a person can do about a task right now. Each button asks the server, which checks the task's
  * stage again, so a stale page cannot do something the task no longer allows.
@@ -68,16 +28,13 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
   const [message, setMessage] = useState<string>()
   const [bump, setBump] = useState<'patch' | 'minor' | 'major'>('patch')
 
-  const {
-    hasPullRequest,
-    canResolve,
-    canRetry,
-    canWithdraw,
-    canSendBack,
-    releaseWaiting,
-    releaseRefused,
-    canRelease,
-  } = actionsOf(detail)
+  const hasPullRequest = (task.stage === 'done' || task.stage === 'handoff') && !!task.headSha
+  const canResolve = task.stage === 'failed' || task.stage === 'handoff'
+  // Done but never merged (GitHub refused the pull request): the work is not delivered.
+  const canRetry = canResolve || (task.stage === 'done' && !task.integrated && !task.resolved)
+  const releaseWaiting = task.releaseWait?.status === 'waiting'
+  const releaseRefused = task.releaseWait?.status === 'refused' ? task.releaseWait.reason : null
+  const canRelease = task.stage === 'done' && task.preRelease !== null && !releaseWaiting
 
   async function run(path: string, body?: unknown, done?: string | ((answer: unknown) => string)) {
     setBusy(true)
@@ -95,7 +52,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
     }
   }
 
-  if (!hasPullRequest && !canRetry && !canRelease && !releaseWaiting && !canWithdraw) return null
+  if (!hasPullRequest && !canRetry && !canRelease && !releaseWaiting) return null
 
   return (
     <section
@@ -119,12 +76,6 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
         <p className="mb-3 text-sm text-foreground">
           {t.taskActions.releaseRefused(releaseRefused)}
         </p>
-      ) : null}
-      {canWithdraw ? (
-        <WithdrawSendBack
-          busy={busy}
-          onWithdraw={() => void run('withdraw', undefined, t.taskActions.withdrawn)}
-        />
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {hasPullRequest ? (
@@ -177,7 +128,7 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
           </Button>
         ) : null}
       </div>
-      {canSendBack ? (
+      {hasPullRequest && !task.integrated ? (
         <div className="mt-4">
           <label className="block text-sm">
             <span className="text-foreground">{t.taskActions.askChanges}</span>

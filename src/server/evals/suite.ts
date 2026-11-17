@@ -1,11 +1,5 @@
 import { agentConfigurationChanged } from './cases'
-import {
-  compareWithBaseline,
-  failedForEnvironment,
-  type AgentSetup,
-  type Baseline,
-  type CaseResult,
-} from './compare'
+import { compareWithBaseline, type AgentSetup, type Baseline, type CaseResult } from './compare'
 
 /**
  * What a second of an E2B sandbox of the factory's size costs: 4 vCPUs at US$ 0.000014 and 8 GiB at
@@ -20,8 +14,7 @@ export function spentOn(results: CaseResult[], sandboxUsdPerMs: number): number 
 }
 
 /**
- * Runs the cases `concurrency` at a time. A case the environment failed runs once more, and the second result
- * stands; what the first cost still counts against the budget. Before a case starts, what the finished ones cost is added up, and
+ * Runs the cases `concurrency` at a time. Before a case starts, what the finished ones cost is added up, and
  * once it reaches `budgetUsd` no other case starts: the ones left are named in `skipped`. A case already
  * running finishes, so the total can pass the budget by what the cases in flight cost.
  */
@@ -31,23 +24,15 @@ export async function runSuite(
   options: { budgetUsd: number; concurrency: number; sandboxUsdPerMs: number },
 ): Promise<{ results: CaseResult[]; skipped: string[] }> {
   const done = new Map<string, CaseResult>()
-  // Runs the environment failed, whose results were replaced but whose cost was spent.
-  const discarded: CaseResult[] = []
   const skipped: string[] = []
   const queue = [...ids]
-  const spent = () => spentOn([...done.values(), ...discarded], options.sandboxUsdPerMs)
   const worker = async () => {
     for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
-      if (spent() >= options.budgetUsd) {
+      if (spentOn([...done.values()], options.sandboxUsdPerMs) >= options.budgetUsd) {
         skipped.push(id)
         continue
       }
-      let result = await runOne(id)
-      if (failedForEnvironment(result)) {
-        discarded.push(result)
-        result = await runOne(id)
-      }
-      done.set(id, result)
+      done.set(id, await runOne(id))
     }
   }
   await Promise.all(Array.from({ length: Math.max(1, options.concurrency) }, worker))

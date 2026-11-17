@@ -2,16 +2,19 @@ import { DropdownMenu } from '@usetheo/ui'
 import { ArrowUp, ListChecks, Plus, Square, TriangleAlert, FilePlus2 } from 'lucide-react'
 import { useEffect, useRef, type ReactNode } from 'react'
 
-import { useCopy } from '../../lib/copy'
-
-type Start = { icon: typeof FilePlus2; label: string; text: string }
+/** What the "+" offers: a way to start a message that would otherwise take a sentence to word. */
+const STARTS = [
+  { icon: FilePlus2, label: 'Abrir uma issue', text: 'Quero abrir uma issue para ' },
+  { icon: ListChecks, label: 'Planejar um objetivo', text: 'Quero planejar este objetivo: ' },
+  { icon: TriangleAlert, label: 'Ver o que travou', text: 'Quais tarefas travaram e por quê?' },
+]
 
 /**
  * The box a message is written in: one row that grows with the text, the "+" at the left, the model and
  * the send button at the right. Enter sends and Shift+Enter breaks the line.
  */
 export function PillComposer({
-  starts: given,
+  starts = STARTS,
   value,
   onValueChange,
   onSubmit,
@@ -21,22 +24,15 @@ export function PillComposer({
   placeholder,
 }: {
   /** What the "+" offers. None hides it. */
-  starts?: Start[]
+  starts?: typeof STARTS
   value: string
   onValueChange: (value: string) => void
   onSubmit: (value: string) => void
   running: boolean
   onStop: () => void
   trailing?: ReactNode
-  placeholder?: string
+  placeholder: string
 }) {
-  const { t } = useCopy()
-  /** What the "+" offers: a way to start a message that would otherwise take a sentence to word. */
-  const starts = given ?? [
-    { icon: FilePlus2, ...t.composer.startIssue },
-    { icon: ListChecks, ...t.composer.startPlan },
-    { icon: TriangleAlert, ...t.composer.startStuck },
-  ]
   const box = useRef<HTMLTextAreaElement>(null)
   const canSend = value.trim() !== '' && !running
 
@@ -61,7 +57,7 @@ export function PillComposer({
           <DropdownMenu.Trigger asChild>
             <button
               type="button"
-              aria-label={t.composer.moreActions}
+              aria-label="Mais ações"
               className="mb-0.5 shrink-0 rounded-full p-2 text-foreground/80 hover:bg-muted/60"
             >
               <Plus className="size-5" />
@@ -87,8 +83,8 @@ export function PillComposer({
         ref={box}
         rows={1}
         value={value}
-        aria-label={t.composer.message}
-        placeholder={placeholder ?? t.composer.placeholder}
+        aria-label="Mensagem"
+        placeholder={placeholder}
         onChange={(e) => onValueChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -103,7 +99,7 @@ export function PillComposer({
         {running ? (
           <button
             type="button"
-            aria-label={t.composer.stop}
+            aria-label="Parar"
             onClick={onStop}
             className="grid size-9 place-items-center rounded-full bg-foreground text-background"
           >
@@ -112,7 +108,7 @@ export function PillComposer({
         ) : (
           <button
             type="submit"
-            aria-label={t.composer.send}
+            aria-label="Enviar"
             disabled={!canSend}
             className="grid size-9 place-items-center rounded-full bg-foreground text-background transition-opacity disabled:opacity-25"
           >

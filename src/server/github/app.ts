@@ -2,8 +2,6 @@ import { createSign } from 'node:crypto'
 
 import { z } from 'zod'
 
-import { retryRead } from './retry-read'
-
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
 export type InstallationToken = { token: string; expiresAt: Date }
@@ -112,6 +110,9 @@ const appDescription = z.object({
   events: z.array(z.string()),
 })
 
+const READ_ATTEMPTS = 3
+const READ_RETRY_MS = 2_000
+
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
 const base64url = (value: unknown) =>
@@ -141,21 +142,20 @@ export function createGithubApp(
 
   async function call(path: string, init: RequestInit = {}): Promise<Response> {
     const isRead = (init.method ?? 'GET') === 'GET'
-    // A read GitHub answers with a 5xx, or the network drops, is asked again with a pause; a call that changes something never is.
-    return retryRead(
-      () =>
-        fetchImpl(`${apiUrl}${path}`, {
-          ...init,
-          headers: {
-            accept: 'application/vnd.github+json',
-            'x-github-api-version': '2022-11-28',
-            authorization: `Bearer ${appJwt()}`,
-            ...(init.body ? { 'content-type': 'application/json' } : {}),
-          },
-        }),
-      wait,
-      isRead,
-    )
+    for (let attempt = 1; ; attempt += 1) {
+      const response = await fetchImpl(`${apiUrl}${path}`, {
+        ...init,
+        headers: {
+          accept: 'application/vnd.github+json',
+          'x-github-api-version': '2022-11-28',
+          authorization: `Bearer ${appJwt()}`,
+          ...(init.body ? { 'content-type': 'application/json' } : {}),
+        },
+      })
+      // A read GitHub answers with a 5xx is asked again with a pause; a call that changes something never is.
+      if (!isRead || response.status < 500 || attempt >= READ_ATTEMPTS) return response
+      await wait(READ_RETRY_MS * attempt)
+    }
   }
 
   async function listInstallations(): Promise<AppInstallation[]> {

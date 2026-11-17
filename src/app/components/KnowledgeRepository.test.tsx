@@ -3,7 +3,6 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { KnowledgeStatus } from '../../shared/knowledge'
-import { en } from '../lib/copy/en'
 
 import { KnowledgeRepository } from './KnowledgeRepository'
 
@@ -64,13 +63,13 @@ describe('choosing the knowledge base in the panel', () => {
     api.put.mockResolvedValueOnce(chosen)
     const onChanged = mount()
     const select = await screen.findByRole('combobox', {
-      name: en.knowledge.repositoryLabel,
+      name: 'Repositório da base de conhecimento',
     })
     await screen.findByRole('option', { name: 'me/kb' })
     expect(screen.queryByRole('option', { name: 'me/gone' })).toBeNull()
 
     fireEvent.change(select, { target: { value: 'me/kb' } })
-    fireEvent.click(screen.getByRole('button', { name: en.knowledge.save }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
 
     expect(await screen.findByText('main @ abcdef1')).toBeTruthy()
     expect(api.put).toHaveBeenCalledWith('/api/panel/knowledge', {
@@ -85,13 +84,16 @@ describe('choosing the knowledge base in the panel', () => {
     api.put.mockRejectedValueOnce(new Error('me/kb has no branch rules'))
     mount()
     await screen.findByRole('option', { name: 'me/kb' })
-    fireEvent.change(screen.getByRole('combobox', { name: en.knowledge.repositoryLabel }), {
-      target: { value: 'me/kb' },
-    })
-    fireEvent.change(screen.getByRole('textbox', { name: en.knowledge.rulesBranch }), {
+    fireEvent.change(
+      screen.getByRole('combobox', { name: 'Repositório da base de conhecimento' }),
+      {
+        target: { value: 'me/kb' },
+      },
+    )
+    fireEvent.change(screen.getByRole('textbox', { name: 'Branch das regras' }), {
       target: { value: 'rules' },
     })
-    fireEvent.click(screen.getByRole('button', { name: en.knowledge.save }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
 
     expect((await screen.findByRole('alert')).textContent).toBe('me/kb has no branch rules')
     expect(api.put).toHaveBeenCalledWith('/api/panel/knowledge', {
@@ -115,11 +117,13 @@ describe('choosing the knowledge base in the panel', () => {
     api.post.mockResolvedValueOnce({ url: 'https://github.com/me/kb/pull/3' })
     mount()
 
-    expect((await screen.findByText(en.knowledge.notOkf)).textContent).toBe(en.knowledge.notOkf)
+    expect((await screen.findByText(/Os agentes já leem este repositório/)).textContent).toMatch(
+      /sem mudar nenhum texto que já existe/,
+    )
     expect(screen.getByText('a.md has no front matter')).toBeTruthy()
     expect(screen.queryByText('6')).toBeNull()
 
-    fireEvent.click(await screen.findByRole('button', { name: en.knowledge.propose }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Propor a estrutura' }))
 
     const link = await screen.findByRole('link', { name: 'https://github.com/me/kb/pull/3' })
     expect(link.getAttribute('href')).toBe('https://github.com/me/kb/pull/3')
@@ -130,14 +134,14 @@ describe('choosing the knowledge base in the panel', () => {
     serve(chosen)
     mount()
     await screen.findByText(/me\/kb/)
-    expect(screen.queryByRole('button', { name: en.knowledge.propose })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Propor a estrutura' })).toBeNull()
   })
 
   it('shows a failed sync and that the agents keep the last good commit', async () => {
     serve({ ...chosen, error: 'GitHub answered 401', errorAt: '2026-11-06T12:01:00.000Z' })
     mount()
-    expect((await screen.findByText(/GitHub answered 401/)).textContent).toContain(
-      en.knowledge.failure('GitHub answered 401', '').split(' (')[0],
+    expect((await screen.findByText(/GitHub answered 401/)).textContent).toMatch(
+      /Os agentes seguem lendo o último commit bom/,
     )
   })
 })

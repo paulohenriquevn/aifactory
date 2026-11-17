@@ -1,13 +1,5 @@
 // @vitest-environment jsdom
-import {
-  cleanup,
-  fireEvent,
-  render as rtlRender,
-  screen,
-  waitFor,
-  within,
-} from '@testing-library/react'
-import type { ReactElement } from 'react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,11 +8,6 @@ import type { AgentEntry, AgentsView } from '../../shared/panel'
 vi.mock('theokit/client', () => ({ Metadata: () => null }))
 
 import Page from './page'
-import { CopyProvider, LANGUAGE_KEY } from '../lib/copy'
-import { ptBR } from '../lib/copy/pt-BR'
-// The owner's language is Portuguese here; the dictionary keys say what is on the screen.
-window.localStorage.setItem(LANGUAGE_KEY, 'pt-BR')
-const render = (ui: ReactElement) => rtlRender(ui, { wrapper: CopyProvider })
 
 const entry = (over: Partial<AgentEntry>): AgentEntry => ({
   id: 'x',
@@ -187,7 +174,7 @@ afterEach(() => {
 describe('the agents page', () => {
   it('lists the agents in two groups and opens the first one', async () => {
     show()
-    expect(screen.getByText(ptBR.agents.loading)).toBeDefined()
+    expect(screen.getByText('Carregando…')).toBeDefined()
     await screen.findByRole('article', { name: 'Construtor' })
     const groups = screen
       .getAllByRole('region')
@@ -212,11 +199,11 @@ describe('the agents page', () => {
   it('says what the agent is, where it runs, what runs it and where its instructions are written', async () => {
     show()
     const article = await screen.findByRole('article', { name: 'Construtor' })
-    expect(within(article).getByText(ptBR.agents.runsInSandbox)).toBeDefined()
+    expect(within(article).getByText('Roda no sandbox')).toBeDefined()
     expect(within(article).getByText('Escreve o código')).toBeDefined()
     expect(within(article).getByText('codex', { selector: 'span.font-mono' })).toBeDefined()
     expect(within(article).getByText(/Como mudar: FACTORY_HARNESS/)).toBeDefined()
-    expect(within(article).getByText(ptBR.agents.effects.sandbox)).toBeDefined()
+    expect(within(article).getByText('age só dentro do sandbox')).toBeDefined()
     expect(within(article).getByText('src/x.ts')).toBeDefined()
     expect(within(article).getByText(/As instruções só se leem aqui/)).toBeDefined()
   })
@@ -312,7 +299,7 @@ describe('the agents page', () => {
   it('filters by what is typed, in the instructions too, and marks where it was found', async () => {
     show()
     await screen.findByRole('article', { name: 'Construtor' })
-    fireEvent.change(screen.getByLabelText(ptBR.agents.searchLabel), {
+    fireEvent.change(screen.getByLabelText('Buscar agente ou texto de uma instrução'), {
       target: { value: 'portuguese' },
     })
     const article = await screen.findByRole('article', { name: 'Assistente do chat' })
@@ -324,7 +311,7 @@ describe('the agents page', () => {
   it('says so when nothing matches', async () => {
     show()
     await screen.findByRole('article', { name: 'Construtor' })
-    fireEvent.change(screen.getByLabelText(ptBR.agents.searchLabel), {
+    fireEvent.change(screen.getByLabelText('Buscar agente ou texto de uma instrução'), {
       target: { value: 'zzzz' },
     })
     expect((await screen.findByRole('status')).textContent).toContain('Nenhum agente tem “zzzz”')

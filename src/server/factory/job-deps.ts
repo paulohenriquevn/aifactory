@@ -1,6 +1,5 @@
 import { getDb } from '../db'
 
-import { errorMessage } from './error-message'
 import { factoryDeps } from './deps'
 import { effectiveEnv } from './settings'
 import { enterStage } from './stages'
@@ -14,7 +13,7 @@ export async function jobDeps(taskId: number): Promise<ReturnType<typeof factory
     // The agent the owner chose in the panel is read now, so a change applies to the next run with no restart.
     return factoryDeps(await effectiveEnv(getDb()))
   } catch (error) {
-    const message = errorMessage(error)
+    const message = error instanceof Error ? error.message : String(error)
     await enterStage(getDb(), taskId, 'failed', { failedAt: 'config', error: message })
     throw error
   }

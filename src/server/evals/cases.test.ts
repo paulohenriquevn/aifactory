@@ -8,9 +8,6 @@ import {
   selectCandidates,
   type Candidate,
   type EvalCase,
-  FACTORY_REPOSITORY,
-  heldForEvaluation,
-  heldForReview,
 } from './cases'
 
 const candidate = (taskId: number, repository: string, durationMs = 600_000): Candidate => ({
@@ -145,57 +142,5 @@ describe('agentConfigurationChanged', () => {
         'ops/sandbox/Dockerfile',
       ]),
     )
-  })
-})
-
-describe('the change the factory holds for an evaluation', () => {
-  it('is the agent configuration a change of the factory itself touches', () => {
-    expect(
-      heldForEvaluation(FACTORY_REPOSITORY, [
-        'src/server/factory/harness-codex.ts',
-        'src/server/factory/run.ts',
-        'src/server/agents/prompts/build.md',
-        'src/server/factory/review.test.ts',
-      ]),
-    ).toEqual(['src/server/factory/harness-codex.ts', 'src/server/agents/prompts/build.md'])
-  })
-
-  it('is nothing for a change that leaves the agent configuration alone', () => {
-    expect(heldForEvaluation(FACTORY_REPOSITORY, ['src/server/factory/run.ts'])).toEqual([])
-  })
-
-  it('is nothing in another repository, whose files of the same name are its own code', () => {
-    expect(heldForEvaluation('usetheokit/theokit-examples', ['src/server/agents/chat.ts'])).toEqual([])
-  })
-})
-
-describe('the change the factory holds for the owner to review', () => {
-  it('is a quality gate or the test guard a change of the factory itself touches', () => {
-    expect(
-      heldForReview(FACTORY_REPOSITORY, [
-        'quality/crap-baseline.json',
-        'scripts/crap.mjs',
-        'stryker.config.json',
-        '.github/workflows/ci.yml',
-        'src/server/factory/test-weakening.ts',
-        'src/server/factory/test-weakening.test.ts',
-        'scripts/crap.test.mjs',
-        'src/server/factory/run.ts',
-      ]),
-    ).toEqual([
-      'quality/crap-baseline.json',
-      'scripts/crap.mjs',
-      'stryker.config.json',
-      '.github/workflows/ci.yml',
-      'src/server/factory/test-weakening.ts',
-    ])
-  })
-
-  it('is nothing for a change that leaves the gates alone', () => {
-    expect(heldForReview(FACTORY_REPOSITORY, ['src/server/factory/run.ts', 'README.md'])).toEqual([])
-  })
-
-  it('is nothing in another repository, whose gates are its own to change', () => {
-    expect(heldForReview('usetheokit/theokit-sdk', ['stryker.config.json'])).toEqual([])
   })
 })

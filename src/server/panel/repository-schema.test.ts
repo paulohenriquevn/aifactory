@@ -17,13 +17,3 @@ describe('runLimitMinutes', () => {
     expect(parse(90.5).success).toBe(false)
   })
 })
-
-describe('fixes', () => {
-  it('accepts a list of commands and bounds it like checks', () => {
-    expect(repositoryPatchSchema.safeParse({ fixes: ['pnpm prettier --write .'] }).success).toBe(
-      true,
-    )
-    expect(repositoryPatchSchema.safeParse({ fixes: Array(21).fill('x') }).success).toBe(false)
-    expect(repositoryPatchSchema.safeParse({ fixes: ['x'.repeat(601)] }).success).toBe(false)
-  })
-})
