@@ -7,11 +7,7 @@ import { adoptPromotions, pollPromotionWaits } from '../factory/promotion-merge'
 import { passLine } from '../factory/pass-line'
 import { mainProcessOnly } from '../factory/worker-only'
 import { createPromotionApi } from '../github/promotion-api'
-import {
-  mergeFixedBase,
-  sendBackAutomatically,
-  sendBackConflictAutomatically,
-} from '../panel/actions'
+import { mergeFixedBase, retryAutomatically, sendBackAutomatically } from '../panel/actions'
 import { actionDeps } from '../panel/deps'
 
 /**
@@ -53,8 +49,7 @@ export default defineCron('integrate-after-ci', {
             releaseMode: releaseModeFromEnv(process.env),
             sendBack: (taskId, note) => sendBackAutomatically(actions, taskId, note),
             mergeBase: (taskId, note) => mergeFixedBase(actions, taskId, note),
-            sendBackConflict: (taskId, base) =>
-              sendBackConflictAutomatically(actions, taskId, base),
+            startOver: (taskId) => retryAutomatically(actions, taskId),
           }),
       ],
       [

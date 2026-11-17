@@ -328,7 +328,7 @@ describe('an integration a promotion held out', () => {
     releaseMode: undefined,
     now: () => at,
     sendBack: async () => {},
-    sendBackConflict: async () => {},
+    startOver: async () => {},
     mergeBase: async () => {},
   })
   const row = async (id: number) => (await getDb().select().from(task).where(eq(task.id, id)))[0]

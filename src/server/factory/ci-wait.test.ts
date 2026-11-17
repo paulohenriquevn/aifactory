@@ -127,10 +127,10 @@ describe('decideWaitingIntegration before the base is read', () => {
     })
   })
 
-  it('sends back a conflict without asking for the base', () => {
+  it('starts over a conflict without asking for the base', () => {
     const dirty = { ...open, mergeableState: 'dirty' }
     expect(decide({ pull: dirty, reports: failing, baseReports: undefined })).toMatchObject({
-      kind: 'send_back_conflict',
+      kind: 'start_over',
     })
   })
 })
@@ -300,22 +300,10 @@ describe('decideWaitingIntegration', () => {
     })
   })
 
-  it('sends back on its branch a pull request that conflicts with its base', () => {
+  it('starts over a pull request that conflicts with its base', () => {
     expect(decide({ pull: { ...open, mergeableState: 'dirty' } })).toEqual({
-      kind: 'send_back_conflict',
+      kind: 'start_over',
       reason: expect.stringMatching(/conflicts/),
-    })
-  })
-
-  it('starts over a closed pull request whose branch is gone, while automatic runs are left', () => {
-    const closed = { ...open, state: 'closed' as const }
-    expect(decide({ pull: closed, branchGone: true })).toMatchObject({ kind: 'start_over' })
-    expect(decide({ pull: closed, branchGone: false })).toMatchObject({ kind: 'person' })
-    expect(decide({ pull: closed })).toMatchObject({ kind: 'person' })
-    expect(
-      decide({ pull: closed, branchGone: true, automaticRuns: AUTOMATIC_RETRIES }),
-    ).toMatchObject({
-      kind: 'person',
     })
   })
 
@@ -457,7 +445,7 @@ describe('decideWaitingIntegration for an integration a promotion holds out', ()
 
   it('still sends a held pull request that conflicts with its base to merge the base', () => {
     expect(decide({ pull: { ...held, mergeableState: 'dirty' }, held: 'released' })).toEqual({
-      kind: 'send_back_conflict',
+      kind: 'start_over',
       reason: 'the pull request conflicts with its base',
     })
   })

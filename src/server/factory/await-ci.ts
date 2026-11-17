@@ -46,11 +46,8 @@ export type AwaitCiDeps = {
    * its branch, with no agent; `note` is the record of why (the panel's `mergeFixedBase`).
    */
   mergeBase: (taskId: number, note: string) => Promise<void>
-  /**
-   * Runs the task again on its branch to merge the integration branch `base`, or from the base when the
-   * branch is gone (`sendBackConflictAutomatically`).
-   */
-  sendBackConflict: (taskId: number, base: string) => Promise<void>
+  /** Runs the task again: on its branch to merge the new base, or from it when the branch is gone (`retryAutomatically`). */
+  startOver: (taskId: number) => Promise<void>
 }
 
 /** What an integration needs once the merge exists. */
@@ -59,10 +56,7 @@ type IntegrationDeps = Pick<AwaitCiDeps, 'db' | 'github' | 'api' | 'releaseMode'
 export type AwaitCiResult = {
   merged: number[]
   sentBack: number[]
-  /** Tasks whose branch was deleted and pull request closed, run again from the integration branch. */
   startedOver: number[]
-  /** Tasks whose pull request conflicts with its base, run again on their branch to merge it. */
-  conflictSentBack: number[]
   toPerson: number[]
   waiting: number
   /** Tasks that wait because the required checks they failed fail on the head of the integration branch too. */
@@ -332,17 +326,9 @@ async function look(
   const base = integrationBranch(await loadRepoConfig(deps.db, row.repository))
   const required = await deps.api.requiredChecks(row.repository, token, base)
   const blamed = blamedOnBase(done?.detail, verifiedSha)
-  const pull = await deps.api.readPullRequest(row.repository, token, number)
-  // A deleted branch closes its pull request, so the branch is looked for only when it is closed unmerged.
-  const branchGone =
-    pull.state === 'closed' && !pull.merged
-      ? (await deps.api.branchHead(row.repository, token, `factory/${row.issueNumber}`)) ===
-        undefined
-      : undefined
   const input: WaitingIntegration = {
     verifiedSha,
-    pull,
-    ...(branchGone === undefined ? {} : { branchGone }),
+    pull: await deps.api.readPullRequest(row.repository, token, number),
     required,
     reports: await deps.api.checkReports(row.repository, token, verifiedSha),
     blamedOnBase: blamed,
@@ -410,15 +396,10 @@ async function take(
     case 'needs_base':
       throw new Error('the integration branch was read and the base is still asked for')
     case 'start_over':
-      // The pull request is closed: no auto-merge to turn off, and no branch for the action to keep.
-      await deps.sendBackConflict(row.id, at.base)
-      result.startedOver.push(row.id)
-      return
-    case 'send_back_conflict':
       // Off first: the run merges the base into this pull request, and that merge must be verified before it lands.
       await deps.api.disableAutoMerge(row.repository, token, number)
-      await deps.sendBackConflict(row.id, at.base)
-      result.conflictSentBack.push(row.id)
+      await deps.startOver(row.id)
+      result.startedOver.push(row.id)
       return
     case 'person': {
       let said = step
@@ -442,7 +423,6 @@ export async function pollAwaitingIntegrations(deps: AwaitCiDeps): Promise<Await
     merged: [],
     sentBack: [],
     startedOver: [],
-    conflictSentBack: [],
     toPerson: [],
     waiting: 0,
     waitingOnBase: [],

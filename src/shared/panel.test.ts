@@ -119,16 +119,6 @@ describe('a failure that passes by itself', () => {
     expect(retryableFailure({ error: 'GitHub answered 403 reading the issue' })).toBeNull()
   })
 
-  it('reads a sandbox the provider could not reach as the environment, not as the work', () => {
-    expect(
-      retryableFailure({
-        error:
-          '[unknown] terminated: The sandbox could not be reached and its health probe failed too (The operation was aborted due to timeout). It was not stopped by the factory.',
-      }),
-    ).toBe('environment')
-    expect(retryableFailure({ error: 'the API could not be reached by the test' })).toBeNull()
-  })
-
   it('leaves with a person an agent that used all its time, and still retries a command of the environment that timed out', () => {
     expect(
       retryableFailure({

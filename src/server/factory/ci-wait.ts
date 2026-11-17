@@ -59,15 +59,7 @@ export type WaitingStep =
    * check reported (`checksFeedback`) as feedback.
    */
   | { kind: 'send_back'; failed: string[]; reports: CheckReport[] }
-  /**
-   * The pull request conflicts with its base: the task runs again on its own branch, with a note, to merge
-   * the new base into it. The approved work stays; the branch is not deleted.
-   */
-  | { kind: 'send_back_conflict'; reason: string }
-  /**
-   * Deleting the work branch closed the pull request, and nothing of the work is left to continue on: the
-   * task starts over from the integration branch.
-   */
+  /** The pull request conflicts with its base: the task runs again to merge the new base into its branch. */
   | { kind: 'start_over'; reason: string }
   | { kind: 'person'; reason: string; stopAutoMerge: boolean; reports?: CheckReport[] }
   /**
@@ -94,11 +86,6 @@ export type WaitingIntegration = {
    * of them. Their failure on the pull request stays the base's until the base passes them.
    */
   blamedOnBase: string[]
-  /**
-   * Whether the work branch no longer exists. Read only for a pull request closed without a merge, which
-   * is what deleting the branch leaves behind; undefined when it was not read.
-   */
-  branchGone?: boolean
   /** How long the pull request has waited. */
   waitedMs: number
   /** Automatic runs since a person last started the task. */
@@ -174,23 +161,13 @@ export function readRequired(input: Pick<WaitingIntegration, 'required' | 'repor
  * auto-merge yet: it waits while the hold runs and is integrated once it ends.
  */
 export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep {
-  const runsLeft = automaticRunsLeft(input.automaticRuns)
-  const { pull } = input
-  if (
-    input.branchGone &&
-    runsLeft &&
-    pull.state === 'closed' &&
-    !pull.merged &&
-    pull.headSha === input.verifiedSha
-  ) {
-    return { kind: 'start_over', reason: 'the work branch was deleted and the pull request closed' }
-  }
   const done = settled(input)
   if (done) return done
+  const runsLeft = automaticRunsLeft(input.automaticRuns)
   const runs = `${AUTOMATIC_RETRIES} automatic runs`
   if (input.pull.mergeableState === 'dirty') {
     return runsLeft
-      ? { kind: 'send_back_conflict', reason: 'the pull request conflicts with its base' }
+      ? { kind: 'start_over', reason: 'the pull request conflicts with its base' }
       : {
           kind: 'person',
           reason: `the pull request conflicts with its base after ${runs}`,

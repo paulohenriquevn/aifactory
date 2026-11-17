@@ -10,7 +10,6 @@ import type { GithubApp } from '../github/app'
 import type { FailedRun } from '../github/promotion-api'
 import { FakeGithub, githubAnswered, type FakePullRequest } from '../../test/fake-github'
 import type { CheckReport } from '../github/pulls'
-import { sendBackConflictAutomatically, type ActionDeps } from '../panel/actions'
 
 import { adoptMergedHandoffs, pollAwaitingIntegrations, type AwaitCiDeps } from './await-ci'
 import type { EvidenceApi } from './check-evidence'
@@ -49,21 +48,6 @@ const gh = {
 }
 const sentBack: { taskId: number; note: string }[] = []
 const startedOver: number[] = []
-/** The runs the real panel action queued, as the integration pass asked for them. */
-const queuedRuns: { taskId: number; feedback?: string }[] = []
-const actionDeps = (): ActionDeps => ({
-  db: getDb(),
-  github: {
-    installationToken: async () => ({ token: 't', expiresAt: new Date() }),
-  } as unknown as GithubApp,
-  get api() {
-    return api
-  },
-  enqueueResume: async () => {},
-  deleteSnapshot: async () => {},
-  inTransaction: (work) =>
-    getDb().transaction((tx) => work(tx as never, async (input) => void queuedRuns.push(input))),
-})
 const mergedBase: { taskId: number; note: string }[] = []
 
 /** Sets how the task's pull request stands on GitHub. */
@@ -100,7 +84,6 @@ beforeEach(async () => {
   sentBack.length = 0
   startedOver.length = 0
   mergedBase.length = 0
-  queuedRuns.length = 0
 })
 
 const checks: EvidenceApi = {
@@ -136,7 +119,7 @@ const deps = (over: Partial<AwaitCiDeps> = {}): AwaitCiDeps => ({
       .set({ stage: 'intake', awaitingCiSha: null })
       .where(eq(task.id, taskId))
   },
-  sendBackConflict: async (taskId) => {
+  startOver: async (taskId) => {
     startedOver.push(taskId)
   },
   mergeBase: async (taskId, note) => {
@@ -577,7 +560,6 @@ describe('pollAwaitingIntegrations', () => {
 
   it('leaves auto-merge alone on a pull request a person closed', async () => {
     pull({ state: 'closed' })
-    repo().heads.set('factory/7', VERIFIED)
     const id = await waitingTask()
 
     await pollAwaitingIntegrations(deps())
@@ -586,82 +568,15 @@ describe('pollAwaitingIntegrations', () => {
     expect(await row(id)).toMatchObject({ stage: 'handoff' })
   })
 
-  it('starts over, plain, a task whose branch was deleted and whose pull request closed with it', async () => {
-    pull({ state: 'closed' })
-    const id = await waitingTask()
-
-    expect(
-      await pollAwaitingIntegrations(
-        deps({
-          sendBackConflict: (taskId, base) =>
-            sendBackConflictAutomatically(actionDeps(), taskId, base),
-        }),
-      ),
-    ).toMatchObject({ startedOver: [id], toPerson: [], errors: [] })
-
-    expect(autoMergeOff()).toEqual([])
-    expect(queuedRuns).toHaveLength(1)
-    expect(queuedRuns[0].feedback).toBeUndefined()
-    expect(await row(id)).toMatchObject({ stage: 'intake' })
-  })
-
-  it('hands to a person a closed pull request with its branch gone once the automatic runs are spent', async () => {
-    pull({ state: 'closed' })
-    const id = await waitingTask({ automaticRuns: 3 })
-
-    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ toPerson: [id] })
-    expect(queuedRuns).toEqual([])
-  })
-
-  it('sends back on its branch a pull request that conflicts with its base, with auto-merge off first', async () => {
+  it('runs again a pull request that conflicts with its base, with its auto-merge off first', async () => {
     pull({ mergeableState: 'dirty' })
-    repo().heads.set('factory/7', VERIFIED)
     const id = await waitingTask()
 
-    expect(
-      await pollAwaitingIntegrations(
-        deps({
-          sendBackConflict: (taskId, base) =>
-            sendBackConflictAutomatically(actionDeps(), taskId, base),
-        }),
-      ),
-    ).toMatchObject({ conflictSentBack: [id], errors: [] })
+    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ startedOver: [id] })
 
+    expect(startedOver).toEqual([id])
     // The run merges the base into the open pull request: the merge it pushes must not go through unverified.
     expect(autoMergeOff()).toEqual([12])
-    expect(api.callsTo('deleteBranch')).toEqual([])
-    expect(await row(id)).toMatchObject({ stage: 'intake' })
-    expect(queuedRuns).toHaveLength(1)
-    expect(queuedRuns[0].taskId).toBe(id)
-    expect(queuedRuns[0].feedback).toContain('git merge origin/workspace')
-    const events = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, id))
-    expect(events.at(-1)?.detail).toMatchObject({ decision: 'request_changes', automatic: true })
-  })
-
-  it('starts over from the base, plain, when the branch of a conflicting pull request is gone', async () => {
-    pull({ mergeableState: 'dirty' })
-    const id = await waitingTask()
-
-    await pollAwaitingIntegrations(
-      deps({
-        sendBackConflict: (taskId, base) =>
-          sendBackConflictAutomatically(actionDeps(), taskId, base),
-      }),
-    )
-
-    expect(queuedRuns).toHaveLength(1)
-    expect(queuedRuns[0].feedback).toBeUndefined()
-    expect(await row(id)).toMatchObject({ stage: 'intake' })
-  })
-
-  it('hands to a person a conflict once the automatic runs are spent', async () => {
-    pull({ mergeableState: 'dirty' })
-    const id = await waitingTask({ automaticRuns: 3 })
-
-    expect(await pollAwaitingIntegrations(deps())).toMatchObject({ toPerson: [id] })
-
-    expect(startedOver).toEqual([])
-    expect(await row(id)).toMatchObject({ stage: 'handoff' })
   })
 
   it('tells a person about a required check that never reports', async () => {
@@ -682,7 +597,6 @@ describe('pollAwaitingIntegrations', () => {
       merged: [],
       sentBack: [],
       startedOver: [],
-      conflictSentBack: [],
       toPerson: [],
       waiting: 0,
       waitingOnBase: [],

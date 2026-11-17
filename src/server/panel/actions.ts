@@ -417,8 +417,8 @@ async function mergesTheBase(
     .select({ baseBranch: repository.baseBranch })
     .from(repository)
     .where(eq(repository.fullName, row.repository))
-  const base = integrationBranch(config ?? {})
-  await requeue(deps, row.id, ['done'], 'automatic_changes', conflictNote(base), row.headSha)
+  const note = conflictNote(integrationBranch(config ?? {}))
+  await requeue(deps, row.id, ['done'], 'automatic_changes', note, row.headSha)
   return true
 }
 
@@ -432,27 +432,6 @@ export async function sendBackAutomatically(deps: ActionDeps, taskId: number, no
   const row = await load(deps.db, taskId)
   mustAllow(row, 'send_back_after_ci')
   await requeue(deps, taskId, ['done'], 'automatic_changes', note.slice(0, NOTE_MAX), row.headSha)
-}
-
-/**
- * Sends a task whose pull request waits for checks, and conflicts with its base, back to its own branch to
- * merge `base` (`send_back_conflict` in `factory/ci-wait.ts`). Without the branch there is nothing to keep,
- * and the task starts over from the base.
- */
-export async function sendBackConflictAutomatically(
-  deps: ActionDeps,
-  taskId: number,
-  base: string,
-) {
-  const row = await load(deps.db, taskId)
-  mustAllow(row, 'send_back_after_ci')
-  const { token } = await deps.github.installationToken(row.repository)
-  const head = await deps.api.branchHead(row.repository, token, `factory/${row.issueNumber}`)
-  if (!head) {
-    await requeue(deps, taskId, ['done'], 'automatic_retry', '', row.headSha)
-    return
-  }
-  await requeue(deps, taskId, ['done'], 'automatic_changes', conflictNote(base), row.headSha)
 }
 
 /**
