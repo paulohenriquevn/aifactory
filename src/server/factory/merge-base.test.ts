@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import type { SandboxBackend } from '@theokit/agents/sandbox'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { conflictingFiles, mergeIntegration, withConflictFiles } from './merge-base'
+import { mergeIntegration } from './merge-base'
 
 /** A backend that runs each command in a shell on this machine, as the sandbox runs it in its own. */
 const local = {
@@ -87,122 +87,5 @@ describe('mergeIntegration', () => {
 
   it('throws what git said when the merge fails without a conflict', async () => {
     await expect(mergeIntegration(local, git(), 'f'.repeat(40))).rejects.toThrow(/merge/)
-  })
-})
-
-const NOTE =
-  'The pull request conflicts with workspace. Merge it, then regenerate what a script writes.'
-
-describe('conflictingFiles', () => {
-  it('names only the file that conflicts, not the other files both sides changed', async () => {
-    commit('both.txt', 'top\n1\n2\n3\n4\n5\n6\n7\nbottom\n', 'both')
-    run('switch -q workspace')
-    run('merge -q factory/7')
-    run('switch -q factory/7')
-    commit('both.txt', 'top\n1\n2\n3\n4\n5\n6\n7\nwork bottom\n', 'work edits the end')
-    commit('shared.txt', 'work\n', 'work shared')
-    run('switch -q workspace')
-    commit('both.txt', 'base top\n1\n2\n3\n4\n5\n6\n7\nbottom\n', 'base edits the top')
-    commit('shared.txt', 'base\n', 'base shared')
-    commit('other.txt', 'base only\n', 'base other')
-    const base = run('rev-parse HEAD')
-    run('switch -q factory/7')
-
-    expect(await conflictingFiles(local, git(), base)).toEqual(['shared.txt'])
-    expect(run('diff --name-only factory/7 workspace')).toContain('both.txt')
-    expect(run('status --porcelain')).toBe('')
-  })
-
-  it('lists nothing for a merge that is clean', async () => {
-    const base = baseMoves('# Changelog\n\n## 1.0.0\n')
-
-    expect(await conflictingFiles(local, git(), base)).toEqual([])
-  })
-
-  it('follows a rename, so a file the work renamed and the base edited is no conflict', async () => {
-    run('switch -q workspace')
-    commit('old.txt', 'one\ntwo\nthree\nfour\nfive\n', 'old')
-    run('switch -q factory/7')
-    run('merge -q workspace')
-    run('mv old.txt new.txt')
-    run('commit -q -am "rename"')
-    commit('new.txt', 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n', 'edit renamed')
-    run('switch -q workspace')
-    const base = commit('old.txt', 'ONE\ntwo\nthree\nfour\nfive\n', 'edit old')
-    run('switch -q factory/7')
-
-    expect(await conflictingFiles(local, git(), base)).toEqual([])
-  })
-
-  it('finds both sides renaming one file to different names', async () => {
-    run('switch -q workspace')
-    commit('old.txt', 'one\ntwo\nthree\nfour\nfive\n', 'old')
-    run('switch -q factory/7')
-    run('merge -q workspace')
-    run('mv old.txt a.txt')
-    run('add -A')
-    run('commit -q -m "rename a"')
-    run('switch -q workspace')
-    run('mv old.txt b.txt')
-    run('add -A')
-    run('commit -q -m "rename b"')
-    const base = run('rev-parse HEAD')
-    run('switch -q factory/7')
-
-    const files = await conflictingFiles(local, git(), base)
-    expect(files).toContain('old.txt')
-    expect(files).not.toContain('src.txt')
-  })
-
-  it('finds a directory against a file of the same name', async () => {
-    run('switch -q workspace')
-    commit('docs', 'a file\n', 'docs is a file')
-    const base = run('rev-parse HEAD')
-    run('switch -q factory/7')
-    execSync(`mkdir ${dir}/docs`)
-    commit('docs/guide.md', 'a directory\n', 'docs is a directory')
-
-    const files = await conflictingFiles(local, git(), base)
-    expect(files.length).toBeGreaterThan(0)
-    expect(files.every((file) => file.startsWith('docs'))).toBe(true)
-  })
-
-  it('throws what git said when it cannot compare', async () => {
-    await expect(conflictingFiles(local, git(), 'f'.repeat(40))).rejects.toThrow(/merge-tree/)
-  })
-})
-
-describe('withConflictFiles', () => {
-  it('leaves the note alone when no file conflicts', () => {
-    expect(withConflictFiles(NOTE, [])).toBe(NOTE)
-  })
-
-  it('appends the files', () => {
-    expect(withConflictFiles(NOTE, ['a.ts', 'b.ts'])).toBe(`${NOTE} Files in conflict: a.ts, b.ts`)
-  })
-
-  it('stays within the limit with many files, and says how many it left out', () => {
-    const files = Array.from({ length: 500 }, (_, i) => `src/generated/file-${i}.ts`)
-    const text = withConflictFiles(NOTE, files)
-
-    expect(text.length).toBeLessThanOrEqual(4_000)
-    expect(text.startsWith(NOTE)).toBe(true)
-    expect(text).toMatch(/ and \d+ more$/)
-  })
-
-  it('shortens a very long path and keeps its end', () => {
-    const long = `${'dir/'.repeat(500)}last.ts`
-    const text = withConflictFiles(NOTE, [long, 'b.ts'])
-
-    expect(text.length).toBeLessThanOrEqual(4_000)
-    expect(text).toContain('last.ts')
-    expect(text).toContain('b.ts')
-  })
-
-  it('never cuts the instructions, even when no file fits', () => {
-    const note = 'x'.repeat(3_990)
-    const text = withConflictFiles(note, ['some/long/path.ts'])
-
-    expect(text).toBe(note)
   })
 })

@@ -1,5 +1,4 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -419,37 +418,6 @@ class RealGit {
     const git = new RealGit(root, work, remote)
     git.baseHead = run(seed, 'rev-parse', 'HEAD')
     return git
-  }
-
-  /**
-   * Leaves `factory/7` and `workspace` on the remote with both having changed `shared.txt` on the same line
-   * (a true conflict) and `both.txt` at opposite ends (the same path on both sides, merged cleanly).
-   */
-  diverge(): void {
-    const clone = join(this.root, 'diverge')
-    const run = (...args: string[]) =>
-      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
-        cwd: clone,
-        encoding: 'utf8',
-      })
-    const edit = (file: string, text: string) => writeFileSync(join(clone, file), text)
-    const body = (top: string, bottom: string) => `${top}\n1\n2\n3\n4\n5\n6\n7\n${bottom}\n`
-    execFileSync('git', ['clone', '-q', '-b', 'workspace', this.remote, clone])
-    edit('shared.txt', 'start\n')
-    edit('both.txt', body('top', 'bottom'))
-    run('add', '-A')
-    run('commit', '-qm', 'files both sides will change')
-    run('push', '-q', 'origin', 'workspace')
-    run('switch', '-q', '-c', 'factory/7')
-    edit('shared.txt', 'work\n')
-    edit('both.txt', body('top', 'work bottom'))
-    run('commit', '-qam', 'the work')
-    run('push', '-q', 'origin', 'factory/7')
-    run('switch', '-q', 'workspace')
-    edit('shared.txt', 'base\n')
-    edit('both.txt', body('base top', 'bottom'))
-    run('commit', '-qam', 'the base moves')
-    run('push', '-q', 'origin', 'workspace')
   }
 
   private git(...args: string[]): string {
@@ -2599,73 +2567,6 @@ describe('runTask continuing from a branch a person sent back', () => {
     expect(stages).toContain('verify')
     expect(stages).toContain('review')
     expect(stages).not.toContain('failed')
-  })
-
-  it('tells the agent which files git finds in conflict, and no other path', async () => {
-    const id = await seedTask()
-    branchPushed()
-    await getDb()
-      .update(task)
-      .set({ stage: 'intake', headSha: 'oldsha1', pullRequestUrl: PR_URL })
-      .where(eq(task.id, id))
-    const sandbox = new FakeSandbox(
-      changed((command) =>
-        command.includes('merge-tree')
-          ? { exitCode: 1, stdout: `${'a'.repeat(40)}\0docs/guide.md\0src/shared.ts\0` }
-          : undefined,
-      ),
-    )
-    const prompts: string[] = []
-    const builder: CodingHarness = {
-      name: 'fake-agent',
-      egress: agentEgress,
-      run: async (_backend, input) => {
-        prompts.push(input.prompt)
-        dirty = false
-        return { ok: true, summary: 'Merged.' }
-      },
-    }
-
-    await runTask(deps(sandbox, { harness: builder }), id, undefined, {
-      feedback:
-        'The pull request conflicts with workspace, which moved after this work was approved. Merge it.',
-    })
-
-    expect(sandbox.backend.commands.some((c) => c.includes('merge-tree'))).toBe(true)
-    expect(prompts[0]).toContain('Files in conflict: docs/guide.md, src/shared.ts')
-    expect(prompts[0]).not.toContain('src/truncate.js')
-  })
-
-  it('tells the agent only the file a real repository finds in conflict, not one both sides changed that merges cleanly', async () => {
-    const id = await seedTask()
-    const git = await RealGit.open()
-    try {
-      git.diverge()
-      await getDb()
-        .update(task)
-        .set({ stage: 'intake', headSha: git.remoteHead('factory/7'), pullRequestUrl: PR_URL })
-        .where(eq(task.id, id))
-      branchPushed()
-      const prompts: string[] = []
-      const builder: CodingHarness = {
-        name: 'fake-agent',
-        egress: agentEgress,
-        run: async (_backend, input) => {
-          prompts.push(input.prompt)
-          return { ok: true, summary: 'Looked at it.' }
-        },
-      }
-
-      await runTask(deps(git.sandbox, { harness: builder }), id, undefined, {
-        feedback:
-          'The pull request conflicts with workspace, which moved after this work was approved. Merge it.',
-      })
-
-      expect(prompts[0]).toContain('Files in conflict: shared.txt')
-      expect(prompts[0]).not.toContain('both.txt')
-    } finally {
-      await git.close()
-    }
   })
 
   it('hands to a person work whose required checks failed when the agent finds nothing to change', async () => {

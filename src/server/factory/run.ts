@@ -24,12 +24,7 @@ import { KnowledgeFeed } from '../knowledge/feed'
 import { parseLearned, withoutLearned } from '../knowledge/format'
 
 import { cloneRepository } from './clone'
-import {
-  CONFLICT_NOTE_OPENING,
-  conflictingFiles,
-  mergeIntegration,
-  withConflictFiles,
-} from './merge-base'
+import { mergeIntegration } from './merge-base'
 import { evidenceOfNote } from './ci-wait'
 import { ensureBranches, integrationBranch } from './branches'
 import { uploadChangesetCheck } from './changeset-check'
@@ -462,8 +457,7 @@ export class Run {
     })
     // Stopping the sandbox stops the feed first, so no copy goes into a sandbox that is gone.
     c.state.sandbox = feed.attachTo(sandbox)
-    const told = await Run.withConflictFiles(c, sandbox.backend, repoDir, baseSha)
-    const run = new Run(told, builder, reviewer, c.state.sandbox, spec, repoDir, baseSha, startedAt)
+    const run = new Run(c, builder, reviewer, c.state.sandbox, spec, repoDir, baseSha, startedAt)
     run.feed = feed
     run.remoteHead = await Run.remoteHeadOf(sandbox.backend, repoDir, c.branch)
     run.usesChangesets = await Run.publishesWithChangesets(sandbox.backend, repoDir)
@@ -495,29 +489,6 @@ export class Run {
     if (!c.continuation) return c
     const head = await c.api.branchHead(c.row.repository, c.token, c.branch)
     return head ? c : { ...c, continuation: undefined, startingOver: c.continuation }
-  }
-
-  /**
-   * A send-back for a conflict with the integration branch is told which files git finds in conflict. When
-   * git cannot say, the agent keeps the note as it was: a guessed list would send it to the wrong files.
-   */
-  private static async withConflictFiles(
-    c: RunContext,
-    backend: SandboxBackend,
-    repoDir: string,
-    baseSha: string,
-  ): Promise<RunContext> {
-    const feedback = c.continuation?.feedback
-    if (!c.continuation || !feedback?.startsWith(CONFLICT_NOTE_OPENING)) return c
-    try {
-      const files = await conflictingFiles(backend, `git -C ${repoDir}`, baseSha)
-      return {
-        ...c,
-        continuation: { ...c.continuation, feedback: withConflictFiles(feedback, files) },
-      }
-    } catch {
-      return c
-    }
   }
 
   private static async checkout(c: RunContext, backend: SandboxBackend) {

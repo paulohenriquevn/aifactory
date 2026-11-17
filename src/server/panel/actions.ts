@@ -4,7 +4,6 @@ import type { Database } from '../db'
 import { decision, finding, question, repository, stageEvent, task, watch } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import { integrationBranch } from '../factory/branches'
-import { CONFLICT_NOTE_OPENING, withConflictFiles } from '../factory/merge-base'
 import { release as promote, ReleaseRefused } from '../factory/deliver'
 import type { GithubApi } from '../github/pulls'
 import type { Bump } from '../factory/release'
@@ -393,14 +392,13 @@ export async function retryAutomatically(deps: ActionDeps, taskId: number) {
  * work was approved (another task merged first). Tasks of one repository often regenerate the same files,
  * so most of these conflicts are in generated files, which only their generator writes right.
  */
-export function conflictNote(base: string, files: string[] = []): string {
-  const note = [
-    `${CONFLICT_NOTE_OPENING}${base}, which moved after this work was approved.`,
+export function conflictNote(base: string): string {
+  return [
+    `The pull request conflicts with ${base}, which moved after this work was approved.`,
     `Merge it into this branch: git fetch origin ${base} && git merge origin/${base}.`,
     'Resolve each conflict keeping what both sides changed. A generated file (a reference, a map or docs a script writes) is regenerated with the script that writes it, never edited by hand; a budget or a version takes the value the merged code needs.',
     'Commit the merge and change nothing else.',
   ].join(' ')
-  return withConflictFiles(note, files, NOTE_MAX)
 }
 
 /**
