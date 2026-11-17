@@ -106,14 +106,6 @@ export function TaskActions({ detail, onDone }: { detail: TaskDetail; onDone: ()
       {task.waitingForChecks ? (
         <p className="mb-3 text-sm text-muted-foreground">{t.taskActions.waitingForChecks}</p>
       ) : null}
-      {task.waitingOnBase ? (
-        <p className="mb-3 text-sm text-foreground">
-          {t.taskActions.waitingOnBase(
-            task.waitingOnBase.checks.join(', '),
-            task.waitingOnBase.branch,
-          )}
-        </p>
-      ) : null}
       {releaseWaiting && task.releaseWait ? (
         <p className="mb-3 text-sm text-muted-foreground">
           {t.taskActions.releaseWaitBefore}{' '}

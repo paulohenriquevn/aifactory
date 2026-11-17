@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { getStorageManager } from 'theokit/server/storage'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -968,56 +968,5 @@ describe('the coordinator on a test that fails the tasks of a repository', () =>
 
     expect(await moveAhead(getDb(), fix)).toBe(false)
     expect((await dequeue())[0]).not.toBe(`job-${fix}`)
-  })
-})
-
-describe('an integration branch that stays red under a task', () => {
-  const NOW = new Date('2026-11-17T12:00:00Z')
-  const at = (hours: number) => new Date(NOW.getTime() - hours * 3_600_000).toISOString()
-  const heldTask = (checks: string[], hours: number) =>
-    seed('done', { headSha: 'abc', awaitingCiSha: 'verified0001' }, [
-      { stage: 'intake' },
-      {
-        stage: 'done',
-        detail: { baseHold: { sha: 'verified0001', checks, since: at(hours) } },
-      },
-    ])
-  const withClock = (): CoordinatorDeps => ({ ...deps(), now: () => NOW })
-
-  it('escalates a hold past the limit, naming the check, once', async () => {
-    const id = await heldTask(['lint'], 3)
-
-    expect(await coordinate(withClock(), 'auto')).toMatchObject({ escalated: 1 })
-    expect(await coordinate(withClock(), 'auto')).toMatchObject({ escalated: 0 })
-
-    const rows = await actions()
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ taskId: id, exceptionKind: 'base_red', outcome: 'escalated' })
-    expect(rows[0].reason).toContain('lint')
-  })
-
-  it('records nothing for a hold under the limit, or one that cleared', async () => {
-    await heldTask(['lint'], 1)
-    const cleared = await heldTask(['lint'], 5)
-    await getDb()
-      .update(stageEvent)
-      .set({ detail: {} })
-      .where(and(eq(stageEvent.taskId, cleared), eq(stageEvent.stage, 'done')))
-
-    expect(await coordinate(withClock(), 'auto')).toMatchObject({ escalated: 0 })
-    expect(await actions()).toEqual([])
-  })
-
-  it('escalates again when a hold clears and the same check holds the same commit later', async () => {
-    const id = await heldTask(['lint'], 3)
-    await coordinate(withClock(), 'auto')
-    await getDb()
-      .update(stageEvent)
-      .set({ detail: { baseHold: { sha: 'verified0001', checks: ['lint'], since: at(2.5) } } })
-      .where(and(eq(stageEvent.taskId, id), eq(stageEvent.stage, 'done')))
-
-    await coordinate(withClock(), 'auto')
-
-    expect(await actions()).toHaveLength(2)
   })
 })

@@ -260,11 +260,6 @@ export type TaskCard = {
    */
   waitingForChecks: boolean
   /**
-   * The task waits because the required checks it failed fail on the head of the integration branch too:
-   * which checks, on which branch, and since when. Null when nothing holds it.
-   */
-  waitingOnBase: { branch: string; checks: string[]; since: string } | null
-  /**
    * Delivered without a pull request: the agent changed nothing, the checks passed at the commit and the
    * reviewer confirmed the code already does what the issue asks. The factory closed the issue.
    */

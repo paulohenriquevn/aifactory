@@ -12,13 +12,7 @@ import { FakeGithub, githubAnswered, type FakePullRequest } from '../../test/fak
 import type { CheckReport } from '../github/pulls'
 import { sendBackConflictAutomatically, type ActionDeps } from '../panel/actions'
 
-import {
-  adoptMergedHandoffs,
-  baseHoldOf,
-  nextBaseHold,
-  pollAwaitingIntegrations,
-  type AwaitCiDeps,
-} from './await-ci'
+import { adoptMergedHandoffs, pollAwaitingIntegrations, type AwaitCiDeps } from './await-ci'
 import type { EvidenceApi } from './check-evidence'
 import { CI_SILENCE_MS, fixedBaseNote } from './ci-wait'
 
@@ -314,28 +308,6 @@ describe('pollAwaitingIntegrations', () => {
     expect(sentBack).toEqual([])
     expect(autoMergeOff()).toEqual([])
     expect((await row(id)).awaitingCiSha).toBe(VERIFIED)
-  })
-
-  const holdOf = async (id: number) =>
-    ((await events(id)).filter((e) => e.stage === 'done').at(-1)?.detail as { baseHold?: unknown })
-      .baseHold
-
-  it('keeps the hold of a red integration branch while it lasts, and clears it when no check is red', async () => {
-    reports(failure('CI'))
-    baseIs(failure('CI', 'https://ci/0'))
-    const id = await waitingTask()
-    await pollAwaitingIntegrations(deps())
-    const hold = (await holdOf(id)) as { sha: string; checks: string[]; since: string }
-    expect(hold).toMatchObject({ sha: VERIFIED, checks: ['CI'] })
-
-    await pollAwaitingIntegrations(deps())
-    expect(await holdOf(id)).toEqual(hold)
-
-    baseIs(success('CI'))
-    await pollAwaitingIntegrations(deps())
-    expect(await holdOf(id)).toBeUndefined()
-    // The blame stays: it is what lets the task merge the base once it passes.
-    expect(await blameOf(id)).toEqual({ sha: VERIFIED, checks: ['CI'] })
   })
 
   it('remembers on the done event which checks it blamed on the base, for the verified commit', async () => {
@@ -813,37 +785,5 @@ describe('adoptMergedHandoffs', () => {
 
     expect(result.adopted).toEqual([id])
     expect(result.errors).toEqual([expect.stringMatching(new RegExp(`^task ${broken}: `))])
-  })
-})
-
-describe('the hold of a red integration branch', () => {
-  const now = new Date('2026-11-17T12:00:00Z')
-
-  it('reads only the hold of the commit asked for', () => {
-    const detail = { baseHold: { sha: 'a', checks: ['lint'], since: '2026-11-17T10:00:00Z' } }
-    expect(baseHoldOf(detail, 'a')).toEqual(detail.baseHold)
-    expect(baseHoldOf(detail, 'b')).toBeNull()
-    expect(baseHoldOf(detail, null)).toBeNull()
-    expect(
-      baseHoldOf({ baseHold: { sha: 'a', checks: [], since: detail.baseHold.since } }, 'a'),
-    ).toBeNull()
-    expect(
-      baseHoldOf({ baseHold: { sha: 'a', checks: ['x'], since: 'not a date' } }, 'a'),
-    ).toBeNull()
-    expect(baseHoldOf(null, 'a')).toBeNull()
-  })
-
-  it('starts when a check is red, keeps its start while the same checks stay red and restarts for others', () => {
-    const first = nextBaseHold(null, 'a', ['test', 'lint'], now)
-    expect(first).toEqual({ sha: 'a', checks: ['lint', 'test'], since: now.toISOString() })
-    const later = new Date('2026-11-17T15:00:00Z')
-    expect(nextBaseHold(first, 'a', ['lint', 'test'], later)).toEqual(first)
-    expect(nextBaseHold(first, 'a', ['build'], later)?.since).toBe(later.toISOString())
-  })
-
-  it('ends when no check is red', () => {
-    const hold = nextBaseHold(null, 'a', ['lint'], now)
-    expect(nextBaseHold(hold, 'a', undefined, now)).toBeNull()
-    expect(nextBaseHold(hold, 'a', [], now)).toBeNull()
   })
 })

@@ -11,15 +11,12 @@ import {
   finding,
   question,
   releaseWait,
-  repository,
   review,
   stageEvent,
   task,
   watch,
 } from '../db/schema'
 import { retryAt } from '../factory/auto-retry'
-import { integrationBranch } from '../factory/branches'
-import { baseHoldOf } from '../factory/await-ci'
 import { pendingSendBack } from '../factory/send-back'
 import {
   columnOf,
@@ -148,7 +145,6 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
     .orderBy(stageEvent.taskId, desc(stageEvent.id))
   const lastFailure = new Map(failures.map((f) => [f.taskId, f]))
   const byTask = new Map(activity.map((a) => [a.taskId, a]))
-  const holds = await baseHolds(db, rows)
   return rows.map((r) => {
     const seen = byTask.get(r.id)
     const again =
@@ -173,7 +169,6 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       approved: r.headSha !== null && kinds.some((k) => k.sha === r.headSha),
       integrated: r.mergedSha !== null,
       waitingForChecks: r.awaitingCiSha !== null,
-      waitingOnBase: holds.get(r.id) ?? null,
       resolved: r.resolvedSha !== null,
       retryable: again?.retryable ?? null,
       retryAt: again?.at.toISOString() ?? null,
@@ -183,42 +178,6 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       releaseWait: lastReleaseWait(releases, r),
     }
   })
-}
-
-/** The hold a red integration branch puts on each task that waits for its checks, on its latest `done` event. */
-async function baseHolds(db: Database, rows: TaskRow[]) {
-  const waiting = rows.filter((r) => r.stage === 'done' && r.awaitingCiSha !== null)
-  const holds = new Map<number, NonNullable<TaskCard['waitingOnBase']>>()
-  if (waiting.length === 0) return holds
-  const events = await db
-    .selectDistinctOn([stageEvent.taskId], { taskId: stageEvent.taskId, detail: stageEvent.detail })
-    .from(stageEvent)
-    .where(
-      and(
-        inArray(
-          stageEvent.taskId,
-          waiting.map((r) => r.id),
-        ),
-        eq(stageEvent.stage, 'done'),
-      ),
-    )
-    .orderBy(stageEvent.taskId, desc(stageEvent.id))
-  const configs = await db
-    .select({ fullName: repository.fullName, baseBranch: repository.baseBranch })
-    .from(repository)
-    .where(inArray(repository.fullName, [...new Set(waiting.map((r) => r.repository))]))
-  const detail = new Map(events.map((e) => [e.taskId, e.detail]))
-  for (const r of waiting) {
-    const hold = baseHoldOf(detail.get(r.id), r.awaitingCiSha)
-    if (!hold) continue
-    const config = configs.find((c) => c.fullName === r.repository)
-    holds.set(r.id, {
-      branch: integrationBranch(config ?? {}),
-      checks: hold.checks,
-      since: hold.since,
-    })
-  }
-  return holds
 }
 
 /** The latest release of a task that waits for checks or was refused, while the task is not released. */

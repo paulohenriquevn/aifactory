@@ -131,10 +131,6 @@ const BY_KIND: Partial<Record<ExceptionKind, (exception: TaskException) => Decis
     escalate(
       `the release branch is red (${evidence}): the release train waits on ${short(head)} until it is green again, and a person looks at it`,
     ),
-  base_red: ({ evidence }) =>
-    escalate(
-      `${evidence}: nothing is merged for it, and a person looks at why the integration branch fails`,
-    ),
 }
 
 /** A release or a reordering is the repository's, not a rework of the task it is recorded on, so the limit does not count it. */
@@ -143,7 +139,6 @@ const RELEASE_KINDS: readonly ExceptionKind[] = [
   'release_retry',
   'release_blocked',
   'queue_blocked',
-  'base_red',
 ]
 
 /** The one action for this exception, given what was already recorded for its task. */

@@ -36,11 +36,6 @@ export function Card({ task }: { task: TaskCard }) {
             {t.board.mainRedAfterRelease}
           </div>
         ) : null}
-        {task.waitingOnBase ? (
-          <div className="mt-1 text-xs font-medium text-destructive">
-            {t.board.waitingOnBase(task.waitingOnBase.checks.join(', '), task.waitingOnBase.branch)}
-          </div>
-        ) : null}
         {task.retryAt ? (
           <div className="mt-1 truncate text-xs text-muted-foreground">
             {runsAgain(task.retryAt, Date.now(), t.time)}

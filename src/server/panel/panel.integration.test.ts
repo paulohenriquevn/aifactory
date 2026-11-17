@@ -255,29 +255,6 @@ describe('listTasks and an integration that waits for the repository checks', ()
     expect(cards.get(waiting)).toMatchObject({ waitingForChecks: true, integrated: false })
     expect(cards.get(refused)).toMatchObject({ waitingForChecks: false })
   })
-
-  it('shows the checks and the branch a red integration branch holds a task on, for its commit only', async () => {
-    const hold = { sha: 'abc', checks: ['lint'], since: '2026-11-17T09:00:00.000Z' }
-    const held = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' }, [
-      { stage: 'done', detail: { baseHold: hold } },
-    ])
-    const slow = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' }, [
-      { stage: 'done', detail: {} },
-    ])
-    const stale = await seed('done', { headSha: 'new', awaitingCiSha: 'new' }, [
-      { stage: 'done', detail: { baseHold: hold } },
-    ])
-
-    const cards = new Map((await listTasks(getDb())).map((c) => [c.id, c]))
-
-    expect(cards.get(held)?.waitingOnBase).toEqual({
-      branch: 'workspace',
-      checks: ['lint'],
-      since: hold.since,
-    })
-    expect(cards.get(slow)?.waitingOnBase).toBeNull()
-    expect(cards.get(stale)?.waitingOnBase).toBeNull()
-  })
 })
 
 describe('listTasks and the retries the factory makes on its own', () => {

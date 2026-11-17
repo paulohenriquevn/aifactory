@@ -214,9 +214,6 @@ reads that file, not a convention.
   exception, escalated, and nothing is called; the one retry of a passing refusal is a `release_retry` exception on
   the same head. A repository in `trial` gets its decision recorded as `trial`, and one in `manual` is never read.
   `MAX_APPLIED` neither counts a release nor holds one back.
-  A task held by a red integration branch (`done.detail.baseHold`, set and cleared by `integrate-after-ci`, shown
-  on the panel card as `waitingOnBase`) is a `base_red` exception once the red lasts `BASE_RED_LIMIT_MS`: escalated,
-  naming the checks, one decision per commit and set of checks.
   Evolve (`evolve.ts` pure, `evolve-facts.ts` reads, `evolve-apply.ts` writes) files a failure signature seen on
   three tasks in a week, in two incidents an hour or more apart, as a `factory` issue on this repository, once per signature (`failure_signature`), at
   most one per pass and three per week, never a designed wait (`DESIGNED_WAITS`), nothing in `trial` but a

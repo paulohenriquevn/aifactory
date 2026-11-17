@@ -748,8 +748,7 @@ export const metricSignal = pgTable(
 /**
  * What the coordinator recognises as an exception of a task (`coordinator/exceptions.ts`), and the three of
  * a repository's release train (`coordinator/release-train.ts`): work ready for a release, the one retry of a
- * refused release on the same head, a red release branch that holds the train, and an integration branch
- * red for too long while it holds tasks (`base_red`).
+ * refused release on the same head, and a red release branch that holds the train.
  */
 export const EXCEPTION_KINDS = [
   'checks_unchanged',
@@ -765,7 +764,6 @@ export const EXCEPTION_KINDS = [
   'release_retry',
   'release_blocked',
   'queue_blocked',
-  'base_red',
 ] as const
 
 /** The closed set of actions the coordinator decides between (`coordinator/decide.ts`). */

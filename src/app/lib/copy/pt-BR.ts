@@ -150,7 +150,6 @@ export const ptBR: Copy = {
     nothingHere: 'Nada aqui.',
     mainRedAfterRelease: 'a main quebrou depois da versão',
     mainRed: 'main quebrada',
-    waitingOnBase: (checks: string, branch: string) => `espera ${checks} passar em ${branch}`,
     attempt: (n: number) => `tentativa ${n} de 3`,
     tasks: 'Tarefas',
     task: 'Tarefa',
@@ -263,8 +262,6 @@ export const ptBR: Copy = {
     heading: 'O que você quer fazer?',
     waitingForChecks:
       'O GitHub une este pull request assim que as verificações exigidas do repositório passarem, e a fábrica termina a integração depois. Uma verificação que falhar devolve o trabalho ao agente.',
-    waitingOnBase: (checks: string, branch: string) =>
-      `Esta tarefa espera ${checks} passar na branch de integração ${branch}: as verificações que ela falhou falham lá também, então não são dela. A fábrica segue quando a branch passar.`,
     releaseWaitBefore: 'O pull request do lançamento',
     releaseWaitAfter: (checks: string) =>
       `espera as verificações exigidas da branch de lançamento: ${checks}. O GitHub o une assim que passarem, e a fábrica termina o lançamento depois. Uma verificação que falhar interrompe o lançamento, e o motivo aparece aqui.`,
@@ -898,7 +895,6 @@ export const ptBR: Copy = {
       release_ready: 'Pronta para publicar',
       release_retry: 'Publicação a repetir',
       release_blocked: 'Publicação bloqueada',
-      base_red: 'Branch de integração quebrada',
       queue_blocked: 'Correção esperando na fila',
     } as Record<string, string>,
   },

@@ -3,7 +3,6 @@ import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
 import type { Database } from '../db'
 import { coordinatorAction, finding, repository, stageEvent, task } from '../db/schema'
 import { integrationBranch } from '../factory/branches'
-import { baseHoldOf, type BaseHold } from '../factory/await-ci'
 import { readOf, unread, type Read } from '../factory/doctor'
 import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
@@ -23,8 +22,6 @@ export type FactsDeps = {
   db: Database
   github: Pick<GithubApp, 'installationToken'>
   api: Pick<GithubApi, 'readPullRequest'>
-  /** The clock the age of a hold is measured against. */
-  now?: () => Date
 }
 
 /**
@@ -91,20 +88,6 @@ async function automaticRuns(db: Database, ids: number[]) {
   return new Map(rows.map((r) => [r.taskId, Number(r.automatic)]))
 }
 
-/** The hold each task has on its latest `done` event, for the commit it waits on. */
-async function baseHolds(db: Database, rows: { id: number; awaitingCiSha: string | null }[]) {
-  const ids = rows.map((r) => r.id)
-  const events = await db
-    .selectDistinctOn([stageEvent.taskId], { taskId: stageEvent.taskId, detail: stageEvent.detail })
-    .from(stageEvent)
-    .where(and(inArray(stageEvent.taskId, ids), eq(stageEvent.stage, 'done')))
-    .orderBy(stageEvent.taskId, desc(stageEvent.id))
-  const detail = new Map(events.map((e) => [e.taskId, e.detail]))
-  return new Map<number, BaseHold | null>(
-    rows.map((r) => [r.id, baseHoldOf(detail.get(r.id), r.awaitingCiSha)]),
-  )
-}
-
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 type PulledTask = { id: number; repository: string; pullRequestUrl: string | null }
@@ -150,26 +133,14 @@ export async function readExceptionFacts(deps: FactsDeps): Promise<TaskFacts[]> 
       headSha: task.headSha,
       repository: task.repository,
       pullRequestUrl: task.pullRequestUrl,
-      awaitingCiSha: task.awaitingCiSha,
     })
     .from(task)
-    .where(
-      or(
-        inArray(task.stage, ['handoff', 'failed']),
-        inArray(task.id, flagged),
-        and(eq(task.stage, 'done'), isNotNull(task.awaitingCiSha)),
-      ),
-    )
+    .where(or(inArray(task.stage, ['handoff', 'failed']), inArray(task.id, flagged)))
     .orderBy(task.id)
   if (rows.length === 0) return []
   const ids = rows.map((r) => r.id)
   const last = await readEach('the last events of the tasks', () => lastEvents(db, ids))
   const runs = await readEach('the automatic runs of the tasks', () => automaticRuns(db, ids))
-  const waiting = rows.filter((r) => r.stage === 'done' && r.awaitingCiSha !== null)
-  const holds = await readEach('the holds of the integration branch on the tasks', () =>
-    baseHolds(db, waiting),
-  )
-  const at = deps.now?.() ?? new Date()
   return Promise.all(
     rows.map(async (r): Promise<TaskFacts> => {
       const lastEvent = last(r.id, null)
@@ -182,9 +153,6 @@ export async function readExceptionFacts(deps: FactsDeps): Promise<TaskFacts[]> 
         findings: found
           .filter((f) => f.taskId === r.id)
           .map((f): OpenFinding => ({ id: f.id, kind: f.kind, detail: f.detail })),
-      }
-      if (r.stage === 'done' && r.awaitingCiSha !== null) {
-        return { ...facts, baseHold: holds(r.id, null), at }
       }
       const onFailedChecks =
         r.stage === 'handoff' &&

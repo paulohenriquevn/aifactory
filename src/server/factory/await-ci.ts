@@ -279,37 +279,6 @@ async function readBase(
 }
 
 /**
- * The hold a red integration branch puts on a task, stored on its `done` event (`detail.baseHold`): the required
- * checks that fail on the head of the integration branch too, for the verified commit, and since when. Unlike
- * `baseBlame`, which only grows, it is the hold now: it is cleared as soon as no check is red there.
- */
-export type BaseHold = { sha: string; checks: string[]; since: string }
-
-/** The hold stored in the detail of a `done` event for this commit, or none; another commit's counts for nothing. */
-export function baseHoldOf(detail: unknown, sha: string | null): BaseHold | null {
-  const hold = (detail as { baseHold?: Partial<BaseHold> } | null | undefined)?.baseHold
-  if (!hold || hold.sha !== sha || !Array.isArray(hold.checks) || hold.checks.length === 0) {
-    return null
-  }
-  if (typeof hold.since !== 'string' || Number.isNaN(Date.parse(hold.since))) return null
-  return { sha: hold.sha, checks: hold.checks, since: hold.since }
-}
-
-/** The hold after a pass: the checks red now, keeping `since` while the same checks stay red; none when no check is. */
-export function nextBaseHold(
-  before: BaseHold | null,
-  sha: string,
-  red: string[] | undefined,
-  now: Date,
-): BaseHold | null {
-  if (!red || red.length === 0) return null
-  const checks = [...new Set(red)].sort()
-  const since =
-    before && before.checks.join('\n') === checks.join('\n') ? before.since : now.toISOString()
-  return { sha, checks, since }
-}
-
-/**
  * What a pass stores on the `done` event of the verified commit (`detail.baseBlame`): every required check
  * found red on the base while it failed on that commit.
  */
@@ -323,34 +292,21 @@ function blamedOnBase(detail: unknown, verifiedSha: string): string[] {
 
 /**
  * Adds the checks this pass found red on the base to the ones blamed before, so a later pass still knows
- * whose their failure is once the base passes them (the list only grows while the commit waits), and keeps
- * `baseHold` as what is red there now.
+ * whose their failure is once the base passes them. The list only grows while the commit waits.
  */
-async function settleBase(
+async function rememberBaseRed(
   deps: AwaitCiDeps,
   done: { id: number; detail: unknown },
   verifiedSha: string,
   before: string[],
-  step: WaitingStep,
+  red: string[],
 ): Promise<void> {
-  const detail = { ...((done.detail ?? {}) as Record<string, unknown>) }
-  const red = step.kind === 'wait' ? step.baseRed : undefined
-  let changed = false
-  if (red && !red.every((name) => before.includes(name))) {
-    const baseBlame: BaseBlame = { sha: verifiedSha, checks: [...new Set([...before, ...red])] }
-    detail.baseBlame = baseBlame
-    changed = true
-  }
-  // The hold is the red there is now: cleared when no check is red on the base, so it never outlives the red.
-  const held = baseHoldOf(detail, verifiedSha)
-  const hold = nextBaseHold(held, verifiedSha, red, deps.now?.() ?? new Date())
-  if (JSON.stringify(hold) !== JSON.stringify(held) || (!hold && 'baseHold' in detail)) {
-    if (hold) detail.baseHold = hold
-    else delete detail.baseHold
-    changed = true
-  }
-  if (!changed) return
-  await deps.db.update(stageEvent).set({ detail }).where(eq(stageEvent.id, done.id))
+  if (red.every((name) => before.includes(name))) return
+  const baseBlame: BaseBlame = { sha: verifiedSha, checks: [...new Set([...before, ...red])] }
+  await deps.db
+    .update(stageEvent)
+    .set({ detail: { ...(done.detail as Record<string, unknown>), baseBlame } })
+    .where(eq(stageEvent.id, done.id))
 }
 
 async function look(
@@ -403,7 +359,9 @@ async function look(
     const baseReports = await readBase(deps, row.repository, token, base)
     step = decideWaitingIntegration({ ...input, baseReports })
   }
-  if (done) await settleBase(deps, done, verifiedSha, blamed, step)
+  if (done && step.kind === 'wait' && step.baseRed) {
+    await rememberBaseRed(deps, done, verifiedSha, blamed, step.baseRed)
+  }
   const w: Waiting = {
     row,
     verifiedSha,

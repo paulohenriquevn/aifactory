@@ -1,7 +1,6 @@
 import type { EXCEPTION_KINDS, TaskStage } from '../db/schema'
 import type { Read } from '../factory/doctor'
 import type { HandoffCause } from '../factory/run-types'
-import type { BaseHold } from '../factory/await-ci'
 import { automaticRunsLeft } from '../factory/transitions'
 import { retryableFailure } from '../../shared/panel'
 
@@ -37,17 +36,7 @@ export type TaskFacts = {
    * other task, null for one with no pull request.
    */
   pullRequest?: Read<PullRequestFacts | null>
-  /**
-   * The hold a red integration branch puts on the task, read only for a task waiting for the integration
-   * branch's checks: absent for any other task, null when nothing holds it.
-   */
-  baseHold?: Read<BaseHold | null>
-  /** When the facts were read, which is what the age of a hold is measured against. */
-  at?: Date
 }
-
-/** An integration branch red this long while it holds a task is for a person. */
-export const BASE_RED_LIMIT_MS = 2 * 60 * 60 * 1000
 
 /** One exception: its kind, the task, the head it was seen on and what it was recognised by. */
 export type TaskException = {
@@ -106,7 +95,7 @@ export function failedChecksOutput(reason: string): string {
 
 const unknown = (evidence: string) => ({ kind: 'unknown' as const, evidence })
 
-type Found = Pick<TaskException, 'kind' | 'evidence' | 'conflictsWith'> & { identity?: string }
+type Found = Pick<TaskException, 'kind' | 'evidence' | 'conflictsWith'>
 
 /** The event that put the task in its stage, or the unknown exception that stands for it. */
 function lastOf(facts: TaskFacts): LastEvent | Found {
@@ -162,28 +151,7 @@ function ofStage(facts: TaskFacts): Found | undefined {
     : failed(last, facts.automaticRuns)
 }
 
-const short = (sha: string) => sha.slice(0, 7)
-
-/** What a red integration branch does to the task: nothing before the limit, an exception after it. */
-function ofBase(facts: TaskFacts): Found | undefined {
-  const read = facts.baseHold
-  if (!read) return undefined
-  if (!read.read) return unknown(`could not read ${read.tried}: ${read.error}`)
-  const hold = read.value
-  if (!hold) return undefined
-  const since = Date.parse(hold.since)
-  const red = (facts.at ?? new Date()).getTime() - since
-  if (red < BASE_RED_LIMIT_MS) return undefined
-  const hours = Math.floor(red / 3_600_000)
-  return {
-    kind: 'base_red',
-    evidence: `the integration branch has been red for ${hours} hours on ${hold.checks.join(', ')}, and the task waits for ${hold.checks.length === 1 ? 'it' : 'them'} to pass there`,
-    // The start is part of it: a hold that cleared and came back on the same commit is another hold.
-    identity: `${short(hold.sha)}:${hold.checks.join(',')}@${hold.since}`,
-  }
-}
-
-/** Every exception of a task: one for each open finding, and one for its stage or its hold when it has one. */
+/** Every exception of a task: one for each open finding, and one for its stage when it has one. */
 export function recognise(facts: TaskFacts): TaskException[] {
   const at = { taskId: facts.taskId, head: facts.headSha ?? 'none' }
   const fromFindings = facts.findings.map((f) => ({
@@ -192,8 +160,6 @@ export function recognise(facts: TaskFacts): TaskException[] {
     evidence: f.detail,
     findingId: f.id,
   }))
-  const found = ofStage(facts) ?? ofBase(facts)
-  if (!found) return fromFindings
-  const { identity, ...rest } = found
-  return [...fromFindings, { ...rest, ...at, ...(identity ? { head: identity } : {}) }]
+  const stage = ofStage(facts)
+  return stage ? [...fromFindings, { ...stage, ...at }] : fromFindings
 }

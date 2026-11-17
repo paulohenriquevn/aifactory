@@ -247,38 +247,3 @@ describe('prioritising a task in the queue', () => {
     ).toMatchObject({ action: 'retry_from_finding' })
   })
 })
-
-describe('an integration branch red for too long', () => {
-  const red = exception({
-    kind: 'base_red',
-    head: '1234567:lint@2026-11-17T09:00:00Z',
-    evidence: 'the integration branch has been red for 3 hours on lint',
-  })
-
-  it('is escalated with the check named', () => {
-    const decision = decide(red, [])
-    expect(decision.action).toBe('escalate')
-    expect(decision.reason).toContain('lint')
-  })
-
-  it('is not stopped by the limit of applied actions', () => {
-    const two = [recorded(), recorded({ headSha: 'o2' })]
-    expect(decide(red, two)).toMatchObject({
-      action: 'escalate',
-      reason: expect.stringContaining('lint'),
-    })
-  })
-
-  it('is decided again for the same check back on the same commit', () => {
-    const before = recorded({
-      exceptionKind: 'base_red',
-      headSha: '1234567:lint@2026-11-17T09:00:00Z',
-      action: 'escalate',
-      outcome: 'escalated',
-    })
-    expect(seen(red, [before], 'auto')).toBe(true)
-    expect(seen({ ...red, head: '1234567:lint@2026-11-17T11:00:00Z' }, [before], 'auto')).toBe(
-      false,
-    )
-  })
-})

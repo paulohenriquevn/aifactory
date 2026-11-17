@@ -18,9 +18,7 @@ import { recogniseRelease } from './release-train'
 export type PassResult = Record<CoordinatorOutcome, number>
 
 /** What a pass needs: the panel's actions, the two GitHub writes of a scope, the drafter and the release mode. */
-export type CoordinatorDeps = ApplyDeps &
-  DraftDeps &
-  Pick<ReleaseFactsDeps, 'releaseMode'> & { now?: () => Date }
+export type CoordinatorDeps = ApplyDeps & DraftDeps & Pick<ReleaseFactsDeps, 'releaseMode'>
 
 /** The exceptions of the tasks, then the release of each repository the train does not hold. */
 async function exceptionsOf(deps: CoordinatorDeps): Promise<TaskException[]> {
