@@ -7,6 +7,7 @@ import type { GithubApi, PublishedRelease } from '../github/pulls'
 
 import { integrationBranch } from './branches'
 import { versionedTags } from './changed-packages'
+import type { DeliverDeps } from './deliver'
 import {
   isPackageTag,
   pickBackMerge,
@@ -18,7 +19,13 @@ import { endWithoutVersionPullRequest, type Ending } from './publication-end'
 import { shipContained, unclosedNote } from './ship'
 import { classify } from './watch'
 
-export type PublishDeps = { db: Database; github: GithubApp; api: GithubApi; now?: () => Date }
+export type PublishDeps = {
+  db: Database
+  github: GithubApp
+  api: GithubApi
+  now?: () => Date
+  fetchIssue?: DeliverDeps['fetchIssue']
+}
 
 export type PublishResult = {
   /** Publications whose Version Packages pull request was merged, by the factory or seen merged. */

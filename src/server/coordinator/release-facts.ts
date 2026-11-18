@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, ne, or } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
 import { coordinatorAction, publication, releaseWait, repository, task, watch } from '../db/schema'
@@ -30,7 +30,7 @@ import {
 export type ReleaseFactsDeps = {
   db: Database
   github: Pick<GithubApp, 'installationToken'>
-  api: Pick<GithubApi, 'branchAhead' | 'defaultBranch'>
+  api: Pick<GithubApi, 'branchAhead' | 'defaultBranch' | 'contains'>
   readIssue: ReadIssue
   /** The release mode of a repository that has none of its own (`FACTORY_RELEASE_MODE`). */
   releaseMode: ReleaseMode
@@ -42,11 +42,52 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 const WORKING_STAGES = ['intake', ...WORKING] as const
 
 async function releasable(db: Database, repo: string) {
-  return db
-    .select({ taskId: task.id, issueNumber: task.issueNumber })
+  const rows = await db
+    .select({
+      taskId: task.id,
+      issueNumber: task.issueNumber,
+      mergedSha: task.mergedSha,
+      resolvedSha: task.resolvedSha,
+    })
     .from(task)
-    .where(and(eq(task.repository, repo), eq(task.stage, 'done'), isNotNull(task.mergedSha)))
-    .orderBy(asc(task.id))
+    .where(
+      and(
+        eq(task.repository, repo),
+        eq(task.stage, 'done'),
+        or(isNotNull(task.mergedSha), isNotNull(task.resolvedSha)),
+      ),
+    )
+    // Integrated work first: it is the anchor a release needs, and a resolved task can only anchor one
+    // once the pre-release branch holds its commit.
+    .orderBy(sql`${task.mergedSha} is null`, asc(task.id))
+  return rows.map((r) => ({
+    taskId: r.taskId,
+    issueNumber: r.issueNumber,
+    ...(r.mergedSha || !r.resolvedSha ? {} : { resolvedSha: r.resolvedSha }),
+  }))
+}
+
+/**
+ * The candidates the release at `head` carries: integrated work, and resolved work only when `head` holds its
+ * resolving commit, so a task `develop` lacks is neither the anchor nor counted in the bump.
+ */
+async function carried(
+  deps: ReleaseFactsDeps,
+  f: RepositoryReleaseFacts,
+  token: string,
+  head: string,
+): Promise<RepositoryReleaseFacts['releasable']> {
+  const kept: RepositoryReleaseFacts['releasable'] = []
+  const held = new Map<string, boolean>()
+  for (const t of f.releasable) {
+    if (t.resolvedSha) {
+      if (!held.has(t.resolvedSha))
+        held.set(t.resolvedSha, await deps.api.contains(f.repository, token, head, t.resolvedSha))
+      if (!held.get(t.resolvedSha)) continue
+    }
+    kept.push(t)
+  }
+  return kept
 }
 
 async function working(db: Database, repo: string) {
@@ -178,8 +219,21 @@ async function lookFurther(
   }
   const { head, ahead } = await readHead(deps, { fullName: f.repository, releaseBranch }, token)
   if (!head.read) return { ...f, head }
+  let held: RepositoryReleaseFacts['releasable']
+  try {
+    held = await carried(deps, f, token, head.value)
+  } catch (error) {
+    return {
+      ...f,
+      head: unread(
+        `whether ${PRE_RELEASE_BRANCH} of ${f.repository} holds resolved work`,
+        message(error),
+      ),
+    }
+  }
   const seen: RepositoryReleaseFacts = {
     ...f,
+    releasable: held,
     head,
     ahead,
     attempts: await attempts(deps.db, f.repository, head.value),

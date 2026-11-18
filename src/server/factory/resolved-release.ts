@@ -1,7 +1,7 @@
-import { and, asc, eq, gt, isNotNull, isNull } from 'drizzle-orm'
+import { and, asc, eq, gt, isNotNull, isNull, or } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { repository, task } from '../db/schema'
+import { publication, releaseWait, repository, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { Issue } from '../github/issues'
 import type { GithubApi } from '../github/pulls'
@@ -144,18 +144,55 @@ export type CatchUpPage = {
   limit: number
 }
 
+/** How long after a release wait or a publication began or ended a catch-up still leaves its tasks to it. */
+export const SHIPMENT_GRACE_MS = 15 * 60 * 1000
+
+/**
+ * Whether the repository has a release or publication that ships its resolved tasks itself: one waiting,
+ * or one that began or ended inside the grace, when its shipment may be between its merge and its tasks.
+ * A changesets publication closes the issues only once the packages are out, so catch-up never gets ahead of it.
+ */
+async function shipping(db: Database, repo: string, now: Date): Promise<boolean> {
+  const since = new Date(now.getTime() - SHIPMENT_GRACE_MS)
+  const [wait] = await db
+    .select({ id: releaseWait.id })
+    .from(releaseWait)
+    .where(
+      and(
+        eq(releaseWait.repository, repo),
+        or(eq(releaseWait.status, 'waiting'), gt(releaseWait.endedAt, since)),
+      ),
+    )
+    .limit(1)
+  if (wait) return true
+  const [publishing] = await db
+    .select({ id: publication.id })
+    .from(publication)
+    .where(
+      and(
+        eq(publication.repository, repo),
+        or(eq(publication.status, 'waiting'), gt(publication.startedAt, since)),
+      ),
+    )
+    .limit(1)
+  return publishing !== undefined
+}
+
 /**
  * Catches up the tasks that finished with no change before a release could move them, `limit` at a time:
  * each is compared with the head of its repository's release branch (the owner's choice, or the default
  * branch). `next` is where the following pass starts, and 0 once a pass reaches the last task, so a task
  * whose commit is not there yet is looked at again later. A released task no longer matches, so running it
- * again changes nothing. Its issue is left alone: no tag is known here to tell it the version.
+ * again changes nothing. An issue still open is closed with a comment that names the branch, as no tag is known here.
  */
 export async function catchUpResolved(
   deps: {
     db: Database
     app: Pick<GithubApp, 'installationToken'>
-    api: Pick<GithubApi, 'contains' | 'defaultBranch'>
+    api: Pick<GithubApi, 'contains' | 'defaultBranch' | 'commentOnIssue' | 'closeIssue'>
+    /** How an issue is read before it is closed; without it a catch-up leaves issues alone. */
+    now?: () => Date
+    fetchIssue?: (repo: string, issueNumber: number, token: string) => Promise<Pick<Issue, 'state'>>
   },
   page: CatchUpPage,
 ): Promise<ResolvedReleased & { next: number }> {
@@ -170,6 +207,8 @@ export async function catchUpResolved(
   for (const repo of new Set(rows.map((r) => r.repository))) {
     const mine = rows.filter((r) => r.repository === repo)
     try {
+      // Checked here, just before the tasks move, not once per pass: a release may have begun meanwhile.
+      if (await shipping(deps.db, repo, deps.now?.() ?? new Date())) continue
       const { token } = await deps.app.installationToken(repo)
       const branch = await releaseBranchOf(deps.api, repo, token, mine[0])
       const view = {
@@ -178,8 +217,23 @@ export async function catchUpResolved(
         releaseRef: branch,
         releaseBranch: branch,
       }
-      const done = await releaseEach(deps, { ...view, actor: 'factory' }, mine)
+      // A release that is landing may not have shipped these tasks yet, and once they are `released` it
+      // never will: an issue still open is closed here, so no pass leaves one open.
+      const read = deps.fetchIssue
+      const afterRelease = read
+        ? (row: { issueNumber: number }) =>
+            closeOpenIssue(
+              deps.api,
+              (n) => read(repo, n, token),
+              repo,
+              token,
+              row.issueNumber,
+              `Released: the commit this was resolved at is on \`${branch}\`.`,
+            )
+        : undefined
+      const done = await releaseEach(deps, { ...view, actor: 'factory', afterRelease }, mine)
       result.released.push(...done.released)
+      if (done.issueErrors) (result.issueErrors ??= []).push(...done.issueErrors)
       result.errors.push(...done.errors)
     } catch (error) {
       result.errors.push(`${repo}: ${message(error)}`)

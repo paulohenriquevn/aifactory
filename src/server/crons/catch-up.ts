@@ -5,6 +5,7 @@ import { catchUp } from '../factory/catch-up'
 import { githubAppFromEnv } from '../factory/deps'
 import { resolvedCatchUp } from '../factory/resolved-release'
 import { mainProcessOnly } from '../factory/worker-only'
+import { fetchIssue } from '../github/issues'
 import { createGithubApi } from '../github/pulls'
 import { githubPass } from '../github/budget-pass'
 
@@ -32,7 +33,7 @@ export default defineCron('catch-up', {
       if (result.redelivered.length > 0 || result.gaveUp.length > 0 || result.errors.length > 0) {
         console.log(JSON.stringify({ event: 'catch_up', ...result }))
       }
-      await releaseResolvedPass({ db: getDb(), app, api: createGithubApi() })
+      await releaseResolvedPass({ db: getDb(), app, api: createGithubApi(), fetchIssue })
     }),
   ),
 })

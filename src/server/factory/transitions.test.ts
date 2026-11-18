@@ -254,6 +254,11 @@ describe('what a person asks for in the panel', () => {
     ])
   })
 
+  it('releases finished work resolved elsewhere, whose resolving commit anchors the release', () => {
+    expect(acting('release', { resolvedSha: 'r' })).toEqual({ done: 'release' })
+    expect(outcome({ stage: 'done', resolvedSha: 'r' }, 'release')).toEqual(act('release'))
+  })
+
   it('releases only finished work that was integrated, and says which of the two is missing', () => {
     const integrated = { headSha: 'abc', mergedSha: 'm' }
     const unfinished = refused('only a finished task with a pull request can be released')

@@ -1,12 +1,14 @@
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
 
 import type { Database } from '../db'
-import { promotionWait, repository, task } from '../db/schema'
+import { promotionWait, publication, releaseWait, repository, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import { autoMergeOrMergeable, type GithubApi, type OpenPullRequest } from '../github/pulls'
 
 import { errorMessage } from './error-message'
 import { integrationBranch, PRE_RELEASE_BRANCH } from './branches'
+import { advancePreRelease } from './integration'
+import { WORKING } from './transitions'
 import {
   decidePromotionWait,
   holdsIntegrations,
@@ -312,5 +314,94 @@ async function adopt(
   if (!pull) return false
   const pinned = await pin(deps, repo, token, pull)
   if (pinned.developAutoMergeError) throw new Error(pinned.developAutoMergeError)
+  return true
+}
+
+/** What a pass of `promoteResolved` promoted, and the repositories it could not look at. */
+export type PromotedResolved = { promoted: string[]; errors: string[] }
+
+const WORKING_STAGES = ['intake', ...WORKING] as const
+
+/** Whether anything of the repository is in flight that a promotion would collide with. */
+async function busy(db: Database, repo: string): Promise<boolean> {
+  const [working] = await db
+    .select({ id: task.id })
+    .from(task)
+    .where(
+      and(
+        eq(task.repository, repo),
+        or(inArray(task.stage, [...WORKING_STAGES]), isNotNull(task.awaitingCiSha)),
+      ),
+    )
+    .limit(1)
+  if (working) return true
+  const [wait] = await db
+    .select({ id: releaseWait.id })
+    .from(releaseWait)
+    .where(and(eq(releaseWait.repository, repo), eq(releaseWait.status, 'waiting')))
+    .limit(1)
+  if (wait) return true
+  const [publishing] = await db
+    .select({ id: publication.id })
+    .from(publication)
+    .where(and(eq(publication.repository, repo), eq(publication.status, 'waiting')))
+    .limit(1)
+  return publishing !== undefined
+}
+
+/**
+ * Promotes the integration branch to the pre-release branch for a repository whose only waiting work was
+ * resolved elsewhere: people merge straight into the integration branch, so nothing else would carry those
+ * commits to `develop`, and a resolved task is released only by a release that contains its commit. Only an
+ * idle repository (nothing queued, running, waiting for checks, released or promoted) whose integration
+ * branch holds commits `develop` lacks, and only through the same advance and pinned promotion an
+ * integration uses.
+ */
+export async function promoteResolved(
+  deps: PromotionDeps & { github: GithubApp; api: GithubApi },
+): Promise<PromotedResolved> {
+  const result: PromotedResolved = { promoted: [], errors: [] }
+  const candidates = await deps.db
+    .selectDistinct({ fullName: repository.fullName, baseBranch: repository.baseBranch })
+    .from(task)
+    .innerJoin(repository, eq(repository.fullName, task.repository))
+    .where(
+      and(
+        eq(repository.enabled, true),
+        eq(task.stage, 'done'),
+        isNotNull(task.resolvedSha),
+        isNull(task.mergedSha),
+      ),
+    )
+    .orderBy(repository.fullName)
+  for (const repo of candidates) {
+    try {
+      if (await waitingIn(deps.db, repo.fullName)) continue
+      if (await busy(deps.db, repo.fullName)) continue
+      if (await promote(deps, repo.fullName, integrationBranch(repo)))
+        result.promoted.push(repo.fullName)
+    } catch (error) {
+      result.errors.push(`${repo.fullName}: ${message(error)}`)
+    }
+  }
+  return result
+}
+
+async function promote(
+  deps: PromotionDeps & { github: GithubApp; api: GithubApi },
+  repo: string,
+  integration: string,
+): Promise<boolean> {
+  const { token } = await deps.github.installationToken(repo)
+  const ahead = await deps.api.branchAhead(repo, token, PRE_RELEASE_BRANCH, integration)
+  if (!ahead || ahead.aheadBy === 0) return false
+  const advanced = await advancePreRelease(deps, {
+    repository: repo,
+    token,
+    integration,
+    mergedSha: ahead.sha,
+  })
+  if (advanced.developError && !advanced.developPullRequest) throw new Error(advanced.developError)
+  if (advanced.developAutoMergeError) throw new Error(advanced.developAutoMergeError)
   return true
 }

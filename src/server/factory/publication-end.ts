@@ -13,14 +13,19 @@ import {
   versionBranchWaits,
   versionPullRequestFrom,
 } from './changesets'
-import { createOwnTag, latestPreRelease, nextOwnTag } from './deliver'
+import { createOwnTag, latestPreRelease, nextOwnTag, type DeliverDeps } from './deliver'
 import { shipContained, unclosedNote } from './ship'
 import { enterStage } from './stages'
 import { classify } from './watch'
 
 type Publication = typeof publication.$inferSelect
 
-export type EndDeps = { db: Database; api: GithubApi; now?: () => Date }
+export type EndDeps = {
+  db: Database
+  api: GithubApi
+  now?: () => Date
+  fetchIssue?: DeliverDeps['fetchIssue']
+}
 
 /** What came of a publication the release workflow opened no Version Packages pull request for. */
 export type Ending = { wait: string } | { failed: string } | { released: string }
@@ -123,7 +128,8 @@ async function fail(db: Database, p: Publication, reason: string): Promise<Endin
 async function releaseOwn(deps: EndDeps, p: Publication, token: string): Promise<Ending> {
   const [row] = await deps.db.select().from(task).where(eq(task.id, p.taskId))
   const pre = await latestPreRelease(deps.db, p.taskId)
-  if (!row || !pre) throw new Error(`task ${p.taskId} has no pre-release to release`)
+  if (!row || (!pre && row.mergedSha))
+    throw new Error(`task ${p.taskId} has no pre-release to release`)
   const tag = p.tags?.[0] ?? (await nextOwnTag(deps.api, p.repository, token, 'patch'))
   await deps.db
     .update(publication)

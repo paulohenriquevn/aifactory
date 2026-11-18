@@ -94,7 +94,13 @@ beforeEach(async () => {
 const github: GithubApp = { installationToken: async () => ({ token: 't', expiresAt: new Date() }) }
 /** A minute after the promotion: the release workflow has had no time to run. */
 const SOON = new Date(STARTED.getTime() + 60_000)
-const deps = (now = SOON) => ({ db: getDb(), github, api, now: () => now })
+const deps = (now = SOON) => ({
+  db: getDb(),
+  github,
+  api,
+  now: () => now,
+  fetchIssue: (repoName: string, number: number) => api.readIssue(repoName, number),
+})
 
 let seeded = 0
 async function seedTask(stage: 'done' | 'released', mergedSha: string | null = `m${seeded + 1}`) {
@@ -275,6 +281,28 @@ describe('publishing a changesets release', () => {
     expect(comments()[0].body).toContain('Available in `@theokit/ui@1.13.0`')
     const events = await getDb().select().from(stageEvent).where(eq(stageEvent.taskId, alsoShipped))
     expect(events.at(-1)?.detail).toMatchObject({ tag: '@theokit/ui@1.13.0', actor: 'human' })
+  })
+
+  it('ships the resolved task that anchored the release when the publication completes, and closes its issue', async () => {
+    const anchor = await seedTask('done', null)
+    await getDb().update(task).set({ resolvedSha: 'resolved1' }).where(eq(task.id, anchor))
+    await getDb().insert(publication).values({
+      taskId: anchor,
+      repository: 'usetheokit/ui',
+      releaseBranch: 'main',
+      promotedSha: 'promoted1',
+      actor: 'human',
+      startedAt: STARTED,
+    })
+    versionPr()
+    releasesAre(published('@theokit/ui@1.13.0'))
+
+    await pollPublications(deps())
+
+    const [after] = await getDb().select().from(task).where(eq(task.id, anchor))
+    expect(after.stage).toBe('released')
+    expect(closed()).toEqual([after.issueNumber])
+    expect(comments()[0].body).toContain('@theokit/ui@1.13.0')
   })
 
   it('releases a task resolved with no change whose commit the promotion carries, and leaves one it does not', async () => {
@@ -518,6 +546,27 @@ describe('a publication whose release run finished without a Version Packages pu
     expect(closed()).toHaveLength(2)
     expect(comments()[0].body).toContain('Available in `v0.3.1`')
     expect(merges()).toEqual([])
+  })
+
+  it('releases a resolved anchor with no pre-release as the factory release, and closes its issue', async () => {
+    const anchor = await seedTask('done', null)
+    await getDb().update(task).set({ resolvedSha: 'resolved1' }).where(eq(task.id, anchor))
+    await getDb().insert(publication).values({
+      taskId: anchor,
+      repository: 'usetheokit/ui',
+      releaseBranch: 'main',
+      promotedSha: 'promoted1',
+      actor: 'human',
+      startedAt: STARTED,
+    })
+    promotionOutsidePackages()
+
+    await pollPublications(deps(LATER))
+
+    expect(await row()).toMatchObject({ status: 'published', tags: ['v0.3.1'] })
+    expect(await stageOf(anchor)).toBe('released')
+    expect(closed()).toHaveLength(1)
+    expect(comments()[0].body).toContain('Available in `v0.3.1`')
   })
 
   it('makes one tag: a pass that runs again after the tag was made takes the same version', async () => {

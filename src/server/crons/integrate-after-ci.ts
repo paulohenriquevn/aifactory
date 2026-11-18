@@ -3,7 +3,7 @@ import { defineCron } from 'theokit/server/cron'
 import { adoptMergedHandoffs, pollAwaitingIntegrations } from '../factory/await-ci'
 import { pollAwaitingReleases } from '../factory/await-release'
 import { releaseModeFromEnv } from '../factory/deps'
-import { adoptPromotions, pollPromotionWaits } from '../factory/promotion-merge'
+import { adoptPromotions, pollPromotionWaits, promoteResolved } from '../factory/promotion-merge'
 import { passLine } from '../factory/pass-line'
 import { mainProcessOnly } from '../factory/worker-only'
 import { createPromotionApi } from '../github/promotion-api'
@@ -48,6 +48,7 @@ export default defineCron('integrate-after-ci', {
         const passes: [string, () => Promise<Record<string, unknown>>][] = [
           ['promotion_after_ci', () => pollPromotionWaits(github)],
           ['promotion_adopted', () => adoptPromotions(github)],
+          ['promotion_resolved', () => promoteResolved(github)],
           [
             'integrate_after_ci',
             () =>

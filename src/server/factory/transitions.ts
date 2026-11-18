@@ -178,6 +178,8 @@ const NOT_INTEGRATED = refuse(
   'this work was not integrated: its pull request is still waiting to be merged into the integration branch, so it is not on the pre-release branch',
 )
 const release: Rule = (task) => {
+  // Work resolved elsewhere has no pull request: its resolving commit is what a release must contain.
+  if (task.resolvedSha && !task.mergedSha) return act('release')
   if (!task.headSha) return NOT_RELEASABLE
   return task.mergedSha ? act('release') : NOT_INTEGRATED
 }

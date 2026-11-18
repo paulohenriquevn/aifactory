@@ -33,8 +33,11 @@ export type RepositoryReleaseFacts = {
   repository: string
   /** Its release mode, or the factory's default when it has none. */
   mode: ReleaseMode
-  /** Its tasks with integrated work that no release holds (`done` with a merge), oldest first. */
-  releasable: { taskId: number; issueNumber: number }[]
+  /**
+   * Its tasks with work that no release holds (`done` with a merge, or resolved elsewhere at a commit),
+   * integrated ones first, then oldest first.
+   */
+  releasable: { taskId: number; issueNumber: number; resolvedSha?: string }[]
   /** Its tasks queued, running or waiting for the integration branch's checks. */
   working: number
   /** A release or a publication of the repository that has not finished, said as a person reads it. */

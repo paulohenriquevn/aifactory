@@ -12,7 +12,7 @@ import { FakeGithub } from '../../test/fake-github'
 import { pollAwaitingIntegrations, type AwaitCiDeps } from './await-ci'
 import { advancePreRelease } from './integration'
 import { PROMOTION_HOLD_MS } from './promotion-hold'
-import { adoptPromotions, pollPromotionWaits } from './promotion-merge'
+import { adoptPromotions, pollPromotionWaits, promoteResolved } from './promotion-merge'
 
 beforeAll(async () => {
   getStorageManager().configure(storageFromUrl(readDatabaseUrl()))
@@ -370,5 +370,75 @@ describe('an integration a promotion held out', () => {
     expect(pass.merged).toEqual([])
     expect(pinned()).toEqual([{ number: 12, sha: VERIFIED }])
     expect(await row(id)).toMatchObject({ awaitingCiSha: VERIFIED, integrationHeld: false })
+  })
+})
+
+describe('promoteResolved', () => {
+  async function resolvedWork(stage: 'done' | 'build' = 'done', n = 7, resolved = true) {
+    const db = getDb()
+    await db.insert(repository).values({ fullName: REPO, enabled: true }).onConflictDoNothing()
+    const [i] = await db
+      .insert(ingress)
+      .values({
+        deliveryId: `d-resolved-${n}`,
+        event: 'issues',
+        payload: {},
+        outcome: 'task_created',
+        code: 'issue_labeled',
+        reason: 'r',
+      })
+      .returning({ id: ingress.id })
+    await db.insert(task).values({
+      ingressId: i.id,
+      repository: REPO,
+      issueNumber: n,
+      issueTitle: 'Resolved',
+      stage,
+      ...(resolved ? { resolvedSha: INTEGRATED } : {}),
+    })
+  }
+  const promote = () => promoteResolved({ db: getDb(), github, api, now: () => NOW })
+
+  it('opens and pins the promotion when only resolved work waits and develop lacks commits', async () => {
+    await resolvedWork()
+    repo().ahead('develop', 'workspace', 2)
+
+    expect(await promote()).toEqual({ promoted: [REPO], errors: [] })
+    expect(pinned()).toEqual([{ number: 13, sha: INTEGRATED }])
+    expect(await waits()).toMatchObject([{ repository: REPO, sha: INTEGRATED, status: 'waiting' }])
+  })
+
+  it('does nothing when develop already holds the integration branch', async () => {
+    await resolvedWork()
+    repo().ahead('develop', 'workspace', 0)
+
+    expect(await promote()).toEqual({ promoted: [], errors: [] })
+    expect(pinned()).toEqual([])
+  })
+
+  it('does nothing while a task of the repository is still working', async () => {
+    await resolvedWork()
+    await resolvedWork('build', 8, false)
+    repo().ahead('develop', 'workspace', 2)
+
+    expect(await promote()).toEqual({ promoted: [], errors: [] })
+    expect(pinned()).toEqual([])
+  })
+
+  it('leaves alone a repository whose promotion already waits', async () => {
+    await resolvedWork()
+    repo().ahead('develop', 'workspace', 2)
+    await promote()
+    api.calls.length = 0
+
+    expect(await promote()).toEqual({ promoted: [], errors: [] })
+    expect(pinned()).toEqual([])
+  })
+
+  it('ignores a repository with no resolved work waiting', async () => {
+    await resolvedWork('done', 7, false)
+    repo().ahead('develop', 'workspace', 2)
+
+    expect(await promote()).toEqual({ promoted: [], errors: [] })
   })
 })

@@ -5,7 +5,7 @@ import { decision, releaseWait, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
 import type { GithubApi } from '../github/pulls'
 
-import { completeRelease, latestPreRelease } from './deliver'
+import { completeRelease, latestPreRelease, type DeliverDeps } from './deliver'
 import { decideWaitingRelease, type ReleaseStep } from './release-wait'
 
 export type AwaitReleaseDeps = {
@@ -13,6 +13,7 @@ export type AwaitReleaseDeps = {
   github: GithubApp
   api: GithubApi
   now?: () => Date
+  fetchIssue?: DeliverDeps['fetchIssue']
 }
 
 export type AwaitReleaseResult = {
@@ -46,7 +47,8 @@ async function finish(
   try {
     const [row] = await deps.db.select().from(task).where(eq(task.id, wait.taskId))
     const pre = await latestPreRelease(deps.db, wait.taskId)
-    if (!pre) throw new Error('there is no pre-release for this work')
+    // Work resolved elsewhere has no pre-release: its release is of what the promotion contains.
+    if (!pre && row.mergedSha) throw new Error('there is no pre-release for this work')
     await completeRelease(deps, {
       row,
       pre,
