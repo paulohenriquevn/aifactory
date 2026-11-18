@@ -112,7 +112,39 @@ describe('compareWithBaseline', () => {
     expect(compareWithBaseline(at, before).ok).toBe(true)
     const refused = compareWithBaseline(above, before)
     expect(refused.ok).toBe(false)
-    expect(refused.reasons).toEqual(['the mean cost per case rose from US$ 0.50 to US$ 0.64'])
+    expect(refused.reasons).toEqual(['the mean cost per case rose from US$ 0.50 to US$ 0.64 (4 cases that ran to a verdict in both runs)'])
+  })
+
+  it('refuses a cost rise that one early failure at zero cost would hide', () => {
+    const run = [
+      ...before.results.slice(0, 4).map((r) => ({ ...r, costUsd: 0.75 })),
+      { ...result('e', false, 0), attempts: 0, reviewRounds: 0, reachedVerdict: false },
+    ]
+    const compared = compareWithBaseline(run, before)
+
+    expect(compared.ok).toBe(false)
+    expect(compared.reasons).toEqual([
+      'the mean cost per case rose from US$ 0.50 to US$ 0.75 (4 cases that ran to a verdict in both runs)',
+    ])
+  })
+
+  it('leaves out a case that reached no verdict in the baseline, and a legacy failure, since its review rounds may hold an invalid review', () => {
+    const base = baseline([
+      result('a', true),
+      { ...result('b', false, 0), reviewRounds: 1 },
+    ])
+    const run = [result('a', true, 0.5), result('b', true, 9)]
+
+    expect(compareWithBaseline(run, base).ok).toBe(true)
+  })
+
+  it('refuses a cost it could not compare when no case ran to a verdict in both runs', () => {
+    const base = baseline([result('a', true)])
+    const run = [{ ...result('a', false, 0), reachedVerdict: false }]
+
+    expect(compareWithBaseline(run, base).reasons).toContain(
+      'no case ran to a verdict in both runs, so the cost could not be compared',
+    )
   })
 
   it('does not judge cost against a baseline that cost nothing', () => {

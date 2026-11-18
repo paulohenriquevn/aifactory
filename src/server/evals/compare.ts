@@ -12,7 +12,19 @@ export type CaseResult = {
   /** How many builder passes the case took. */
   attempts: number
   reviewRounds: number
+  /**
+   * Whether the case ran to a reviewer's verdict (approve or changes). A case stopped early, or whose checks
+   * never let a review finish, has none, and its cost says nothing. Results recorded before this field
+   * existed are read by `reachedVerdict`.
+   */
+  reachedVerdict?: boolean
 }
+
+/**
+ * A result recorded without the field counts as a verdict only when it passed (an approval): `reviewRounds` also
+ * counts a review that gave no valid verdict, so a failed legacy result is ambiguous and left out.
+ */
+export const reachedVerdict = (r: CaseResult): boolean => r.reachedVerdict ?? r.passed
 
 /** Which agents ran, and with what model, so a change made outside the code still counts as a change. */
 export type AgentSetup = Record<string, string>
@@ -128,6 +140,10 @@ export function compareWithBaseline(
   const regressions = measured.filter((r) => !r.passed && earlier.get(r.id)!.passed).map((r) => r.id)
   const improvements = measured.filter((r) => r.passed && !earlier.get(r.id)!.passed).map((r) => r.id)
   const pValue = regressionPValue(regressions.length, improvements.length)
+  // Cost is compared over the cases that ran to a verdict in both runs: a case that failed early costs nothing.
+  const costed = measured.filter((r) => reachedVerdict(r) && reachedVerdict(earlier.get(r.id)!))
+  now.meanCostUsd = mean(costed.map((r) => r.costUsd))
+  before.meanCostUsd = mean(costed.map((r) => earlier.get(r.id)!.costUsd))
   const counts = { regressions, improvements, unmeasured, pValue, now, before }
   if (shared.length === 0) {
     return { ok: false, reasons: ['no case of this run is in the baseline'], ...counts }
@@ -146,12 +162,15 @@ export function compareWithBaseline(
   if (before.passRate - now.passRate > thresholds.passRateDrop + EPSILON) {
     reasons.push(`the pass rate fell from ${percent(before.passRate)} to ${percent(now.passRate)}`)
   }
+  if (costed.length === 0 && measured.length > 0) {
+    reasons.push('no case ran to a verdict in both runs, so the cost could not be compared')
+  }
   if (
     before.meanCostUsd > 0 &&
     now.meanCostUsd > before.meanCostUsd * (1 + thresholds.costRise) + EPSILON
   ) {
     reasons.push(
-      `the mean cost per case rose from ${usd(before.meanCostUsd)} to ${usd(now.meanCostUsd)}`,
+      `the mean cost per case rose from ${usd(before.meanCostUsd)} to ${usd(now.meanCostUsd)} (${costed.length} cases that ran to a verdict in both runs)`,
     )
   }
   return { ok: reasons.length === 0, reasons, ...counts }

@@ -787,6 +787,63 @@ describe('runCase', () => {
     expect(failedForEnvironment(result)).toBe(true)
   })
 
+  it('records a verdict for an approval and for a review that asks for changes, none for an invalid review', async () => {
+    const approved = await runCase(
+      deps(sandbox(), agent('builder', planned(built())), agent('reviewer', [{ ok: true, summary: APPROVE }])),
+      evalCase,
+    )
+    const changes = await runCase(
+      deps(
+        sandbox(),
+        agent('builder', planned(built(), built(), built())),
+        agent('reviewer', rounds(5, 6, 7)),
+      ),
+      evalCase,
+    )
+    const invalid = await runCase(
+      deps(
+        sandbox(),
+        agent('builder', planned(built())),
+        agent('reviewer', [{ ok: true, summary: 'not a verdict' }]),
+      ),
+      evalCase,
+    )
+
+    expect(approved).toMatchObject({ passed: true, reachedVerdict: true })
+    expect(changes).toMatchObject({ passed: false, reachedVerdict: true })
+    expect(invalid).toMatchObject({ passed: false, reviewRounds: 1, reachedVerdict: false })
+  })
+
+  it('keeps the verdict of a review when a later round ends without a valid one', async () => {
+    const result = await runCase(
+      deps(
+        sandbox(),
+        agent('builder', planned(built(), built())),
+        agent('reviewer', [
+          { ok: true, summary: CHANGES },
+          { ok: true, summary: 'not a verdict' },
+        ]),
+      ),
+      evalCase,
+    )
+
+    expect(result).toMatchObject({ passed: false, reviewRounds: 2, reachedVerdict: true })
+  })
+
+  it('records no verdict for a case stopped early', async () => {
+    const early = await runCase(
+      deps(sandbox({ dirty: false }), agent('builder', planned(built('nothing'))), agent('reviewer', [])),
+      evalCase,
+    )
+    const unrunnable = await runCase(
+      deps(sandbox(), agent('builder', []), agent('reviewer', [])),
+      { ...evalCase, baseSha: 'nope' },
+    )
+
+    expect(early.reachedVerdict).toBe(false)
+    expect(unrunnable.reachedVerdict).toBe(false)
+  })
+
   it('fails a case whose checks still fail after the last attempt', async () => {
     const builder = agent('builder', planned(built(), built('try 2'), built('try 3')))
 

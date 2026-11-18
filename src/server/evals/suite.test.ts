@@ -415,7 +415,10 @@ describe('checkBeforeDeploy', () => {
     expect(checked).toMatchObject({
       ran: true,
       ok: false,
-      reasons: ['the pass rate fell from 100% to 0%'],
+      reasons: [
+        'the pass rate fell from 100% to 0%',
+        'no case ran to a verdict in both runs, so the cost could not be compared',
+      ],
     })
   })
 })
