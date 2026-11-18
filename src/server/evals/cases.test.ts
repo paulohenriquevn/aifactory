@@ -160,6 +160,16 @@ describe('the change the factory holds for an evaluation', () => {
     ).toEqual(['src/server/factory/harness-codex.ts', 'src/server/agents/prompts/build.md'])
   })
 
+  it('holds a change to the security floor or the scan that reads it, and not to their tests', () => {
+    expect(
+      heldForEvaluation(FACTORY_REPOSITORY, [
+        'src/server/factory/security-floor.ts',
+        'src/server/factory/security-scan.ts',
+        'src/server/factory/security-floor.test.ts',
+      ]),
+    ).toEqual(['src/server/factory/security-floor.ts', 'src/server/factory/security-scan.ts'])
+  })
+
   it('is nothing for a change that leaves the agent configuration alone', () => {
     expect(heldForEvaluation(FACTORY_REPOSITORY, ['src/server/factory/run.ts'])).toEqual([])
   })

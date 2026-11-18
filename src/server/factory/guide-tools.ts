@@ -174,7 +174,8 @@ export function enginesForGuide(settings: AgentSettings) {
     inUse: settings.effective,
     chosenInThePanel: settings.chosen,
     modelInUse: settings.chosenModel,
-    effortInUse: settings.chosenEffort,
+    // The security agent's effort is never chosen: it is the highest its agent offers.
+    effortInUse: { ...settings.chosenEffort, security: settings.pinnedEffort.security },
     available: settings.options.map((o) =>
       o.ready ? o.id : `${o.id} (cannot start: ${o.problem})`,
     ),

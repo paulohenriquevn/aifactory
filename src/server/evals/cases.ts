@@ -120,6 +120,8 @@ export const AGENT_CONFIGURATION = [
   'src/server/factory/required-files.ts',
   'src/server/factory/evidence.ts',
   'src/server/factory/e2b-template.ts',
+  'src/server/factory/security-floor.ts',
+  'src/server/factory/security-scan.ts',
   'src/server/knowledge/prompt.ts',
   'ops/sandbox/Dockerfile',
 ]

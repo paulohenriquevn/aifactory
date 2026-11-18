@@ -5,10 +5,14 @@ import { describe, expect, it } from 'vitest'
 
 import {
   assertSafeName,
+  byEffort,
   codexModels,
   engineModels,
+  highestEffort,
   isSafeName,
+  NoPinnedEffort,
   optionsFor,
+  pinnedEffort,
   tagged,
   untag,
 } from './engine-models'
@@ -182,5 +186,87 @@ describe('what a role tells the agent it ends up running', () => {
         'codex',
       ),
     ).toEqual({})
+  })
+})
+
+describe('the effort of the security agent', () => {
+  const codexCache = () =>
+    cache([
+      entry('gpt-6.1-sol', {
+        supported_reasoning_levels: ['low', 'high', 'max', 'ultra'].map((effort) => ({ effort })),
+      }),
+      entry('gpt-6-luna', {
+        supported_reasoning_levels: ['low', 'medium', 'max'].map((effort) => ({ effort })),
+      }),
+    ])
+  const home = { FACTORY_CODEX_HOME: '/h' }
+
+  it("is each agent's highest level, for the model in use when it lists its own", () => {
+    const catalog = engineModels(home, codexCache)
+    expect(highestEffort(catalog['claude-code'])).toBe('max')
+    expect(highestEffort(catalog['claude-code'], 'opus')).toBe('max')
+    expect(highestEffort(catalog.codex, 'gpt-6-luna')).toBe('max')
+    expect(highestEffort(catalog.codex, 'gpt-6.1-sol')).toBe('ultra')
+    expect(highestEffort(catalog.codex)).toBe('ultra')
+    expect(highestEffort(undefined)).toBeUndefined()
+    expect(highestEffort({ models: [], efforts: [] })).toBeUndefined()
+  })
+
+  it('resolves to the maximum of its agent, whatever effort is stored or set for it or the builder', () => {
+    const catalog = engineModels(home, codexCache)
+    const low = {
+      ...home,
+      FACTORY_EFFORT_SECURITY: 'claude-code:low',
+      FACTORY_EFFORT_BUILDER: 'claude-code:low',
+    }
+    for (const [engine, model] of [
+      ['claude-code', undefined],
+      ['claude-code', 'sonnet'],
+      ['codex', 'gpt-6.1-sol'],
+      ['codex', 'gpt-6-luna'],
+    ] as const) {
+      const env = model ? { ...low, FACTORY_MODEL_SECURITY: `${engine}:${model}` } : low
+      expect(optionsFor(env, 'security', engine, codexCache).effort, `${engine} ${model}`).toBe(
+        highestEffort(catalog[engine], model),
+      )
+    }
+  })
+
+  it("uses the builder's model when it has none of its own, and the maximum for that model", () => {
+    const env = { ...home, FACTORY_MODEL_BUILDER: 'codex:gpt-6-luna' }
+    expect(optionsFor(env, 'security', 'codex', codexCache)).toEqual({
+      model: 'gpt-6-luna',
+      effort: 'max',
+    })
+  })
+
+  it('refuses to resolve when its agent lists no effort level, so it never runs at a lower default', () => {
+    expect(() => optionsFor(home, 'security', 'codex', () => '')).toThrow(NoPinnedEffort)
+    expect(() => pinnedEffort({}, 'unknown')).toThrow(/lists no effort level/)
+  })
+})
+
+describe('the order of effort levels', () => {
+  it('goes from the lowest to the highest, with a level nobody knows below all of them', () => {
+    expect(byEffort(['ultra', 'low', 'max', 'odd', 'medium', 'minimal', 'xhigh', 'high'])).toEqual([
+      'odd',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra',
+    ])
+  })
+
+  it("puts Codex's levels in that order when they are gathered from models that list different ones", () => {
+    const { codex } = engineModels({ FACTORY_CODEX_HOME: '/h' }, () =>
+      cache([
+        entry('a', { supported_reasoning_levels: [{ effort: 'low' }, { effort: 'ultra' }] }),
+        entry('b', { supported_reasoning_levels: [{ effort: 'medium' }] }),
+      ]),
+    )
+    expect(codex.efforts).toEqual(['low', 'medium', 'ultra'])
   })
 })

@@ -75,7 +75,7 @@ export function engineModels(
   const codex = codexModels(env, read)
   return {
     'claude-code': { models: CLAUDE_MODELS, efforts: CLAUDE_EFFORTS },
-    codex: { models: codex, efforts: [...new Set(codex.flatMap((m) => m.efforts))] },
+    codex: { models: codex, efforts: byEffort([...new Set(codex.flatMap((m) => m.efforts))]) },
   }
 }
 
@@ -84,11 +84,14 @@ export const MODEL_ENV: Record<AgentRole, string> = {
   builder: 'FACTORY_MODEL_BUILDER',
   planner: 'FACTORY_MODEL_PLANNER',
   reviewer: 'FACTORY_MODEL_REVIEWER',
+  security: 'FACTORY_MODEL_SECURITY',
 }
 export const EFFORT_ENV: Record<AgentRole, string> = {
   builder: 'FACTORY_EFFORT_BUILDER',
   planner: 'FACTORY_EFFORT_PLANNER',
   reviewer: 'FACTORY_EFFORT_REVIEWER',
+  // Never read for the security agent: its effort is pinned (`pinnedEffort`). It is here so a stored value has a name.
+  security: 'FACTORY_EFFORT_SECURITY',
 }
 
 /**
@@ -105,22 +108,76 @@ export function untag(value: string | undefined, engine: string): string | undef
     : undefined
 }
 
+/** The role whose effort nobody chooses: it always runs at the highest level its agent offers (#241). */
+export const PINNED_ROLE = 'security' satisfies AgentRole
+
+/** Thrown when the security agent's effort cannot be pinned, because its agent lists no effort level. */
+export class NoPinnedEffort extends Error {}
+
 /**
- * What a role tells the agent it ends up running. The planner and the reviewer use the builder's model and
- * effort until given their own, as they use its agent, but only when it is the same agent.
+ * The effort levels the agents use, from the lowest to the highest. A level not here sorts below all of them,
+ * so a name nobody knows is never taken for the highest while a known one is offered.
+ */
+const EFFORT_LADDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+const rank = (level: string) => EFFORT_LADDER.indexOf(level)
+
+/** The levels from the lowest to the highest; levels of the same rank keep their order. */
+export const byEffort = (levels: string[]) => [...levels].sort((a, b) => rank(a) - rank(b))
+
+/**
+ * The highest effort an agent offers, for the model when it lists its own levels, else among every level the
+ * agent offers. The levels are put in order first: the agent's own list is gathered from several models, and
+ * an order the agent happens to print is not taken on trust. Undefined when nothing is listed.
+ */
+export function highestEffort(
+  offered: EngineModels | undefined,
+  model?: string,
+): string | undefined {
+  const levels = offered?.models.find((m) => m.id === model)?.efforts ?? offered?.efforts ?? []
+  return byEffort(levels).at(-1)
+}
+
+/**
+ * The effort the security agent runs at with this agent and model: the highest one offered, whatever is
+ * stored or set in the environment. Throws `NoPinnedEffort` when the agent lists none, so it never runs at a
+ * default that may be lower.
+ */
+export function pinnedEffort(
+  catalog: Record<string, EngineModels>,
+  engine: string,
+  model?: string,
+): string {
+  const effort = highestEffort(catalog[engine], model)
+  if (!effort || !isSafeName(effort)) {
+    throw new NoPinnedEffort(
+      `the security agent runs only at the highest effort of its agent, and ${engine} lists no effort level`,
+    )
+  }
+  return effort
+}
+
+/**
+ * What a role tells the agent it ends up running. The planner, the reviewer and the security agent use the
+ * builder's model and effort until given their own, as they use its agent, but only when it is the same agent.
+ * The security agent's effort is never chosen: it is the highest its agent offers (`pinnedEffort`).
  */
 export function optionsFor(
   env: NodeJS.ProcessEnv,
   role: AgentRole,
   engine: string,
+  read?: (path: string) => string,
 ): HarnessOptions {
   const pick = (names: Record<AgentRole, string>) =>
     untag(env[names[role]], engine) ??
     (role === 'builder' ? undefined : untag(env[names.builder], engine))
   const model = pick(MODEL_ENV)
-  const effort = pick(EFFORT_ENV)
+  const safeModel = model && isSafeName(model) ? model : undefined
+  const effort =
+    role === PINNED_ROLE
+      ? pinnedEffort(engineModels(env, read), engine, safeModel)
+      : pick(EFFORT_ENV)
   return {
-    ...(model && isSafeName(model) ? { model } : {}),
+    ...(safeModel ? { model: safeModel } : {}),
     ...(effort && isSafeName(effort) ? { effort } : {}),
   }
 }

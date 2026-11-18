@@ -4,7 +4,18 @@ import type { AgentRole, AgentSettingChange, AgentSettings, EngineOption } from 
 import type { Database } from '../db'
 import { agentSettingChange, repository, setting } from '../db/schema'
 
-import { EFFORT_ENV, engineModels, isSafeName, MODEL_ENV, tagged, untag } from './engine-models'
+import {
+  EFFORT_ENV,
+  engineModels,
+  highestEffort,
+  isSafeName,
+  MODEL_ENV,
+  NoPinnedEffort,
+  optionsFor,
+  PINNED_ROLE,
+  tagged,
+  untag,
+} from './engine-models'
 import { withClaudeToken } from './claude-token'
 import { canStart, DEFAULT_HARNESS, defaultPlannerName, harnessRegistry } from './harness-registry'
 
@@ -13,6 +24,7 @@ export const ROLE_ENV: Record<AgentRole, string> = {
   builder: 'FACTORY_HARNESS',
   planner: 'FACTORY_PLANNER',
   reviewer: 'FACTORY_REVIEWER',
+  security: 'FACTORY_SECURITY',
 }
 
 const ROLES = Object.keys(ROLE_ENV) as AgentRole[]
@@ -33,7 +45,7 @@ export const SETTINGS_LOCK = 81_001
 export type Chosen = Record<AgentRole, string | null>
 type Stored = { engine: Chosen; model: Chosen; effort: Chosen }
 
-const nobody = (): Chosen => ({ builder: null, planner: null, reviewer: null })
+const nobody = (): Chosen => ({ builder: null, planner: null, reviewer: null, security: null })
 
 /** What the owner saved, the model and the effort still tagged with the agent they were chosen for. */
 async function loadStored(db: Pick<Database, 'select'>): Promise<Stored> {
@@ -57,7 +69,7 @@ export async function loadChosen(db: Database): Promise<Chosen> {
 
 /**
  * The environment a run reads, with what the owner chose in the panel laid over it. Everything that reads
- * `FACTORY_HARNESS`, `FACTORY_PLANNER`, `FACTORY_REVIEWER` or the model and effort of a role through an `env`
+ * `FACTORY_HARNESS`, `FACTORY_PLANNER`, `FACTORY_REVIEWER`, `FACTORY_SECURITY` or the model and effort of a role through an `env`
  * argument then sees the choice, and nothing else has to know where it came from.
  */
 export async function effectiveEnv(
@@ -88,6 +100,7 @@ export function effectiveOf(
     builder,
     planner: env.FACTORY_PLANNER || defaultPlannerName(builder, ready),
     reviewer: env.FACTORY_REVIEWER || builder,
+    security: env.FACTORY_SECURITY || builder,
   }
 }
 
@@ -157,6 +170,12 @@ function planWrites(
       const chosenModel = model ?? untag(stored.model[role] ?? undefined, engine)
       const levels = offered.models.find((m) => m.id === chosenModel)?.efforts ?? offered.efforts
       known('effort', effort, levels, engine)
+      const highest = highestEffort(offered, chosenModel)
+      if (role === PINNED_ROLE && effort !== highest) {
+        throw new SettingRefused(
+          `the security agent always runs at the highest effort ${engine} offers (${highest}), never at "${effort}"`,
+        )
+      }
     }
     if (patch[role] !== undefined)
       writes.push({ key: ENGINE_KEY(role), value: patch[role] ?? null, role, field: 'engine' })
@@ -239,6 +258,20 @@ export async function saveChosen(
   return loadChosen(db)
 }
 
+/** The effort the security agent runs at, as a run resolves it; null when its agent lists no level. */
+function securityEffort(
+  env: NodeJS.ProcessEnv,
+  engine: string,
+  read?: (path: string) => string,
+): string | null {
+  try {
+    return optionsFor(env, 'security', engine, read).effort ?? null
+  } catch (error) {
+    if (error instanceof NoPinnedEffort) return null
+    throw error
+  }
+}
+
 /** What the page needs to show and change the choice. */
 export async function agentSettings(
   db: Database,
@@ -246,7 +279,8 @@ export async function agentSettings(
   read?: (path: string) => string,
 ): Promise<AgentSettings> {
   const stored = await loadStored(db)
-  const effective = effectiveOf(await effectiveEnv(db, env))
+  const applied = await effectiveEnv(db, env)
+  const effective = effectiveOf(applied)
   const own = await db.select().from(repository).where(eq(repository.enabled, true))
   const fit = (chosen: Chosen) =>
     Object.fromEntries(
@@ -258,6 +292,7 @@ export async function agentSettings(
     effective,
     chosenModel: fit(stored.model),
     chosenEffort: fit(stored.effort),
+    pinnedEffort: { security: securityEffort(applied, effective.security, read) },
     engines: engineModels(env, read),
     repositoriesWithOwn: own
       .filter((r) => r.harness || r.reviewer)

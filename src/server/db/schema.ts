@@ -649,7 +649,7 @@ export const setting = pgTable('setting', {
  */
 export const agentSettingChange = pgTable('agent_setting_change', {
   id: serial('id').primaryKey(),
-  role: text('role', { enum: ['builder', 'planner', 'reviewer'] }).notNull(),
+  role: text('role', { enum: ['builder', 'planner', 'reviewer', 'security'] }).notNull(),
   field: text('field', { enum: ['engine', 'model', 'effort'] }).notNull(),
   oldValue: text('old_value'),
   newValue: text('new_value'),

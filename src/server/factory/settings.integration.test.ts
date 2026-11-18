@@ -40,7 +40,12 @@ const ready = {
 
 describe('the choice of agent, kept in the panel', () => {
   it('starts with nothing chosen, so the environment decides', async () => {
-    expect(await loadChosen(getDb())).toEqual({ builder: null, planner: null, reviewer: null })
+    expect(await loadChosen(getDb())).toEqual({
+      builder: null,
+      planner: null,
+      reviewer: null,
+      security: null,
+    })
     const env = await effectiveEnv(getDb(), { FACTORY_HARNESS: 'codex' })
     expect(env.FACTORY_HARNESS).toBe('codex')
   })
@@ -65,12 +70,14 @@ describe('the choice of agent, kept in the panel', () => {
       builder: 'claude-code',
       planner: null,
       reviewer: 'claude-code',
+      security: null,
     })
     await saveChosen(getDb(), { reviewer: null }, ready)
     expect(await loadChosen(getDb())).toEqual({
       builder: 'claude-code',
       planner: null,
       reviewer: null,
+      security: null,
     })
     await saveChosen(getDb(), {}, ready)
     expect((await loadChosen(getDb())).builder).toBe('claude-code')
@@ -92,7 +99,12 @@ describe('the choice of agent, kept in the panel', () => {
     await expect(
       saveChosen(getDb(), { builder: 'claude-code', planner: 'gpt-9' }, ready),
     ).rejects.toBeInstanceOf(SettingRefused)
-    expect(await loadChosen(getDb())).toEqual({ builder: null, planner: null, reviewer: null })
+    expect(await loadChosen(getDb())).toEqual({
+      builder: null,
+      planner: null,
+      reviewer: null,
+      security: null,
+    })
   })
 
   it('turns a refusal into one the panel can show', async () => {
@@ -115,11 +127,17 @@ describe('the choice of agent, kept in the panel', () => {
       ['claude-code', true],
       ['codex', true],
     ])
-    expect(settings.chosen).toEqual({ builder: null, planner: null, reviewer: 'codex' })
+    expect(settings.chosen).toEqual({
+      builder: null,
+      planner: null,
+      reviewer: 'codex',
+      security: null,
+    })
     expect(settings.effective).toEqual({
       builder: 'claude-code',
       planner: 'codex',
       reviewer: 'codex',
+      security: 'claude-code',
     })
     expect(settings.repositoriesWithOwn).toEqual([
       { repository: 'o/own', builder: 'codex', reviewer: null },
@@ -187,7 +205,12 @@ describe('the model and the effort, kept in the panel', () => {
     await expect(
       saveChosen(getDb(), { builder: 'codex', models: { builder: 'a;b' } }, ready, read),
     ).rejects.toThrow(/not a plain model name/)
-    expect(await loadChosen(getDb())).toEqual({ builder: null, planner: null, reviewer: null })
+    expect(await loadChosen(getDb())).toEqual({
+      builder: null,
+      planner: null,
+      reviewer: null,
+      security: null,
+    })
   })
 
   it('refuses an effort the model does not take, and takes any level of the agent when no model is chosen', async () => {
@@ -272,7 +295,12 @@ describe('the model and the effort, kept in the panel', () => {
       'opus',
       'fable',
     ])
-    expect(settings.chosenModel).toEqual({ builder: 'gpt-6-luna', planner: null, reviewer: null })
+    expect(settings.chosenModel).toEqual({
+      builder: 'gpt-6-luna',
+      planner: null,
+      reviewer: null,
+      security: null,
+    })
   })
 
   it('shows the catalog with the model in use', async () => {
@@ -286,6 +314,35 @@ describe('the model and the effort, kept in the panel', () => {
     expect(view.agents.find((a) => a.id === 'builder')?.engine.value).toBe(
       'codex · gpt-6.1-sol · esforço high',
     )
+  })
+})
+
+describe('the effort of the security agent', () => {
+  it('is saved only at the highest level its agent offers, and refused at any lower one', async () => {
+    await expect(
+      saveChosen(getDb(), { efforts: { security: 'high' } }, ready, read),
+    ).rejects.toThrow(
+      /always runs at the highest effort claude-code offers \(max\), never at "high"/,
+    )
+    await expect(
+      saveChosen(getDb(), { security: 'codex', efforts: { security: 'low' } }, ready, read),
+    ).rejects.toThrow(SettingRefused)
+    expect(await loadChosen(getDb())).toEqual({
+      builder: null,
+      planner: null,
+      reviewer: null,
+      security: null,
+    })
+    await saveChosen(getDb(), { efforts: { security: 'max' } }, ready, read)
+    expect((await effectiveEnv(getDb(), ready)).FACTORY_EFFORT_SECURITY).toBe('claude-code:max')
+  })
+
+  it("tells the page the highest level of the agent and model it runs with, which follows the builder's agent", async () => {
+    expect((await agentSettings(getDb(), ready, read)).pinnedEffort).toEqual({ security: 'max' })
+    await saveChosen(getDb(), { builder: 'codex', models: { builder: 'gpt-6-luna' } }, ready, read)
+    const settings = await agentSettings(getDb(), ready, read)
+    expect(settings.effective.security).toBe('codex')
+    expect(settings.pinnedEffort).toEqual({ security: 'low' })
   })
 })
 

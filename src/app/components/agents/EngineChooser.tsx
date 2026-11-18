@@ -11,12 +11,15 @@ const ROLE_LABEL: Record<AgentRole, string> = {
   builder: 'Agente de código do Construtor',
   planner: 'Agente de código do Planejador',
   reviewer: 'Agente de código do Revisor',
+  security: 'Agente de código da Segurança',
 }
 
-const ROLE_NAME: Record<AgentRole, string> = {
-  builder: 'Construtor',
-  planner: 'Planejador',
-  reviewer: 'Revisor',
+/** The role after "do"/"da", which Portuguese chooses by the gender of the noun. */
+const OF_ROLE: Record<AgentRole, string> = {
+  builder: 'do Construtor',
+  planner: 'do Planejador',
+  reviewer: 'do Revisor',
+  security: 'da Segurança',
 }
 
 const select = 'h-9 min-w-52 rounded-lg border border-border bg-card px-2 text-sm text-foreground'
@@ -27,7 +30,8 @@ const caption = 'mb-1 block text-xs font-medium uppercase tracking-wide text-mut
  * panel and applied to the next run with no restart. An agent that cannot start (its credential is missing)
  * is listed but cannot be picked, with what is missing, because a choice that breaks every run is worse than
  * none. The models and the effort levels are the ones of the agent chosen, and change with it, because a
- * model of one agent means nothing to the other. Planner and reviewer can follow the builder.
+ * model of one agent means nothing to the other. Planner and reviewer can follow the builder. The security
+ * agent's effort is shown, never chosen: it is always the highest its agent offers.
  */
 export function EngineChooser({
   role,
@@ -79,7 +83,7 @@ export function EngineChooser({
       await put('/api/panel/agents/settings', {
         ...(value === current ? {} : { [role]: value === SAME ? null : value }),
         models: { [role]: model === SAME ? null : model },
-        efforts: { [role]: effort === SAME ? null : effort },
+        ...(role === 'security' ? {} : { efforts: { [role]: effort === SAME ? null : effort } }),
       })
       setMessage({
         ok: true,
@@ -121,7 +125,7 @@ export function EngineChooser({
         <label className="block">
           <span className={caption}>Modelo</span>
           <select
-            aria-label={`Modelo do ${ROLE_NAME[role]}`}
+            aria-label={`Modelo ${OF_ROLE[role]}`}
             className={select}
             value={model}
             onChange={(e) => chooseModel(e.target.value)}
@@ -134,22 +138,31 @@ export function EngineChooser({
             ))}
           </select>
         </label>
-        <label className="block">
-          <span className={caption}>Esforço</span>
-          <select
-            aria-label={`Esforço do ${ROLE_NAME[role]}`}
-            className={`${select} min-w-36`}
-            value={effort}
-            onChange={(e) => setEffort(e.target.value)}
-          >
-            <option value={SAME}>Padrão</option>
-            {levels.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-        </label>
+        {role === 'security' ? (
+          <div>
+            <span className={caption}>Esforço</span>
+            <p aria-label={`Esforço ${OF_ROLE[role]}`} className="h-9 text-sm leading-9">
+              {settings.pinnedEffort.security ?? 'nenhum nível listado'} (sempre o máximo)
+            </p>
+          </div>
+        ) : (
+          <label className="block">
+            <span className={caption}>Esforço</span>
+            <select
+              aria-label={`Esforço ${OF_ROLE[role]}`}
+              className={`${select} min-w-36`}
+              value={effort}
+              onChange={(e) => setEffort(e.target.value)}
+            >
+              <option value={SAME}>Padrão</option>
+              {levels.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <Button size="sm" disabled={!changed || busy} onClick={() => void save()}>
           Salvar
         </Button>

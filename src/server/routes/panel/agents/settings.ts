@@ -7,9 +7,11 @@ import { refusal } from '../../../panel/deps'
 import { ownerOnly } from '../../../panel/policy'
 
 const agent = z.string().max(40).nullable().optional()
-const perRole = z.object({ builder: agent, planner: agent, reviewer: agent }).optional()
+const perRole = z
+  .object({ builder: agent, planner: agent, reviewer: agent, security: agent })
+  .optional()
 
-/** Which coding agent builds, plans and reviews. A null goes back to the default. */
+/** Which coding agent builds, plans, reviews and reviews security. A null goes back to the default. */
 export const PUT = route()
   .policy(ownerOnly)
   .body(
@@ -17,6 +19,7 @@ export const PUT = route()
       builder: agent,
       planner: agent,
       reviewer: agent,
+      security: agent,
       models: perRole,
       efforts: perRole,
     }),

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentSettings } from '../../../shared/panel'
+import type { AgentRole, AgentSettings } from '../../../shared/panel'
 
 import { EngineChooser } from './EngineChooser'
 
@@ -17,11 +17,12 @@ const settings = (over: Partial<AgentSettings> = {}): AgentSettings => ({
     { id: 'claude-code', ready: true },
     { id: 'codex', ready: true },
   ],
-  chosen: { builder: null, planner: null, reviewer: null },
-  effective: { builder: 'codex', planner: 'codex', reviewer: 'codex' },
+  chosen: { builder: null, planner: null, reviewer: null, security: null },
+  effective: { builder: 'codex', planner: 'codex', reviewer: 'codex', security: 'codex' },
   repositoriesWithOwn: [],
-  chosenModel: { builder: null, planner: null, reviewer: null },
-  chosenEffort: { builder: null, planner: null, reviewer: null },
+  chosenModel: { builder: null, planner: null, reviewer: null, security: null },
+  chosenEffort: { builder: null, planner: null, reviewer: null, security: null },
+  pinnedEffort: { security: 'ultra' },
   engines: {
     'claude-code': {
       models: [
@@ -61,11 +62,7 @@ const settings = (over: Partial<AgentSettings> = {}): AgentSettings => ({
   ...over,
 })
 
-function mount(
-  role: 'builder' | 'planner' | 'reviewer',
-  s = settings(),
-  answer = new Response('{}'),
-) {
+function mount(role: AgentRole, s = settings(), answer = new Response('{}')) {
   const fetchMock = vi.fn(async () => answer)
   vi.stubGlobal('fetch', fetchMock)
   const onSaved = vi.fn()
@@ -118,7 +115,9 @@ describe('choosing the coding agent of a role', () => {
   it('lets the planner and the reviewer follow the builder, which is saved as going back to the default', async () => {
     const { fetchMock } = mount(
       'planner',
-      settings({ chosen: { builder: null, planner: 'claude-code', reviewer: null } }),
+      settings({
+        chosen: { builder: null, planner: 'claude-code', reviewer: null, security: null },
+      }),
     )
     const box = screen.getByLabelText('Agente de código do Planejador') as HTMLSelectElement
     expect(box.value).toBe('claude-code')
@@ -218,8 +217,8 @@ describe('choosing the model and the effort', () => {
     mount(
       'builder',
       settings({
-        chosenModel: { builder: 'gpt-6-luna', planner: null, reviewer: null },
-        chosenEffort: { builder: 'medium', planner: null, reviewer: null },
+        chosenModel: { builder: 'gpt-6-luna', planner: null, reviewer: null, security: null },
+        chosenEffort: { builder: 'medium', planner: null, reviewer: null, security: null },
       }),
     )
     expect((screen.getByLabelText('Modelo do Construtor') as HTMLSelectElement).value).toBe(
@@ -247,7 +246,9 @@ describe('choosing the model and the effort', () => {
   it("swaps the lists for the other agent's, and forgets a model that belongs to the first", () => {
     mount(
       'builder',
-      settings({ chosenModel: { builder: 'gpt-6.1-sol', planner: null, reviewer: null } }),
+      settings({
+        chosenModel: { builder: 'gpt-6.1-sol', planner: null, reviewer: null, security: null },
+      }),
     )
     choose('Agente de código do Construtor', 'claude-code')
     expect(optionsOf('Modelo do Construtor')).toEqual(['Padrão do agente', 'Sonnet', 'Opus'])
@@ -280,7 +281,9 @@ describe('choosing the model and the effort', () => {
   it('sends the agent with its model when both changed, and null where it went back to the default', async () => {
     const { fetchMock } = mount(
       'builder',
-      settings({ chosenModel: { builder: 'gpt-6.1-sol', planner: null, reviewer: null } }),
+      settings({
+        chosenModel: { builder: 'gpt-6.1-sol', planner: null, reviewer: null, security: null },
+      }),
     )
     choose('Agente de código do Construtor', 'claude-code')
     choose('Modelo do Construtor', 'opus')
@@ -318,5 +321,23 @@ describe('choosing the model and the effort', () => {
   it('copes with an agent the page has no list for', () => {
     mount('builder', settings({ engines: {} }))
     expect(optionsOf('Modelo do Construtor')).toEqual(['Padrão do agente'])
+  })
+})
+
+describe('the effort of the security agent', () => {
+  it('is shown as the highest its agent offers, with no way to choose another', () => {
+    mount('security')
+    const effort = screen.getByLabelText('Esforço da Segurança')
+    expect(effort.tagName).toBe('P')
+    expect(effort.textContent).toBe('ultra (sempre o máximo)')
+  })
+
+  it('never sends an effort when its agent or model is saved', async () => {
+    const { fetchMock } = mount('security')
+    choose('Modelo da Segurança', 'gpt-6.1-sol')
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const [, init] = (fetchMock.mock.calls as unknown as [string, RequestInit][])[0]
+    expect(JSON.parse(String(init.body))).toEqual({ models: { security: 'gpt-6.1-sol' } })
   })
 })

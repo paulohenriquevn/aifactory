@@ -28,6 +28,7 @@ export default defineConfig({
       'src/server/factory/release-wait.test.ts',
       'src/server/factory/agent-time.test.ts',
       'src/server/factory/test-weakening.test.ts',
+      'src/server/factory/security-floor.test.ts',
       'src/server/factory/change-plan.test.ts',
       'src/server/factory/promotion.test.ts',
       'src/server/factory/evidence.test.ts',

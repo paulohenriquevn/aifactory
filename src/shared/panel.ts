@@ -755,8 +755,11 @@ export type AgentsView = {
   settings: AgentSettings
 }
 
-/** The three roles of a coding agent that the owner can give to one agent or another. */
-export type AgentRole = 'builder' | 'planner' | 'reviewer'
+/**
+ * The roles of a coding agent that the owner can give to one agent or another. The security agent's effort is
+ * not the owner's to choose: it is always the highest its agent offers.
+ */
+export type AgentRole = 'builder' | 'planner' | 'reviewer' | 'security'
 
 export type EngineOption = {
   id: string
@@ -775,6 +778,8 @@ export type AgentSettings = {
   /** The model and the effort the owner chose for a role, when they belong to the agent it uses; null for the agent's own default. */
   chosenModel: Record<AgentRole, string | null>
   chosenEffort: Record<AgentRole, string | null>
+  /** The effort the security agent runs at, the highest its agent offers; null when that agent lists none. */
+  pinnedEffort: { security: string | null }
   /** The models and effort levels each agent can be given. */
   engines: Record<string, EngineModels>
   /** Repositories that name an agent of their own, which wins over what is chosen here. */
