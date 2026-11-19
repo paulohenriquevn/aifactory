@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, renameSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -58,6 +62,47 @@ describe('diffFacts', () => {
       // Only what the branch itself changed, not what the integration branch did after it.
       touched: ['src/extra.js', 'src/shared.test.js', 'src/truncate.js'],
     })
+  })
+
+  it('lists the paths a change touches unquoted, whatever characters they hold', async () => {
+    const repo = divergedRepository({
+      behind: false,
+      branch: { 'src/server/agents/é.ts': 'export {}\n', 'quality/a\tb.json': '{}\n' },
+    })
+
+    const facts = await factsOf(repo)
+
+    expect(facts.touched).toEqual(['quality/a\tb.json', 'src/server/agents/é.ts'])
+  })
+
+  it('lists both sides of a rename', async () => {
+    const repo = divergedRepository({ behind: false })
+    mkdirSync(join(repo.dir, 'quality'), { recursive: true })
+    renameSync(join(repo.dir, 'src/shared.test.js'), join(repo.dir, 'quality/é.test.js'))
+    for (const args of [
+      ['add', '-A'],
+      ['commit', '-q', '-m', 'move'],
+    ]) {
+      spawnSync('git', ['-C', repo.dir, '-c', 'user.name=t', '-c', 'user.email=t@e.com', ...args], {
+        encoding: 'utf8',
+      })
+    }
+
+    const facts = await factsOf(repo)
+
+    expect(facts.touched).toEqual(['src/shared.test.js', 'quality/é.test.js', 'src/truncate.js'])
+  })
+
+  it('lists what an earlier commit of a continued branch changed as well as the last one', async () => {
+    const repo = divergedRepository({
+      behind: true,
+      branch: { 'src/server/agents/é.ts': 'export {}\n' },
+    })
+    commit(repo.dir, { 'src/truncate.js': 'export {}\n' }, 'continue')
+
+    const facts = await factsOf(repo)
+
+    expect(facts.touched).toEqual(['src/server/agents/é.ts', 'src/truncate.js'])
   })
 
   it('reads a first run from where its branch starts', async () => {

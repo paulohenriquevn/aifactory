@@ -2,7 +2,7 @@ import type { SandboxBackend } from '@theokit/agents/sandbox'
 
 import { unplannedFiles, type ChangePlan } from './change-plan'
 import { changesetPackages, isChangesetFile } from './changesets'
-import { diffGuards, parseNameStatus, testScriptOf } from './guards'
+import { diffGuards, parseNameStatusZ, testScriptOf } from './guards'
 import type { Finding } from './review'
 import {
   repairedChecks,
@@ -47,8 +47,8 @@ export async function diffFacts(
 ): Promise<DiffFacts> {
   const git = `git -C ${repoDir}`
   const base = (await must(backend, `${git} merge-base ${input.baseSha} HEAD`)).stdout.trim()
-  const nameStatus = (await must(backend, `${git} diff --name-status ${base} HEAD`)).stdout
-  const changes = parseNameStatus(nameStatus)
+  const nameStatus = (await must(backend, `${git} diff --name-status -z ${base} HEAD`)).stdout
+  const changes = parseNameStatusZ(nameStatus)
   const showScript = async (rev: string) => {
     const shown = await backend.execute(`${git} show ${rev}:package.json`)
     return shown.exitCode === 0 ? testScriptOf(shown.stdout) : undefined
@@ -67,10 +67,7 @@ export async function diffFacts(
   const paths = changes.map((change) => change.path)
   const required = await requiredByChecks(backend, git, base, input.checkRuns ?? [])
   const unplanned = input.plan ? unplannedFiles(paths, input.plan) : []
-  const touched = nameStatus
-    .split('\n')
-    .flatMap((line) => line.split('\t').slice(1))
-    .filter((path) => path !== '')
+  const touched = changes.flatMap((change) => change.paths)
   return { guards, unplanned: withoutRequired(unplanned, required), required, touched }
 }
 

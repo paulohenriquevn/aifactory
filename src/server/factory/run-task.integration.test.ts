@@ -47,7 +47,7 @@ import type { NewNote } from '../knowledge/store'
 import { githubEgress } from './credential-renewal'
 import { CHANGESET_CHECK_SCRIPT } from './changeset-check'
 import { CHANGESET_CHECK_PATH } from './changesets'
-import { FakeBackend, FakeSandbox, type Reply } from './fake-sandbox'
+import { FakeBackend, FakeSandbox, nameStatusZ, type Reply } from './fake-sandbox'
 import { eventsOf } from './transcript-store'
 import { parseRecipe } from './recipe'
 import type { CodingHarness } from './harness'
@@ -1441,7 +1441,7 @@ describe('runTask', () => {
     const sandbox = new FakeSandbox(
       changed((c) => {
         if (c.includes('diff --name-status'))
-          return { stdout: 'A\tsrc/truncate.js\nA\t.github/workflows/x.yml\n' }
+          return { stdout: nameStatusZ('A\tsrc/truncate.js\nA\t.github/workflows/x.yml\n') }
         if (c.includes('push origin'))
           return { exitCode: 1, stderr: '! [remote rejected] factory/7 -> factory/7 (failure)' }
         return undefined
@@ -2438,7 +2438,7 @@ describe('runTask planning before it builds', () => {
     new FakeSandbox(
       changed((c) =>
         c.includes('diff --name-status')
-          ? { stdout: 'M\tsrc/truncate.js\nM\tsrc/other.js\n' }
+          ? { stdout: nameStatusZ('M\tsrc/truncate.js\nM\tsrc/other.js\n') }
           : undefined,
       ),
     )
@@ -2572,7 +2572,11 @@ describe('runTask planning before it builds', () => {
           return ++runs <= 2 ? { exitCode: 1, stdout: 'error no changesets were found' } : undefined
         if (c.includes('rev-list')) return { stdout: 'abc123def2\nabc123def\n' }
         if (c.includes('diff --name-status'))
-          return { stdout: 'M\tsrc/truncate.js\nA\t.changeset/calm-owls.md\nM\tsrc/other.js\n' }
+          return {
+            stdout: nameStatusZ(
+              'M\tsrc/truncate.js\nA\t.changeset/calm-owls.md\nM\tsrc/other.js\n',
+            ),
+          }
         if (c.includes('diff --name-only --diff-filter=A'))
           return { stdout: '.changeset/calm-owls.md\n' }
         if (c.includes('show abc123def2:.changeset/calm-owls.md'))
@@ -4389,7 +4393,7 @@ describe('the factory always makes a pre-release', () => {
     const sandbox = new FakeSandbox(
       changed((c) =>
         c.includes('diff --name-status')
-          ? { stdout: 'M\tsrc/server/factory/review.ts\nA\tsrc/truncate.js\n' }
+          ? { stdout: nameStatusZ('M\tsrc/server/factory/review.ts\nA\tsrc/truncate.js\n') }
           : undefined,
       ),
     )
@@ -4410,12 +4414,33 @@ describe('the factory always makes a pre-release', () => {
     expect(handoff.detail).toMatchObject({ cause: 'agent_configuration' })
   })
 
+  it('hands approved work that changes a quality gate of the factory to a person, merging nothing (#139)', async () => {
+    const id = await seedTask()
+    const sandbox = new FakeSandbox(
+      changed((c) =>
+        c.includes('diff --name-status')
+          ? { stdout: nameStatusZ('M\tquality/crap-baseline.json\nA\tsrc/truncate.js\n') }
+          : undefined,
+      ),
+    )
+
+    const result = await runTask(deps(sandbox, { ownRepository: 'paulo/app' }), id)
+
+    expect(result).toMatchObject({ status: 'handoff' })
+    expect(seen.merges).toEqual([])
+    expect(seen.autoMerges).toEqual([])
+    expect(seen.drafts).toEqual([true])
+    expect(seen.comments.at(-1)).toContain('quality/crap-baseline.json')
+    const [row] = await getDb().select().from(task).where(eq(task.id, id))
+    expect(row).toMatchObject({ stage: 'handoff', mergedSha: null })
+  })
+
   it('integrates the same change in a repository that is not the factory', async () => {
     const id = await seedTask()
     const sandbox = new FakeSandbox(
       changed((c) =>
         c.includes('diff --name-status')
-          ? { stdout: 'M\tsrc/server/factory/review.ts\n' }
+          ? { stdout: nameStatusZ('M\tsrc/server/factory/review.ts\n') }
           : undefined,
       ),
     )

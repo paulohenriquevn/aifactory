@@ -12,6 +12,25 @@ export function parseNameStatus(output: string): Change[] {
     .map((parts) => ({ status: parts[0][0], path: parts[parts.length - 1] }))
 }
 
+/**
+ * `git diff --name-status -z`: NUL-delimited, so a path is never quoted. Each change is a status, then its
+ * path, and a rename or a copy lists two (the old one, then the new one). `path` is the new one, as in
+ * `parseNameStatus`; `paths` holds both.
+ */
+export function parseNameStatusZ(output: string): (Change & { paths: string[] })[] {
+  const tokens = output.split('\0')
+  const changes: (Change & { paths: string[] })[] = []
+  for (let i = 0; i < tokens.length;) {
+    const status = tokens[i++]
+    if (status === '') continue
+    const count = status[0] === 'R' || status[0] === 'C' ? 2 : 1
+    const paths = tokens.slice(i, i + count).filter((path) => path !== '')
+    i += count
+    if (paths.length > 0) changes.push({ status: status[0], path: paths[paths.length - 1], paths })
+  }
+  return changes
+}
+
 /** The `test` script of a package.json, or nothing when there is no file, no script or no JSON. */
 export function testScriptOf(packageJson: string | undefined): string | undefined {
   if (!packageJson) return undefined

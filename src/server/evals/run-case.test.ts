@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { CHANGESET_CHECK_SCRIPT } from '../factory/changeset-check'
 import { CHANGESET_CHECK_PATH, withChangesetCheck } from '../factory/changesets'
-import { FakeSandbox, type Reply } from '../factory/fake-sandbox'
+import { FakeSandbox, nameStatusZ, type Reply } from '../factory/fake-sandbox'
 import type { CodingHarness, HarnessInput, HarnessResult } from '../factory/harness'
 
 import type { EvalCase } from './cases'
@@ -120,10 +120,11 @@ function sandbox(world: World = {}) {
     if (command.includes('pnpm test')) return { exitCode: exits.shift() ?? 0, stdout: 'ran' }
     if (command.includes('diff --name-status'))
       return {
-        stdout:
+        stdout: nameStatusZ(
           world.nameStatusPerCommit?.[Math.max(commits, 1) - 1] ??
-          world.nameStatus ??
-          'M\tsrc/cli.ts\n',
+            world.nameStatus ??
+            'M\tsrc/cli.ts\n',
+        ),
       }
     if (command.includes('diff -U0')) return { stdout: world.testPatch ?? '' }
     if (command.includes('rev-list --count')) return { stdout: world.agentCommitted ? '1\n' : '0\n' }
@@ -575,7 +576,9 @@ describe('runCase', () => {
       if (command.includes('rev-parse HEAD')) return { stdout: commits <= 1 ? first : second }
       if (command.includes('rev-list')) return { stdout: `${second}\n${first}\n` }
       if (command.includes('diff --name-status'))
-        return { stdout: 'M\tsrc/cli.ts\nA\t.changeset/calm-owls.md\nM\tsrc/other.ts\n' }
+        return {
+          stdout: nameStatusZ('M\tsrc/cli.ts\nA\t.changeset/calm-owls.md\nM\tsrc/other.ts\n'),
+        }
       if (command.includes('diff --name-only --diff-filter=A'))
         return { stdout: '.changeset/calm-owls.md\n' }
       if (command.includes(`show ${second}:.changeset/calm-owls.md`))

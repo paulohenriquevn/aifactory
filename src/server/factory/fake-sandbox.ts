@@ -10,6 +10,15 @@ import type {
 import { THIS_PROCESS } from './sandbox-lease'
 import { metadataFor } from './sandbox-reaper'
 
+/** `git diff --name-status` lines (`M<TAB>path`) as `-z` prints them: every field ends in a NUL. */
+export function nameStatusZ(text: string): string {
+  return text
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => `${line.split('\t').join('\0')}\0`)
+    .join('')
+}
+
 export type Reply = { stdout?: string; stderr?: string; exitCode?: number }
 
 /** A backend that answers from a script and remembers every command and uploaded file. */
