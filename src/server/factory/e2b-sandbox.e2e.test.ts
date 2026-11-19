@@ -2,6 +2,8 @@ import { Sandbox } from 'e2b'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { e2bSandboxProvider } from './e2b-sandbox'
+import { prepareDeclaredPackageManager } from './package-manager'
+import { SANDBOX_TOOLCHAIN } from './sandbox-toolchain'
 import { createIsolatedSandbox, restoreIsolatedSandbox, type IsolatedSandbox } from './sandbox'
 
 // Runs real E2B sandboxes: needs E2B_API_KEY and the template from scripts/build-e2b-template.mts. httpbin.org
@@ -14,6 +16,7 @@ const egress = (secret: string) => [
 ]
 const spec = { timeoutMs: 10 * 60_000, egress: egress('the-real-secret') }
 
+const NO_REGISTRY = [{ domain: 'github.com' }]
 let sandbox: IsolatedSandbox
 const sh = (command: string, timeoutMs = 60_000) => sandbox.backend.execute(command, { timeoutMs })
 
@@ -36,6 +39,32 @@ describe('an E2B sandbox', () => {
     // bwrap runs here, so theokit-sdk's sandbox tests run too, and they trace a process with strace.
     expect((await sh('command -v bwrap strace')).stdout.trim().split('\n')).toHaveLength(2)
   })
+
+  it('runs the declared package manager, whatever its version, in a child with only PATH and HOME and no network', async () => {
+    // A version the image does not carry: the run prepares it before the checks, with the registry reachable.
+    const version = '10.34.1'
+    await sandbox.backend.uploadFile(
+      '/tmp/pm-repo/package.json',
+      JSON.stringify({ name: 'pm', packageManager: `pnpm@${version}` }),
+    )
+    await prepareDeclaredPackageManager(sandbox.backend, '/tmp/pm-repo')
+    await sandbox.updateEgress?.(NO_REGISTRY)
+    try {
+      const refused = await sh('curl -sS -m 15 -o /dev/null https://registry.npmjs.org/pnpm')
+      expect(refused.exitCode).not.toBe(0)
+      const child = `const {execFileSync}=require('child_process');const env={PATH:process.env.PATH,HOME:process.env.HOME};console.log(execFileSync('pnpm',['--version'],{env,cwd:'/tmp/pm-repo'}).toString().trim())`
+      expect(await sh(`node -e "${child}"`)).toMatchObject({ stdout: `${version}\n`, exitCode: 0 })
+      // The image's own version needs no preparation at all.
+      await sandbox.backend.uploadFile(
+        '/tmp/pm-image/package.json',
+        JSON.stringify({ name: 'pm', packageManager: `pnpm@${SANDBOX_TOOLCHAIN.pnpm}` }),
+      )
+      const image = child.replace('/tmp/pm-repo', '/tmp/pm-image')
+      expect((await sh(`node -e "${image}"`)).stdout).toBe(`${SANDBOX_TOOLCHAIN.pnpm}\n`)
+    } finally {
+      await sandbox.updateEgress?.(spec.egress)
+    }
+  }, 300_000)
 
   it('cannot reach a domain that is not listed', async () => {
     const blocked = await sh('curl -sS -m 15 -o /dev/null https://example.com')

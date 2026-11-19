@@ -22,6 +22,7 @@ import {
   wrapCommand,
 } from './e2b-reattach'
 import { E2B_TEMPLATE } from './e2b-template'
+import { SANDBOX_TOOLCHAIN } from './sandbox-toolchain'
 import type {
   ExecuteResult,
   IsolatedSandbox,
@@ -61,7 +62,7 @@ export const SANDBOX_ENV: Record<string, string> = {
   // A native module with no prebuilt binary (better-sqlite3, node-pty) is compiled by node-gyp, which downloads
   // Node's headers from nodejs.org, a domain no run allows. The image has them: the Docker provider never
   // noticed, because its shared package cache kept the modules it had built.
-  npm_config_nodedir: '/usr/local',
+  npm_config_nodedir: SANDBOX_TOOLCHAIN.nodeHeadersDir,
 }
 
 /**

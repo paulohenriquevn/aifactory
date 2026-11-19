@@ -27,6 +27,7 @@ import {
 import { evidenceOfNote } from './ci-wait'
 import { BaseProbe, sameChecks } from './base-checks'
 import { ensureBranches, integrationBranch } from './branches'
+import { prepareDeclaredPackageManager } from './package-manager'
 import { uploadChangesetCheck } from './changeset-check'
 import { withChangesetCheck } from './changesets'
 import { githubEgress, renewGithubCredential } from './credential-renewal'
@@ -470,6 +471,7 @@ export class Run {
     })
 
     const { repoDir, baseSha } = await Run.checkout(c, sandbox.backend)
+    await prepareDeclaredPackageManager(sandbox.backend, repoDir)
     for (const agent of agents) await agent.prepare?.(sandbox.backend)
     const feed = await KnowledgeFeed.open(deps.knowledge, sandbox.backend, c.row.repository, {
       taskId: c.taskId,

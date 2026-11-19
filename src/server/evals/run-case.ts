@@ -20,6 +20,7 @@ import {
 } from '../factory/change-plan'
 import { BaseProbe, sameChecks } from '../factory/base-checks'
 import { cloneRepository } from '../factory/clone'
+import { prepareDeclaredPackageManager } from '../factory/package-manager'
 import { uploadChangesetCheck } from '../factory/changeset-check'
 import { failingChecks, runChecks, type CheckResult } from '../factory/evidence'
 import { FIX_COMMIT_MESSAGE, runFixes } from '../factory/fixes'
@@ -533,6 +534,7 @@ async function checkout(backend: SandboxBackend, c: EvalCase): Promise<string> {
   })
   await must(backend, `git -C ${repoDir} fetch origin ${c.baseSha}`)
   await must(backend, `git -C ${repoDir} checkout -B factory/${c.issueNumber} ${c.baseSha}`)
+  await prepareDeclaredPackageManager(backend, repoDir)
   return repoDir
 }
 

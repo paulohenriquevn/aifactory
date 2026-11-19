@@ -4,6 +4,8 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { dockerSandboxProvider, removeStaleSandboxes } from './docker-sandbox'
+import { prepareDeclaredPackageManager } from './package-manager'
+import { SANDBOX_TOOLCHAIN } from './sandbox-toolchain'
 import { createIsolatedSandbox, type IsolatedSandbox } from './sandbox'
 
 // Runs real containers: Docker must be up. It needs the internet for the allowed domains it reaches.
@@ -11,6 +13,12 @@ let echo: Server
 let port: number
 const seen: Record<string, string | string[] | undefined>[] = []
 
+const ORIGINAL_EGRESS = [
+  { domain: 'registry.npmjs.org' },
+  { domain: 'github.com' },
+  { domain: 'host.docker.internal', headers: { authorization: 'Bearer the-real-secret' } },
+]
+const NO_REGISTRY = [{ domain: 'github.com' }]
 let sandbox: IsolatedSandbox
 const sh = (command: string, timeoutMs = 60_000) => sandbox.backend.execute(command, { timeoutMs })
 
@@ -23,11 +31,7 @@ beforeAll(async () => {
   port = (echo.address() as AddressInfo).port
   sandbox = await createIsolatedSandbox(dockerSandboxProvider(), {
     timeoutMs: 10 * 60_000,
-    egress: [
-      { domain: 'registry.npmjs.org' },
-      { domain: 'github.com' },
-      { domain: 'host.docker.internal', headers: { authorization: 'Bearer the-real-secret' } },
-    ],
+    egress: ORIGINAL_EGRESS,
   })
 }, 300_000)
 
@@ -55,6 +59,32 @@ describe('the docker sandbox', () => {
     )
     expect(result).toMatchObject({ stdout: 'ok\n', exitCode: 0 })
   })
+
+  it('runs the declared package manager, whatever its version, in a child with only PATH and HOME and no network', async () => {
+    // A version the image does not carry: the run prepares it before the checks, with the registry reachable.
+    const version = '10.34.1'
+    await sandbox.backend.uploadFile(
+      '/tmp/pm-repo/package.json',
+      JSON.stringify({ name: 'pm', packageManager: `pnpm@${version}` }),
+    )
+    await prepareDeclaredPackageManager(sandbox.backend, '/tmp/pm-repo')
+    await sandbox.updateEgress?.(NO_REGISTRY)
+    try {
+      const refused = await sh('curl -sS -m 15 -o /dev/null https://registry.npmjs.org/pnpm')
+      expect(refused.exitCode).not.toBe(0)
+      const child = `const {execFileSync}=require('child_process');const env={PATH:process.env.PATH,HOME:process.env.HOME};console.log(execFileSync('pnpm',['--version'],{env,cwd:'/tmp/pm-repo'}).toString().trim())`
+      expect(await sh(`node -e "${child}"`)).toMatchObject({ stdout: `${version}\n`, exitCode: 0 })
+      // The image's own version needs no preparation at all.
+      await sandbox.backend.uploadFile(
+        '/tmp/pm-image/package.json',
+        JSON.stringify({ name: 'pm', packageManager: `pnpm@${SANDBOX_TOOLCHAIN.pnpm}` }),
+      )
+      const image = child.replace('/tmp/pm-repo', '/tmp/pm-image')
+      expect((await sh(`node -e "${image}"`)).stdout).toBe(`${SANDBOX_TOOLCHAIN.pnpm}\n`)
+    } finally {
+      await sandbox.updateEgress?.(ORIGINAL_EGRESS)
+    }
+  }, 300_000)
 
   it('stops a command that outlives its timeout, and says so', async () => {
     const result = await sh('sleep 30', 2_000)
