@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { GUIDE_IDS } from '../../shared/guides'
 import { SCOPE_DRAFTER_SPEC } from '../coordinator/draft'
+import { UNBLOCKER_SPEC } from '../coordinator/unblock'
 import { assistantTools } from '../factory/assistant'
 import { CHAT_SPEC } from '../factory/chat-agent'
 import { guideSpec } from '../factory/guides'
@@ -45,10 +46,11 @@ describe('every agent of the factory reads the knowledge base', () => {
     expect(direct).toEqual(['src/server/factory/assistant.ts'])
   })
 
-  it('in the panel: the chat, every guide, the scope drafter and the readiness judge have the two tools of the base', () => {
+  it('in the panel: the chat, every guide, the scope drafter, the unblocker and the readiness judge have the two tools of the base', () => {
     for (const spec of [
       CHAT_SPEC,
       SCOPE_DRAFTER_SPEC,
+      UNBLOCKER_SPEC,
       READINESS_JUDGE_SPEC,
       ...GUIDE_IDS.map((id) => guideSpec(id)),
     ]) {
@@ -56,6 +58,14 @@ describe('every agent of the factory reads the knowledge base', () => {
         expect.arrayContaining(['knowledge_search', 'knowledge_read']),
       )
     }
+  })
+
+  it('the unblocker may call only the read tools of the knowledge base', () => {
+    expect(Object.keys(assistantTools(UNBLOCKER_SPEC)).sort()).toEqual([
+      'knowledge_read',
+      'knowledge_search',
+    ])
+    expect(UNBLOCKER_SPEC.asks).toEqual({})
   })
 
   it('in a sandbox: every file that starts one opens the knowledge feed on it', () => {

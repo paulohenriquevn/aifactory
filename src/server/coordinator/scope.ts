@@ -61,10 +61,15 @@ export const QUALITY_CONFIGURATION = [
   'coverage threshold',
 ] as const
 
+/** The first quality configuration a text names, or nothing. */
+export function qualityConfigurationIn(text: string): string | undefined {
+  const told = text.toLowerCase()
+  return QUALITY_CONFIGURATION.find((name) => told.includes(name))
+}
+
 /** The first quality configuration the builder would be told to touch, or nothing. */
 export function qualityConfigurationNamed(draft: ScopeDraft): string | undefined {
-  const told = [draft.note, ...draft.inScope].join('\n').toLowerCase()
-  return QUALITY_CONFIGURATION.find((name) => told.includes(name))
+  return qualityConfigurationIn([draft.note, ...draft.inScope].join('\n'))
 }
 
 const list = (items: string[]) =>

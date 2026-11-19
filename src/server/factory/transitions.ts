@@ -22,7 +22,8 @@ type PanelEvent =
  * (`retryAt`), `conflict_rerun` a pull request that conflicts with its base, `integrate` approved work
  * reaching its pull request, `coordinator_send_back` the coordinator sending a handed-over or failed task back to its
  * agent (`coordinator/apply.ts`), `coordinator_merge_base` the coordinator queueing the run that merges the integration
- * branch into a handed-over task's branch with no agent, `merged_by_person` a person merging the pull request a handoff left,
+ * branch into a handed-over task's branch with no agent, `coordinator_answer` the coordinator's unblocker answering the
+ * builder's open question (`coordinator/unblocker-apply.ts`), `merged_by_person` a person merging the pull request a handoff left,
  * `needs_refinement` the scheduler finding a queued issue not ready to build (`scheduler/apply.ts`),
  * `merge_due` the `merge-task` job taking approved work to its pull request and the integration branch,
  * `run_step` a run recording the stage it reached (`enterRunStage` in `stages.ts`).
@@ -33,6 +34,7 @@ type AutomaticEvent =
   | 'send_back_after_ci'
   | 'coordinator_send_back'
   | 'coordinator_merge_base'
+  | 'coordinator_answer'
   | 'hand_over'
   | 'integrate'
   | 'merged_by_person'
@@ -341,6 +343,13 @@ const TRANSITIONS: Record<TransitionEvent, Record<TaskStage, Rule>> = {
       NOT_MERGED_INTO,
     ),
     handoff: mergeBase,
+  },
+  coordinator_answer: {
+    ...each(
+      ['intake', ...WORKING, 'done', 'released', 'handoff', 'failed', 'cancelled'],
+      refuse('the coordinator answers only a task that waits for the answer to its question'),
+    ),
+    waiting: act('read_answer'),
   },
   hand_over: {
     ...each(WORKING, act('hand_over')),

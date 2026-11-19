@@ -6,6 +6,7 @@ import type { ExceptionKind, RedBase, TaskException } from './exceptions'
 import type { CoordinatorMode } from './mode'
 import { bumpFor } from './release-train'
 import type { ScopeDraft } from './scope'
+import type { UnblockerVerdict } from './unblocker'
 
 /**
  * One action, from a closed set, for an exception of a task. A pure function of the exception and what the
@@ -24,6 +25,8 @@ export type RecordedAction = {
   outcome: CoordinatorOutcome
   /** When it was recorded: how long a fact has been unreadable is measured from its first `wait`. */
   at?: Date
+  /** The unblocker decided it (`unblocker.ts`), which its own limit counts. */
+  unblocker?: boolean
 }
 
 export type Decision = {
@@ -48,6 +51,10 @@ export type Decision = {
   base?: RedBase
   /** A `wait` after the first one: nothing is recorded, since the first says since when. */
   quiet?: true
+  /** What the unblocker answered, when it decided this instead of the escalation (`unblocker.ts`). */
+  unblocker?: UnblockerVerdict
+  /** Why the decision may not be applied, whatever the mode: it is recorded as refused. */
+  refusal?: string
 }
 
 /** A task gets at most this many applied actions; the next exception stays with a person. */
@@ -290,13 +297,15 @@ const BY_KIND: Partial<
       `the release branch is red (${evidence}): the release train waits on ${short(head)} until it is green again, and a person looks at it`,
     ),
   base_red: fixBase,
+  question: ({ evidence }) =>
+    escalate(`the builder asked a question nobody answered in 15 minutes: ${evidence}`),
 }
 
 /** The actions on the repository rather than on the task, which the limit of applied actions does not count. */
 const REPOSITORY_ACTIONS: readonly CoordinatorActionKind[] = ['release', 'prioritise', 'fix_base']
 
 /** A release or a reordering is the repository's, not a rework of the task it is recorded on, so the limit does not count it. */
-const RELEASE_KINDS: readonly ExceptionKind[] = [
+export const RELEASE_KINDS: readonly ExceptionKind[] = [
   'release_ready',
   'release_retry',
   'release_blocked',

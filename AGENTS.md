@@ -234,6 +234,24 @@ reads that file, not a convention.
   calls a merge, and `merges-nothing.test.ts` fails if one does. A new exception is a new kind in
   `EXCEPTION_KINDS` and a new entry in `BY_KIND`; a new action goes through an action of the panel, never
   around it.
+  An escalation of a task goes to the unblocker first (`unblock.ts`), and so does a builder's question (`question`, a
+  `question` row with origin `agent` and no answer) once it waited `QUESTION_WAIT_MS`; a release, a reordering and a
+  red base never do. `unblocker-facts.ts` reads the issue, its comments, the history, the reviews, the pull request and
+  the failed jobs' logs (`ciFailuresOf`), and decides nothing; a read that fails is said in the message. The model is
+  built by `buildAssistant` with no tools of its own (`UNBLOCKER_SPEC`, `FACTORY_UNBLOCKER_MODEL`), and its prompt is
+  `agents/prompts/unblocker.ts`. `unblocker.ts` is pure: it parses the one action it answers (`answer`, `send_back`,
+  `rerun_checks`, `merge_base`, `blocked_by`, `retry`, `scope`, `resolve_elsewhere`, `escalate`), keeps the
+  escalation with the parse error for an answer that does not parse, and refuses an `escalate` without an owner
+  category (`OWNER_CATEGORIES`), a `resolve_elsewhere` that names no full commit sha (`isEvidence`), a text that names a
+  `QUALITY_CONFIGURATION`, and anything but `answer` or `escalate` for a waiting task. Its rows carry `by: unblocker`
+  in `draft`, and `unblockerGate` stops it after `UNBLOCKER_MAX_APPLIED` applied actions on one commit or
+  `UNBLOCKER_MAX_PER_TASK` on the task. `unblocker-apply.ts` carries out the actions only it decides through the
+  panel's: an `answer` goes through `answerByCoordinator` (`coordinator_answer`), which stores the answer and queues
+  `resume-task` in one transaction, since `pickAnswer` never takes a comment of the factory's own; `rerun_checks` and
+  `blocked_by` ask `coordinator_send_back` before they touch GitHub and then send the task back with no note. A `retry`
+  is refused for a task with pushed work, since starting over deletes its branch, and a `resolve_elsewhere` only goes
+  through when the integration branch's history holds the named commit (`contains`), since it delivers the task. A pass
+  without an unblocker in its dependencies escalates as before and reads no question.
   The release train (ADR 0010) is the `release_ready` playbook: `release-facts.ts` reads each enabled repository,
   `release-train.ts` decides over it and reads nothing. A repository in `auto` (its `release_mode`, or
   `FACTORY_RELEASE_MODE` when it has none) with integrated work (`done` with a `merged_sha`) that has reached `develop` (it holds commits the release branch lacks), no task queued, running or

@@ -10,6 +10,7 @@ import type { GithubApi } from '../github/pulls'
 import type { Bump } from '../factory/release'
 import { latestSendBackDecision, pendingSendBack } from '../factory/send-back'
 import { outcome, stagesWhere, type Facts, type TransitionEvent } from '../factory/transitions'
+import { QUESTION_MARKER, type PollDeps } from '../factory/waiting'
 
 /** A person asked for something the task's state does not allow. The panel shows the message. */
 export class ActionRefused extends Error {
@@ -516,6 +517,73 @@ export async function mergeBaseByCoordinator(deps: ActionDeps, taskId: number, n
     mergeBase: true,
     preAgent: false,
   })
+}
+
+/** Who the builder is told answered, when the coordinator's unblocker did. */
+export const UNBLOCKER_AUTHOR = "the factory's unblocker"
+
+/** The comment that keeps the unblocker's answer on the issue, for the record. The poller never reads it. */
+export function unblockerAnswerComment(taskId: number, answer: string): string {
+  return [
+    QUESTION_MARKER,
+    `**The factory answered its own question** (task ${taskId}), from what the issue, its comments and the knowledge base say:`,
+    '',
+    answer,
+    '',
+    'The work continues with this answer. If it is wrong, send the task back from the panel with the right one.',
+  ].join('\n')
+}
+
+/**
+ * Answers the builder's open question because the coordinator's unblocker decided so, with no person asking. The
+ * answer is stored on the question and `resume-task` queued in one transaction, as `poll-answers` does with a
+ * person's (`takeAnswer`): a comment of the factory's own is never an answer the poller takes, so the comment is
+ * only the record. Answers whether that comment was posted, and why not when it was not; the answer stands either way.
+ */
+export async function answerByCoordinator(
+  deps: ActionDeps & { answerInTransaction: PollDeps['inTransaction'] },
+  taskId: number,
+  questionId: number,
+  text: string,
+): Promise<{ commented: true } | { commented: false; error: string }> {
+  const answer = text.trim().slice(0, NOTE_MAX)
+  if (answer === '') throw new ActionRefused('an answer says something')
+  const row = await load(deps.db, taskId)
+  mustAllow(row, 'coordinator_answer')
+  const stored = await deps.answerInTransaction(async (tx, enqueueResume) => {
+    const waiting = tx
+      .select({ id: task.id })
+      .from(task)
+      .where(and(eq(task.id, taskId), eq(task.stage, 'waiting')))
+    const claimed = await tx
+      .update(question)
+      .set({ answer, answeredBy: UNBLOCKER_AUTHOR, answeredAt: new Date() })
+      .where(
+        and(
+          eq(question.id, questionId),
+          eq(question.origin, 'agent'),
+          isNull(question.answer),
+          inArray(question.taskId, waiting),
+        ),
+      )
+      .returning({ id: question.id })
+    if (claimed.length === 0) return false
+    await enqueueResume(taskId, questionId)
+    return true
+  })
+  if (!stored) {
+    throw new ActionRefused(
+      `question ${questionId} of task ${taskId} is answered already, or its task no longer waits for it`,
+    )
+  }
+  try {
+    const { token } = await deps.github.installationToken(row.repository)
+    const comment = unblockerAnswerComment(taskId, answer)
+    await deps.api.commentOnIssue(row.repository, token, row.issueNumber, comment)
+    return { commented: true }
+  } catch (error) {
+    return { commented: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 /**

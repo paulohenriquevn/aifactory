@@ -14,18 +14,36 @@ import { recognise, type TaskException } from './exceptions'
 import type { CoordinatorMode } from './mode'
 import { readReleaseFacts, type ReleaseFactsDeps } from './release-facts'
 import { recogniseRelease } from './release-train'
+import { unblock, type Unblocker } from './unblock'
+import { recogniseQuestion } from './unblocker'
+import { readOpenQuestions } from './unblocker-facts'
 
 export type PassResult = Record<CoordinatorOutcome, number>
 
-/** What a pass needs: the panel's actions, the two GitHub writes of a scope, the drafter and the release mode. */
+/**
+ * What a pass needs: the panel's actions, the two GitHub writes of a scope, the drafter and the release mode, and
+ * the unblocker. Without an unblocker every escalation stays with a person, and no builder question is looked at.
+ */
 export type CoordinatorDeps = ApplyDeps &
   DraftDeps &
   Pick<ReleaseFactsDeps, 'releaseMode'> &
-  Pick<FactsDeps, 'ciChecks'> & { now?: () => Date }
+  Pick<FactsDeps, 'ciChecks'> & { now?: () => Date; unblocker?: Unblocker }
+
+/** The builder questions nobody answered in time, which only the unblocker looks at. */
+async function questionsOf(deps: CoordinatorDeps): Promise<TaskException[]> {
+  if (!deps.unblocker) return []
+  const now = deps.now?.() ?? new Date()
+  return (await readOpenQuestions(deps.db))
+    .map((open) => recogniseQuestion(open, now))
+    .filter((e): e is TaskException => e !== undefined)
+}
 
 /** The exceptions of the tasks, then the release of each repository the train does not hold. */
 async function exceptionsOf(deps: CoordinatorDeps): Promise<TaskException[]> {
-  const ofTasks = (await readExceptionFacts(deps)).flatMap(recognise)
+  const ofTasks = [
+    ...(await readExceptionFacts(deps)).flatMap(recognise),
+    ...(await questionsOf(deps)),
+  ]
   const ofReleases = (await readReleaseFacts(deps)).map(recogniseRelease)
   const ofQueues = (await readQueueFacts(deps)).map(recogniseQueue)
   // The queue first: a task that failed on the test must find its fix already moved when its turn comes.
@@ -49,8 +67,9 @@ async function repositoriesOf(db: Database, exceptions: TaskException[]) {
 
 /**
  * One pass of the coordinator: it reads the facts, recognises the exceptions (a repository's release
- * included), decides one action for each one not yet decided on its head, has a model draft the text of a
- * `scope` (`draft.ts`, in `trial` too), and applies it (`apply.ts`). A repository whose release mode is
+ * included), decides one action for each one not yet decided on its head, hands an escalation of a task to the
+ * unblocker (`unblock.ts`, in `trial` too), has a model draft the text of a `scope` (`draft.ts`, in `trial` too),
+ * and applies it (`apply.ts`). A repository whose release mode is
  * `trial` gets its release decided and recorded as in `trial`, whatever the coordinator's mode. An action
  * decided in this pass counts for the next exception of the same task, so the limit of applied actions holds
  * within a pass too.
@@ -86,7 +105,8 @@ export async function coordinate(
     const applying = exception.trialOnly ? 'trial' : mode
     if (seen(exception, forTask, applying)) continue
     const now = deps.now?.() ?? new Date()
-    const decision = await draftScope(deps, exception, decide(exception, forTask, now))
+    const decided = await unblock(deps, exception, decide(exception, forTask, now), forTask)
+    const decision = await draftScope(deps, exception, decided)
     const outcome = await applyDecision(deps, exception, decision, applying)
     forTask.push({
       exceptionKind: exception.kind,
@@ -94,6 +114,7 @@ export async function coordinate(
       action: decision.action,
       outcome,
       at: now,
+      unblocker: decision.unblocker !== undefined,
     })
     result[outcome] += 1
     if (decision.action === 'prioritise' && outcome === 'applied') {

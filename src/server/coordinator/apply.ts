@@ -24,6 +24,7 @@ import { HOLD_LOCK, moveAhead } from './queue-apply'
 import { readHeldTests } from './queue-facts'
 import { COORDINATOR_ACTOR } from './release-train'
 import { followUpIssue, qualityConfigurationNamed, scopeSection, type ScopeDraft } from './scope'
+import { applyUnblocker, UNBLOCKER_ONLY, type UnblockerApplyDeps } from './unblocker-apply'
 
 /**
  * The only module of the coordinator with side effects. It applies a decision through the panel's own
@@ -33,12 +34,13 @@ import { followUpIssue, qualityConfigurationNamed, scopeSection, type ScopeDraft
  * task. It merges nothing itself: a release goes through `release()` and every refusal of it.
  */
 
-export type ApplyDeps = ActionDeps & {
-  issues: Pick<IssuesApi, 'createIssue' | 'updateIssueBody' | 'ensureLabel'>
-  readIssue: ReadIssue
-  /** The clock a decision is recorded at, which is what the age of a `wait` is measured against. */
-  now?: () => Date
-}
+export type ApplyDeps = ActionDeps &
+  Pick<UnblockerApplyDeps, 'checkReruns' | 'answerInTransaction'> & {
+    issues: Pick<IssuesApi, 'createIssue' | 'updateIssueBody' | 'ensureLabel'>
+    readIssue: ReadIssue
+    /** The clock a decision is recorded at, which is what the age of a `wait` is measured against. */
+    now?: () => Date
+  }
 
 /** The labels of the fix of a red base: the factory builds it, and its queue takes it first. */
 const BASE_FIX_LABELS = [
@@ -138,6 +140,8 @@ async function perform(
     })
   } else if (decision.action === 'fix_base' && decision.base) {
     return { done: await fixBase(deps, decision.base) }
+  } else if (UNBLOCKER_ONLY.includes(decision.action)) {
+    return { done: await applyUnblocker(deps, exception, decision) }
   } else {
     throw new Error(`the coordinator has no way to apply ${decision.action}`)
   }
@@ -208,6 +212,9 @@ async function carryOut(
   if (decision.failure !== undefined) {
     return notCarried(exception, decision, 'failed', decision.failure)
   }
+  if (decision.refusal !== undefined) {
+    return notCarried(exception, decision, 'refused', decision.refusal)
+  }
   if (decision.action === 'escalate') return { outcome: 'escalated', reason: decision.reason }
   if (decision.action === 'wait') return { outcome: 'deferred', reason: decision.reason }
   const refusal = forbidden(decision)
@@ -224,8 +231,20 @@ async function carryOut(
   }
 }
 
-/** What the row keeps of the model's work: the draft with the follow-up it filed, or the unread answer. */
+/**
+ * What the row keeps of the model's work: the draft with the follow-up it filed, or the unread answer, and what the
+ * unblocker picked, marked so its own limit counts the row (`readRecordedActions`).
+ */
 function recordedDraft(decision: Decision, carried: Carried) {
+  const drafted = draftedText(decision, carried)
+  if (!decision.unblocker) return drafted
+  return { ...(drafted ?? {}), by: UNBLOCKER_MARK, unblocker: decision.unblocker }
+}
+
+/** How a row says the unblocker decided it. */
+export const UNBLOCKER_MARK = 'unblocker'
+
+function draftedText(decision: Decision, carried: Carried) {
   if (decision.draft) {
     return carried.followUpIssue === undefined
       ? decision.draft

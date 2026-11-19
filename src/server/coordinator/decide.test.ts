@@ -222,6 +222,14 @@ describe('deciding one action for an exception', () => {
     }
   })
 
+  it("escalates a builder's question nobody answered, quoting it, for the unblocker to look at first", () => {
+    const asked = exception({ kind: 'question', head: 'question:3', evidence: 'Which package?' })
+    expect(decide(asked, [])).toEqual({
+      action: 'escalate',
+      reason: 'the builder asked a question nobody answered in 15 minutes: Which package?',
+    })
+  })
+
   it('escalates the exception after two applied actions, naming them', () => {
     expect(MAX_APPLIED).toBe(2)
     const tried = [

@@ -72,7 +72,8 @@ async function latestPlan(db: Database, taskId: number) {
   return row ? renderChangePlan(row.plan as ChangePlan) : undefined
 }
 
-async function reviewsOf(db: Database, taskId: number): Promise<ReviewRound[]> {
+/** The review rounds of a task, oldest first. */
+export async function reviewsOf(db: Database, taskId: number): Promise<ReviewRound[]> {
   const rows = await db
     .select({
       round: review.round,

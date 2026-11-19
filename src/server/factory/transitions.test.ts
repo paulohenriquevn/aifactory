@@ -57,6 +57,7 @@ describe('the transition table', () => {
       send_back_after_ci: true,
       coordinator_send_back: true,
       coordinator_merge_base: true,
+      coordinator_answer: true,
       hand_over: true,
       integrate: true,
       merged_by_person: true,
@@ -76,7 +77,7 @@ describe('the transition table', () => {
     }
     expect([...EVENTS].sort()).toEqual(Object.keys(events).sort())
     const pairs = EVENTS.flatMap((event) => TASK_STAGES.map((stage) => ({ event, stage })))
-    expect(pairs).toHaveLength(28 * 15)
+    expect(pairs).toHaveLength(29 * 15)
     for (const { event, stage } of pairs) {
       const declared = outcome({ stage }, event)
       expect(['action', 'ignored', 'refused'], `${stage} + ${event}`).toContain(declared?.kind)
@@ -376,6 +377,13 @@ describe('what the factory does on its own', () => {
       refused(
         'the coordinator merges the integration branch only into the branch of a handed-over task',
       ),
+    ])
+  })
+
+  it("lets the coordinator answer only a task that waits for the answer to its builder's question", () => {
+    expect(acting('coordinator_answer')).toEqual({ waiting: 'read_answer' })
+    expect(elsewhere('coordinator_answer')).toEqual([
+      refused('the coordinator answers only a task that waits for the answer to its question'),
     ])
   })
 

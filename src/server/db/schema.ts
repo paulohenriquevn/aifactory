@@ -803,12 +803,16 @@ export const EXCEPTION_KINDS = [
   'queue_blocked',
   'base_red',
   'base_conflict',
+  'question',
 ] as const
 
 /**
  * The closed set of actions the coordinator decides between (`coordinator/decide.ts`). `fix_base` files the
  * fix of a red integration branch as an issue of its repository; `merge_base` queues the run that merges the
- * integration branch into the task's branch with no agent; `wait` reads a fact again on the next passes.
+ * integration branch into the task's branch with no agent; `wait` reads a fact again on the next passes. The
+ * unblocker (`coordinator/unblocker.ts`) adds `answer` (the builder's open question), `rerun_checks` (the
+ * failed GitHub Actions jobs of the head), `blocked_by` (a `Blocked by` line on the issue), `retry` (from the
+ * start) and `resolve_elsewhere` (with the commit or the run that shows it).
  */
 export const COORDINATOR_ACTIONS = [
   'send_back',
@@ -821,6 +825,11 @@ export const COORDINATOR_ACTIONS = [
   'merge_base',
   'wait',
   'escalate',
+  'answer',
+  'rerun_checks',
+  'blocked_by',
+  'retry',
+  'resolve_elsewhere',
 ] as const
 
 /**

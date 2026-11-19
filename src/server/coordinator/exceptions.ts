@@ -103,6 +103,8 @@ export type TaskException = {
   conflictFiles?: string[]
   /** The integration branch that is red, for the issue that fixes it. */
   base?: RedBase
+  /** The builder's open question (`question`), which an answer of the unblocker answers. */
+  questionId?: number
 }
 
 /** An integration branch whose checks fail: where, on which commit, and how to run them when that is known. */

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 
 import type { Database } from '../db'
 import { coordinatorAction, evidence, finding, repository, stageEvent, task } from '../db/schema'
@@ -179,7 +179,7 @@ const CI_LOGS_MAX = 5
  * The checks that failed on GitHub for `sha`, each with the lines its log (or its annotations) gives, or why
  * they could not be read. The text is CI output: data for an agent to read, never a command to run.
  */
-async function ciFailuresOf(
+export async function ciFailuresOf(
   deps: FactsDeps,
   ci: NonNullable<FactsDeps['ciChecks']>,
   repo: string,
@@ -300,6 +300,8 @@ export async function readRecordedActions(
       action: coordinatorAction.action,
       outcome: coordinatorAction.outcome,
       at: coordinatorAction.at,
+      // The unblocker marks what it decided (`recordedDraft` in apply.ts), which its own limit counts.
+      unblocker: sql<boolean>`coalesce(${coordinatorAction.draft} ->> 'by' = 'unblocker', false)`,
     })
     .from(coordinatorAction)
     .where(inArray(coordinatorAction.taskId, taskIds))

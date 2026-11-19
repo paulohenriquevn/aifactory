@@ -18,3 +18,10 @@ export const assistModel = (env: NodeJS.ProcessEnv = process.env) =>
  */
 export const coordinatorModel = (env: NodeJS.ProcessEnv = process.env) =>
   env.FACTORY_COORDINATOR_MODEL || 'openrouter/openai/gpt-4.1-mini'
+
+/**
+ * The model the coordinator's unblocker investigates an escalation with (`coordinator/unblock.ts`). It is its own
+ * setting so it can be given a stronger model than the drafter; unset, it is the coordinator's model.
+ */
+export const unblockerModel = (env: NodeJS.ProcessEnv = process.env) =>
+  env.FACTORY_UNBLOCKER_MODEL || coordinatorModel(env)

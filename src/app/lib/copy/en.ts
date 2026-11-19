@@ -730,6 +730,11 @@ export const en = {
       merge_base: 'Merge the integration branch',
       wait: 'Read again on the next passes',
       escalate: 'Escalate',
+      answer: "Answer the builder's question",
+      rerun_checks: 'Re-run the failed checks',
+      blocked_by: 'Wait for the blocking issue',
+      retry: 'Start over',
+      resolve_elsewhere: 'Resolve elsewhere',
     } as Record<string, string>,
     exceptions: {
       checks_unchanged: 'Checks did not change',
@@ -750,6 +755,7 @@ export const en = {
       base_red: 'Integration branch red',
       base_conflict: 'Merge of the integration branch conflicted',
       queue_blocked: 'Fix waiting in the queue',
+      question: 'Builder question unanswered',
     } as Record<string, string>,
   },
   inbox: {

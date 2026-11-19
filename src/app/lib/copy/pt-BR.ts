@@ -969,6 +969,11 @@ export const ptBR: Copy = {
       merge_base: 'Fazer merge da branch de integração',
       wait: 'Ler de novo nas próximas passadas',
       escalate: 'Encaminhar',
+      answer: 'Responder a pergunta do agente',
+      rerun_checks: 'Rodar de novo os checks que falharam',
+      blocked_by: 'Esperar a issue que bloqueia',
+      retry: 'Recomeçar do zero',
+      resolve_elsewhere: 'Resolver em outro lugar',
     } as Record<string, string>,
     exceptions: {
       checks_unchanged: 'Os checks não mudaram',
@@ -989,6 +994,7 @@ export const ptBR: Copy = {
       base_red: 'Branch de integração quebrada',
       base_conflict: 'Merge da branch de integração com conflito',
       queue_blocked: 'Correção esperando na fila',
+      question: 'Pergunta do agente sem resposta',
     } as Record<string, string>,
   },
   inbox: {
