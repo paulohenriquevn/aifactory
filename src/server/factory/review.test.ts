@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { forbiddenPathsRule, FORBIDDEN_PATHS } from './harness'
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
 import {
   blockingCount,
@@ -609,5 +610,75 @@ describe('the rounds a review gets', () => {
       ' (the review is not converging; blocking findings per round: 5, 6, 7)',
     )
     expect(roundsNote(6, [9, 8, 7, 6, 5, 4])).toContain('still converging')
+  })
+})
+
+describe('paths the builder may not touch', () => {
+  it('are in the review prompt, from the same constant the builder reads', () => {
+    const prompt = reviewPrompt({
+      repo: 'o/r',
+      issueNumber: 3,
+      title: 'T',
+      body: 'B',
+      branch: 'factory/3',
+      baseSha: 'abc',
+    })
+    for (const p of FORBIDDEN_PATHS) {
+      expect(prompt).toContain(p)
+      expect(forbiddenPathsRule()).toContain(`Do not edit anything under ${p}.`)
+    }
+  })
+
+  it('records a finding on .github as minor, and it alone does not ask for changes', () => {
+    const result = parseVerdict(
+      answer({
+        verdict: 'changes',
+        summary: 's',
+        findings: [
+          { severity: 'major', file: './.github/workflows/ci.yml', issue: 'wire the gate' },
+        ],
+      }),
+    )
+    expect(result.findings[0]?.severity).toBe('minor')
+    expect(result.verdict).toBe('approve')
+  })
+
+  it('keeps changes when another finding blocks', () => {
+    const result = parseVerdict(
+      answer({
+        verdict: 'changes',
+        summary: 's',
+        findings: [
+          { severity: 'major', file: '.github/ci.yml', issue: 'a' },
+          { severity: 'major', file: 'src/a.ts', issue: 'b' },
+        ],
+      }),
+    )
+    expect(result.verdict).toBe('changes')
+    expect(result.findings.map((f) => f.severity)).toEqual(['minor', 'major'])
+  })
+
+  it('treats a finding already minor on .github as follow-up too', () => {
+    const result = parseVerdict(
+      answer({
+        verdict: 'changes',
+        summary: 's',
+        findings: [{ severity: 'minor', file: '.github/ci.yml', issue: 'wire the gate' }],
+      }),
+    )
+    expect(result.verdict).toBe('approve')
+  })
+
+  it('leaves the verdict alone when asked not to downgrade (a claim that the issue is resolved)', () => {
+    const result = parseVerdict(
+      answer({
+        verdict: 'changes',
+        summary: 's',
+        findings: [{ severity: 'major', file: '.github/ci.yml', issue: 'missing' }],
+      }),
+      { followUpPaths: false },
+    )
+    expect(result.verdict).toBe('changes')
+    expect(result.findings[0]?.severity).toBe('major')
   })
 })

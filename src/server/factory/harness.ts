@@ -5,6 +5,20 @@ import { streams, type EgressRule, type ExecuteResult } from './sandbox'
 import type { CheckSpec } from './evidence'
 import type { AgentEvent } from './transcript'
 
+/** What the builder may not touch. The review prompt reads the same list, so the two cannot drift apart. */
+export const FORBIDDEN_PATHS = ['.github/']
+
+/** Is the file under a path the builder may not touch? */
+export function isForbiddenPath(file: string): boolean {
+  const clean = file.replace(/^(\.\/)+/, '')
+  return FORBIDDEN_PATHS.some((p) => clean.startsWith(p))
+}
+
+/** The builder's rule for those paths. */
+export function forbiddenPathsRule(): string {
+  return FORBIDDEN_PATHS.map((p) => `- Do not edit anything under ${p}.`).join('\n')
+}
+
 export type HarnessInput = {
   prompt: string
   /** Directory of the checked-out repository inside the sandbox. */
@@ -175,7 +189,7 @@ Rules:
 - Add or update tests for the behavior you change, and run the project's tests until they pass.
 - Keep the change small and limited to what the issue asks.
 - Do not run git commit, git push or any other git command that writes. The factory commits and pushes.
-- Do not edit anything under .github/.
+${forbiddenPathsRule()}
 ${checksRule(input.checks)}${
     input.askQuestions === false
       ? '- Nobody is there to answer a question, so do not ask one. When a decision is missing, choose the most reasonable option, say in your final message what you assumed, and go on.'

@@ -1341,8 +1341,9 @@ export class Run {
     // The reviewer reads and does not write. If it wrote anyway, none of it counts.
     await must(this.backend, `git -C ${this.repoDir} reset --hard ${this.baseSha}`)
     await must(this.backend, `git -C ${this.repoDir} clean -fd`)
+    // A claim that the issue is resolved: work missing under .github/ is still missing, so no downgrade.
     const read: ReviewVerdict = result.ok
-      ? parseVerdict(result.summary)
+      ? parseVerdict(result.summary, { followUpPaths: false })
       : { verdict: 'invalid', summary: `the reviewer failed: ${result.summary}`, findings: [] }
     await deps.db.insert(reviewTable).values({
       taskId,

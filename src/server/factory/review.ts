@@ -1,6 +1,6 @@
 import { knowledgeRules } from '../knowledge/prompt'
 import type { CheckSpec } from './evidence'
-import { checksRule } from './harness'
+import { checksRule, forbiddenPathsRule, FORBIDDEN_PATHS, isForbiddenPath } from './harness'
 import type { RequiredByCheck } from './required-files'
 
 export type Severity = 'blocker' | 'major' | 'minor'
@@ -83,7 +83,8 @@ Review the work:
 - Read the change with \`git diff ${input.baseSha}...HEAD\` and the files it touches.
 - Decide whether it does what the issue asks, no more and no less.
 - Check that the tests test the behavior: not weakened, skipped, deleted or made to pass by changing the test command.
-- Look for bugs, missed edge cases, unrelated changes, secrets, and anything under .github/.
+- Look for bugs, missed edge cases, unrelated changes, secrets, and any edit under ${FORBIDDEN_PATHS.join(', ')}.
+- The builder was told:\n${forbiddenPathsRule().replace(/^/gm, '  ')}\n  A finding that can only be resolved by a change under those paths is not blocking: give it severity "minor" and say it is follow-up work for a person.
 - You may run the project's tests. Do not edit, create or delete files, and do not run any git command that writes.
 ${
   input.knowledgeDir
@@ -270,7 +271,11 @@ export function jsonObjects(text: string): string[] {
  * word that is not one of the two, is `invalid`, and so is an approval that lists a blocker or a
  * major finding: when the reviewer contradicts itself, the factory does not pick the kinder reading.
  */
-export function parseVerdict(text: string): ReviewVerdict {
+export function parseVerdict(
+  text: string,
+  options: { followUpPaths?: boolean } = {},
+): ReviewVerdict {
+  const followUpPaths = options.followUpPaths ?? true
   for (const candidate of jsonObjects(text).reverse()) {
     let parsed: { verdict?: unknown; summary?: unknown; findings?: unknown }
     try {
@@ -287,8 +292,21 @@ export function parseVerdict(text: string): ReviewVerdict {
         issue: String(f.issue ?? '').slice(0, 600),
       }))
       .filter((f) => f.issue !== '')
+    let forbidden = 0
+    if (followUpPaths) {
+      for (const f of findings) {
+        if (f.file === undefined || !isForbiddenPath(f.file)) continue
+        forbidden++
+        if (f.severity === 'minor') continue
+        f.severity = 'minor'
+        f.issue = `follow-up for a person: ${f.issue}`
+      }
+    }
     const summary = String(parsed.summary ?? '').slice(0, 600)
     const verdict = parsed.verdict.toLowerCase()
+    if (verdict === 'changes' && forbidden > 0 && !findings.some((f) => f.severity !== 'minor')) {
+      return { verdict: 'approve', summary, findings }
+    }
     if (verdict === 'changes') return { verdict: 'changes', summary, findings }
     if (verdict === 'approve') {
       const blocking = findings.some((f) => f.severity !== 'minor')
