@@ -3,7 +3,7 @@ import { and, asc, eq, gt, isNotNull, isNull } from 'drizzle-orm'
 import type { Database } from '../db'
 import { repository, task } from '../db/schema'
 import type { GithubApp } from '../github/app'
-import type { Issue } from '../github/issues'
+import { fetchIssue, type Issue } from '../github/issues'
 import type { GithubApi } from '../github/pulls'
 
 import { errorMessage } from './error-message'
@@ -44,6 +44,7 @@ export type ReleaseBranchView = {
     id: number
     repository: string
     issueNumber: number
+    resolvedSha: string | null
   }) => Promise<string | undefined>
 }
 
@@ -144,18 +145,24 @@ export type CatchUpPage = {
   limit: number
 }
 
+/** What a catch-up tells an issue still open: no tag is known here, so it names the branch and the commit. */
+export const onReleaseBranch = (branch: string, sha: string) =>
+  `\`${branch}\` holds the commit that resolved it, \`${sha.slice(0, 7)}\`, so every release from that commit on carries the fix.`
+
 /**
  * Catches up the tasks that finished with no change before a release could move them, `limit` at a time:
  * each is compared with the head of its repository's release branch (the owner's choice, or the default
  * branch). `next` is where the following pass starts, and 0 once a pass reaches the last task, so a task
  * whose commit is not there yet is looked at again later. A released task no longer matches, so running it
- * again changes nothing. Its issue is left alone: no tag is known here to tell it the version.
+ * again changes nothing. An issue still open (a person resolved the task from the panel) is told the branch
+ * and the commit and closed, since no tag is known here; one the agent closed gets nothing.
  */
 export async function catchUpResolved(
   deps: {
     db: Database
     app: Pick<GithubApp, 'installationToken'>
-    api: Pick<GithubApi, 'contains' | 'defaultBranch'>
+    api: Pick<GithubApi, 'contains' | 'defaultBranch' | 'commentOnIssue' | 'closeIssue'>
+    fetchIssue?: typeof fetchIssue
   },
   page: CatchUpPage,
 ): Promise<ResolvedReleased & { next: number }> {
@@ -172,15 +179,27 @@ export async function catchUpResolved(
     try {
       const { token } = await deps.app.installationToken(repo)
       const branch = await releaseBranchOf(deps.api, repo, token, mine[0])
-      const view = {
+      const read = deps.fetchIssue ?? fetchIssue
+      const view: ReleaseBranchView = {
         repository: repo,
         token,
         releaseRef: branch,
         releaseBranch: branch,
+        actor: 'factory',
+        afterRelease: (row) =>
+          closeOpenIssue(
+            deps.api,
+            (n) => read(repo, n, token),
+            repo,
+            token,
+            row.issueNumber,
+            onReleaseBranch(branch, row.resolvedSha ?? ''),
+          ),
       }
-      const done = await releaseEach(deps, { ...view, actor: 'factory' }, mine)
+      const done = await releaseEach(deps, view, mine)
       result.released.push(...done.released)
       result.errors.push(...done.errors)
+      if (done.issueErrors) (result.issueErrors ??= []).push(...done.issueErrors)
     } catch (error) {
       result.errors.push(`${repo}: ${message(error)}`)
     }
@@ -203,7 +222,7 @@ export function resolvedCatchUp(limit = RESOLVED_PER_PASS) {
   return async (deps: CatchUpDeps): Promise<ResolvedReleased & { next: number }> => {
     const result = await catchUpResolved(deps, { after, limit })
     after = result.next
-    if (result.released.length > 0 || result.errors.length > 0) {
+    if (result.released.length > 0 || result.errors.length > 0 || result.issueErrors?.length) {
       console.log(JSON.stringify({ event: 'catch_up_resolved', ...result }))
     }
     return result

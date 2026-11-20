@@ -1406,6 +1406,7 @@ describe('runTask', () => {
       'harness',
       'knowledge',
       'repository_facts',
+      'install',
     ])
     expect(prepared[0].failedAt).toBeUndefined()
     expect(prepared[0].totalMs).toBeGreaterThanOrEqual(0)
@@ -1912,6 +1913,8 @@ describe('runTask review loop', () => {
     expect(builder.resumed).toHaveLength(1)
     expect(builder.resumed[0]).toContain('sess-1:')
     expect(builder.resumed[0]).toContain('max=0 is not rejected')
+    // The rework reads its whole change from where the review measured it.
+    expect(builder.resumed[0]).toMatch(/read your whole change again with `git diff \w+`/)
     expect(await stagesOf(id)).toEqual([
       'sandbox',
       'build',
@@ -2316,7 +2319,29 @@ describe('runTask review loop', () => {
     expect(prompts[0]).not.toContain('Still open?')
   })
 
-  it('hands a review rework that changes nothing to a person, with what the builder said, without reviewing the same commit again', async () => {
+  // 69 handoffs in a day were a builder that declined the review with its reasons, which no reviewer ever read (2026-11-19).
+  it('has the reviewer judge, once, the reasons of a builder that changed nothing in answer to the review', async () => {
+    const id = await seedTask()
+    const lazy: CodingHarness = {
+      ...resumableBuilder(),
+      resume: async () => ({
+        ok: true,
+        summary: 'The finding asks me to undo what the scope decision keeps.',
+        sessionId: 'sess-1',
+      }),
+    }
+    const reviewer = reviewerSaying(verdictJson('changes', [finding]), verdictJson('approve'))
+
+    const result = await runTask(deps(new FakeSandbox(changed()), { harness: lazy, reviewer }), id)
+
+    expect(result).toMatchObject({ status: 'done', sha: 'abc123def' })
+    expect(reviewer.prompts).toHaveLength(2)
+    expect(reviewer.prompts[1]).toContain(
+      'The finding asks me to undo what the scope decision keeps.',
+    )
+  })
+
+  it('hands a review rework that changes nothing to a person, with what the builder said, once the reviewer judged its reasons and still blocks', async () => {
     const id = await seedTask()
     const lazy: CodingHarness = {
       ...resumableBuilder(),
@@ -2331,7 +2356,7 @@ describe('runTask review loop', () => {
     const result = await runTask(deps(new FakeSandbox(changed()), { harness: lazy, reviewer }), id)
 
     expect(result).toMatchObject({ status: 'handoff', sha: 'abc123def' })
-    expect(await reviewsOf(id)).toHaveLength(1)
+    expect(await reviewsOf(id)).toHaveLength(2)
     expect(seen.drafts).toEqual([true])
     expect(await handoffDetail(id)).toMatchObject({
       cause: 'review_plateau',
@@ -6563,6 +6588,29 @@ describe("a project's recipe", () => {
     const after = new FakeSandbox(changed())
     await runTask(deps(after, { fetchRecipe }), await seedTask(8))
     expect(domainsOf(after)).toContain('files.example.org')
+  })
+
+  it('records the install before the builder on the build stage, with its last lines', async () => {
+    let installs = 0
+    // Only the install before the builder fails; the one the checks run passes.
+    const sandbox = new FakeSandbox(
+      changed((command) =>
+        command.endsWith('&& pnpm install') && installs++ === 0
+          ? { exitCode: 1, stderr: 'tarball missing\n' }
+          : undefined,
+      ),
+    )
+    const id = await seedTask()
+    await runTask(deps(sandbox, { fetchRecipe: async () => recipe }), id)
+    const [build] = await getDb()
+      .select()
+      .from(stageEvent)
+      .where(and(eq(stageEvent.taskId, id), eq(stageEvent.stage, 'build')))
+      .orderBy(stageEvent.id)
+      .limit(1)
+    expect(build.detail).toMatchObject({
+      install: { ok: false, seconds: expect.any(Number), tail: 'tarball missing' },
+    })
   })
 
   it("runs the recipe's install and checks when the panel sets none", async () => {

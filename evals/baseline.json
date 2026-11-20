@@ -1,6 +1,6 @@
 {
-  "commit": "a8a15d7c1c9eac5e717ff0c22156b48f793e7609",
-  "ranAt": "2026-11-19T19:50:52.670Z",
+  "commit": "ed2886380c8d9ec6671b66f2e43a6d0ac6e21283",
+  "ranAt": "2026-11-19T22:53:28.897Z",
   "setup": {
     "paulohenriquevn/aifactory-playground builder": "claude-code",
     "paulohenriquevn/aifactory-playground builderModel": "default",
@@ -53,29 +53,24 @@
       "id": "usetheokit/theokit-plugins#235",
       "passed": true,
       "reason": "approved",
-      "costUsd": 0.6912442000000001,
-      "durationMs": 446360,
+      "costUsd": 0.6373044999999999,
+      "durationMs": 470052,
       "attempts": 1,
       "reviewRounds": 1,
       "reviews": [
         {
           "verdict": "approve",
-          "summary": "This adds an on-device template-matching wake-word detector with a recorder stream handoff. The headless-Chromium e2e test uses real WAV fixtures as the microphone. It checks that 'theo' fires a wake event and starts a recording, and that the sentence fires nothing and sends no STT request, checked against the request log. I ran the wake-word, e2e and recorder tests: 21 passed. The e2e test actually runs, so it is not skipped or weakened.",
+          "summary": "The change adds an on-device enrollment-based wake-word detector in `@theokit/plugin-voice`. Its headless-Chromium e2e test uses real speech WAV fixtures and the real helper, with no stub. I ran the unit and e2e tests and all 10 passed. The e2e test checks that a held-out \"theo\" fires the wake event and puts the recorder in `recording`, and that the other sentence fires nothing, starts no recording and makes no STT request. Every changed file is in the plan, and nothing is under `.github/`. I did not run the lint, doc-coverage or `pnpm quality:doc-api` gates.",
           "findings": [
             {
               "severity": "minor",
-              "file": "packages/plugin-voice/tests/wake-word.test.ts",
-              "issue": "The plan promised tests for the detector's lifecycle: stop and release, permission failure, repeated start, and cleanup. Only the pure matcher and enrollment are unit-tested. `createWakeWordDetector` itself (`teardown`, `start` idempotence, the `NotAllowedError` and `NotFoundError` mapping) has no test with a mocked `getUserMedia`. Add some."
-            },
-            {
-              "severity": "minor",
               "file": "packages/plugin-voice/src/wake-word.ts",
-              "issue": "If `stop()` is called while `getUserMedia` is still pending, `teardown` runs with `stream` still null. When the promise resolves, `doStart` then sets `state='listening'` and leaves the microphone open. Guard against this with a generation or abort flag."
+              "issue": "`stop()` called while `fire()` is awaiting `recorder.start()` does not cancel the recording start. After a wake, `state` is `triggered` and `teardown()` has already run, so the recorder can still end up recording after the caller stopped. A `generation` check before `recorder.start()` would close this gap."
             },
             {
               "severity": "minor",
               "file": "packages/plugin-voice/tests/wake-word.e2e.test.ts",
-              "issue": "The e2e test depends on `@sparticuz/chromium` extraction into `/tmp` and takes about 20 to 30 seconds, mostly a 12-second negative-case wait. Both fixtures and the enrollment come from the same synthesizer voice, so the accuracy claim is narrow. The README says the matcher is speaker-dependent, which covers this."
+              "issue": "The fixtures are one synthetic eSpeak voice at different pitch and speed, so the e2e test cannot show speaker independence or a false-positive rate. The README already states this limit. The negative case is a single sentence."
             }
           ]
         }
@@ -85,19 +80,19 @@
       "id": "paulohenriquevn/aifactory-playground#61",
       "passed": true,
       "reason": "approved",
-      "costUsd": 0.0872088,
-      "durationMs": 54697,
+      "costUsd": 0.090259,
+      "durationMs": 40191,
       "attempts": 1,
       "reviewRounds": 1,
       "reviews": [
         {
           "verdict": "approve",
-          "summary": "`truncate` does what the issue asks. `max` is validated with a `RangeError` for 0, negatives and non-integers, and the result is capped at `max` characters with a trailing `…` when cut. The change touches only the two planned files, and the full `npm test` passes (11 tests).",
+          "summary": "`truncate` meets every 'done when' case: 'hello world' with max 5 gives 'hell…', 'hi' is unchanged, and a max of 0, a negative or a non-integer throws RangeError. The tests are meaningful, the diff touches only the two planned files, and no owner rule is broken. I ran `src/truncate.test.js` (5 pass) but not the full `npm test`.",
           "findings": [
             {
               "severity": "minor",
               "file": "src/truncate.js",
-              "issue": "`truncate` counts code points, so a cut can still split a grapheme cluster such as a ZWJ emoji or a combining mark. The builder disclosed this and the issue doesn't require more, so no action is needed."
+              "issue": "A non-string `text` is silently converted with `String()`. The issue doesn't specify this, and the builder said so. It is harmless, but it is untested."
             }
           ]
         }
@@ -107,24 +102,19 @@
       "id": "usetheokit/theokit-gateways#348",
       "passed": true,
       "reason": "approved",
-      "costUsd": 0.3544862,
-      "durationMs": 544640,
+      "costUsd": 0.4945232,
+      "durationMs": 883567,
       "attempts": 1,
       "reviewRounds": 1,
       "reviews": [
         {
           "verdict": "approve",
-          "summary": "A first connect now takes UIDNEXT and UIDVALIDITY as the baseline and dispatches nothing older. `connect()` resolves before the first drain, and drains are serialized. The cursor persists through an optional `cursorStore` and resets when UIDVALIDITY changes. All 150 gateway-email tests pass.",
+          "summary": "First connect now baselines at UIDNEXT-1, connect() no longer awaits any drain, and the cursor resets on a UIDVALIDITY change. Drains are serialized, the cursor can be persisted through an optional store, and the 153 package tests pass.",
           "findings": [
             {
               "severity": "minor",
-              "file": "packages/gateway-email/src/imap-client.ts",
-              "issue": "The IMAP range `N:*` always matches the highest UID, even when N is past it. Each idle poll can therefore re-download the full source of the newest message if it is still unseen. The client-side `uid >= fromUid` check discards the result, but the download still happens. Consider fetching without `source` first, or using a UID search before the fetch."
-            },
-            {
-              "severity": "minor",
               "file": "packages/gateway-email/src/adapter.ts",
-              "issue": "Without a `cursorStore`, a new process takes a fresh baseline and skips mail that arrived while it was down. The README documents this, but it is a trade-off the host has to accept. The cursor also moves past mail whose dispatch threw, so that mail is not retried."
+              "issue": "If a cursor save fails, the message is already flagged \\Seen and the cursor does not advance. The message is not redelivered, and it can be lost if the process restarts before a later save succeeds. This is documented and acceptable, but a host that needs at-least-once delivery has no way to ask for it."
             }
           ]
         }
@@ -132,43 +122,54 @@
     },
     {
       "id": "usetheokit/theokit-sdk#975",
-      "passed": false,
-      "reason": "no time left for another agent pass: 39 of the sandbox's 60 minutes are gone, and the checks and the review need the rest",
-      "costUsd": 0.603288,
-      "durationMs": 2356031,
-      "attempts": 3,
-      "reviewRounds": 0,
-      "reviews": []
+      "passed": true,
+      "reason": "approved",
+      "costUsd": 0.7814715000000001,
+      "durationMs": 1696502,
+      "attempts": 2,
+      "reviewRounds": 1,
+      "reviews": [
+        {
+          "verdict": "approve",
+          "summary": "The change adds an `@theokit/sdk/mcp-events` sub-entry. It sends `events/subscribe` over HTTP with protocol 2026-07-28 and verifies Standard Webhooks signatures. It answers the signed challenge before the subscribe reply returns, delivers the payload with its subscription id, and rejects a wrong signature with 401. All four sub-entry places and a changeset are present, and the `error-codes.md` edit was required by the factory's check. I read the code but did not run the tests or the build.",
+          "findings": [
+            {
+              "severity": "minor",
+              "file": "packages/sdk/src/mcp-events.ts",
+              "issue": "A delivery that arrives before `events/subscribe` returns is passed to `onEvent` with `subscriptionId: \"\"`, because the route's id is still undefined. Either hold such events until the id is known or document the gap."
+            },
+            {
+              "severity": "minor",
+              "file": "packages/sdk/tests/mcp/events.test.ts",
+              "issue": "The only server in the test is one the builder wrote, and the request shape (`events` plus `delivery{mode,url,secret}`, `result.id`) is not checked against a real events-profile server. The shape is documented as experimental, so the risk is mismatch with real servers. Also, the `HttpMcpEventsClient` created in `subscribe` is never closed, and the `notifications/initialized` step is not sent."
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "usetheokit/theokit#1685",
       "passed": true,
       "reason": "approved",
-      "costUsd": 0.1265148,
-      "durationMs": 253635,
+      "costUsd": 0.1004977,
+      "durationMs": 315653,
       "attempts": 1,
       "reviewRounds": 1,
       "reviews": [
         {
           "verdict": "approve",
-          "summary": "`mammoth` and `unpdf` are pinned to the exact versions that were already resolved (1.13.0 and 2.1.0). The lockfile importer specifiers match, with no change to resolved versions. A changelog entry went under Unreleased as the owner's rules require. I did not run the vitest file. The checkout has no installed dependencies, and the builder didn't run it either. I judged the change from the diff and the lockfile.",
-          "findings": [
-            {
-              "severity": "minor",
-              "file": "apps/theoclaw/tools/check-exact-versions.test.mjs",
-              "issue": "The plan listed targeted regression tests, but none were added. This is acceptable because the existing whole-manifest test already fails on these two entries."
-            }
-          ]
+          "summary": "mammoth and unpdf are pinned to exact versions in package.json and the lockfile importer specifiers, with resolved versions unchanged. The exact-versions test passes (28 of 28), and the changelog entry is in place.",
+          "findings": []
         }
       ]
     }
   ],
-  "spentUsd": 2.1990353959999998,
+  "spentUsd": 2.41740468,
   "summary": {
     "cases": 5,
-    "passed": 4,
-    "passRate": 0.8,
-    "meanCostUsd": 0.3725484,
-    "meanDurationMs": 731072.6
+    "passed": 5,
+    "passRate": 1,
+    "meanCostUsd": 0.42081118,
+    "meanDurationMs": 681193
   }
 }

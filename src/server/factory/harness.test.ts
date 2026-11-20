@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildPrompt } from './harness'
+import { buildPrompt, installFailureRule } from './harness'
 import {
   anthropicEgress,
   CLAUDE_CODE_VERSION,
@@ -486,5 +486,35 @@ describe('resultLine', () => {
     )
     expect(resultLine('{"result":"x"}')).toBe('{"result":"x"}')
     expect(resultLine('boom')).toBe('boom')
+  })
+})
+
+describe('installFailureRule', () => {
+  it('says nothing when the install passed or did not run', () => {
+    expect(installFailureRule(undefined)).toBe('')
+  })
+
+  it('tells the builder the install failed, with its last lines', () => {
+    const rule = installFailureRule({
+      command: 'pnpm install',
+      output: 'a\nENOTFOUND biome',
+      timedOut: false,
+    })
+    expect(rule).toContain('`pnpm install`')
+    expect(rule).toContain('failed')
+    expect(rule).toContain('ENOTFOUND biome')
+  })
+
+  it('reaches the builder prompt', () => {
+    const prompt = buildPrompt({
+      repo: 'o/r',
+      issueNumber: 1,
+      title: 't',
+      body: 'b',
+      branch: 'factory/1',
+      installFailed: { command: 'pnpm install', output: 'boom', timedOut: true },
+    })
+    expect(prompt).toContain('ran out of time')
+    expect(prompt).toContain('boom')
   })
 })

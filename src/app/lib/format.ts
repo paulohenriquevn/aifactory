@@ -103,7 +103,9 @@ export function ago(iso: string, now = Date.now(), t: Copy['time'] = en.time): s
 }
 
 /** A length of time in whole minutes, in the largest two units that say it: `45m`, `3h 10m`, `1d 4h`. */
-export function duration(minutes: number): string {
+export function duration(measured: number): string {
+  // Times are measured to the millisecond; the board counts whole minutes.
+  const minutes = Math.floor(measured)
   const days = Math.floor(minutes / 1440)
   const hours = Math.floor((minutes % 1440) / 60)
   const rest = minutes % 60
@@ -134,6 +136,8 @@ export function stageLabel(
     resolved?: boolean
     /** The pull request waits for the repository's required checks, and GitHub merges it after them. */
     waitingForChecks?: boolean
+    /** Approved and delivered, with nothing merged yet and no check GitHub merges it after. */
+    awaitingMerge?: boolean
     retryable?: Retryable
   } = {},
   t: Copy['stages'] = en.stages,
@@ -141,6 +145,7 @@ export function stageLabel(
   if (stage === 'done' && extra.resolved) return t.alreadyResolved
   if (stage === 'done' && extra.integrated) return t.integrated
   if (stage === 'done' && extra.waitingForChecks) return t.waitingForChecks
+  if (stage === 'done' && extra.awaitingMerge) return t.awaitingMerge
   if (stage === 'failed' && extra.retryable === 'quota') return t.waitingForLimit
   if (stage === 'failed' && extra.retryable === 'environment') return t.willRetry
   if (stage === 'failed' && extra.retryable === 'blocked') return t.waitingForIssue

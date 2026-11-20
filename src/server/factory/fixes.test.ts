@@ -4,32 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
-import { SandboxBackend } from '@theokit/agents/sandbox'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { LocalBackend } from '../../test/local-backend'
 import { FakeBackend } from './fake-sandbox'
 import { fixDetail, runFixes } from './fixes'
 
 const run = promisify(execFile)
-
-/** A backend that runs commands in this machine, for a test that needs real files and a real git. */
-class LocalBackend extends SandboxBackend {
-  async execute(command: string) {
-    try {
-      const { stdout, stderr } = await run('sh', ['-c', command])
-      return { stdout, stderr, exitCode: 0, timedOut: false }
-    } catch (error) {
-      const e = error as { stdout?: string; stderr?: string; code?: number }
-      return {
-        stdout: e.stdout ?? '',
-        stderr: e.stderr ?? '',
-        exitCode: e.code ?? 1,
-        timedOut: false,
-      }
-    }
-  }
-  async uploadFile() {}
-}
 
 describe('fixDetail', () => {
   const ran = { command: 'fmt', exitCode: 1, timedOut: false, output: 'bad' }

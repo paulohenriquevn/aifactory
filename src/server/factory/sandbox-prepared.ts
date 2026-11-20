@@ -8,6 +8,7 @@ export type PrepareStep =
   | 'harness'
   | 'knowledge'
   | 'repository_facts'
+  | 'install'
 
 /**
  * How long a run spent preparing its sandbox, step by step, logged once as `sandbox_prepared`. Before it the

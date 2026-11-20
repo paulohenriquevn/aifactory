@@ -59,7 +59,8 @@ issue, o commit de que partiu, as checagens que a aceitaram, o custo e a duraç�
   build e sem restart, quando:
   - a taxa de aprovação cai mais de 20 pontos percentuais. Com 5 casos, um caso vale 20 pontos, então
     um caso que deixa de passar (um modelo erra por acaso) não bloqueia, e dois bloqueiam;
-  - o custo médio por caso sobe mais de 25%.
+  - o custo médio por caso passa do dobro da baseline. Até 2026-11-19 o limite era 25%; o dono decidiu que
+    uma fábrica mais cara é melhor que uma mais lenta, e o limite ficou só para pegar um custo descontrolado.
 - **Não roda no CI do GitHub.** Lá não estão o banco, as credenciais dos agentes nem a chave do E2B, e
   levá-las para um runner do GitHub é exatamente o que a fábrica evita. A máquina do deploy já tem tudo.
 - **Teto de gasto.** Antes de começar cada caso, o runner soma o que os casos terminados custaram. Ao

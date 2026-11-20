@@ -32,6 +32,7 @@ import { baseHoldOf } from '../factory/await-ci'
 import { pendingSendBack } from '../factory/send-back'
 import { cardAgent, STEP_STAGES, type StepEvent } from './card-agent'
 import { EMPTY_QUEUE, queueViews } from './queue-view'
+import { returnedOf } from './returned'
 import {
   columnOf,
   retryableFailure,
@@ -178,6 +179,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
   const lastFailure = new Map(failures.map((f) => [f.taskId, f]))
   const byTask = new Map(activity.map((a) => [a.taskId, a]))
   const holds = await baseHolds(db, rows)
+  const returns = await returnsFromDone(db, rows)
   const queues = await queueViews(
     db,
     rows.filter((r) => r.stage === 'intake').map((r) => r.id),
@@ -211,6 +213,7 @@ async function cards(db: Database, rows: TaskRow[]): Promise<TaskCard[]> {
       integrated: r.mergedSha !== null,
       waitingForChecks: r.awaitingCiSha !== null,
       waitingOnBase: holds.get(r.id) ?? null,
+      returned: returns.get(r.id) ?? null,
       queue: r.stage === 'intake' ? (queues.get(r.id) ?? EMPTY_QUEUE) : null,
       resolved: r.resolvedSha !== null,
       retryable: again?.retryable ?? null,
@@ -285,6 +288,39 @@ async function stepEvents(db: Database, ids: number[]): Promise<Map<number, Step
     byTask.set(taskId, [...(byTask.get(taskId) ?? []), event])
   }
   return byTask
+}
+
+/**
+ * Each task that went back from `done` and has not reached it again: the first event after its last `done`, read
+ * by `returnedOf` with that `done`'s detail. A task delivered now is not read.
+ */
+async function returnsFromDone(db: Database, rows: TaskRow[]) {
+  const back = new Map<number, NonNullable<TaskCard['returned']>>()
+  const ids = rows.filter((r) => !DELIVERED.includes(r.stage)).map((r) => r.id)
+  if (ids.length === 0) return back
+  const lastDone = db
+    .select({ taskId: stageEvent.taskId, id: sql<number>`max(${stageEvent.id})`.as('done_id') })
+    .from(stageEvent)
+    .where(and(inArray(stageEvent.taskId, ids), eq(stageEvent.stage, 'done')))
+    .groupBy(stageEvent.taskId)
+    .as('last_done')
+  const leaving = await db
+    .selectDistinctOn([stageEvent.taskId], {
+      taskId: stageEvent.taskId,
+      stage: stageEvent.stage,
+      detail: stageEvent.detail,
+      at: stageEvent.at,
+      doneDetail: sql<unknown>`(select d.detail from stage_event d where d.id = ${lastDone.id})`,
+    })
+    .from(stageEvent)
+    .innerJoin(lastDone, eq(lastDone.taskId, stageEvent.taskId))
+    .where(gt(stageEvent.id, lastDone.id))
+    .orderBy(stageEvent.taskId, asc(stageEvent.id))
+  for (const event of leaving) {
+    const returned = returnedOf(event, event.doneDetail)
+    if (returned) back.set(event.taskId, returned)
+  }
+  return back
 }
 
 /** The hold a red integration branch puts on each task that waits for its checks, on its latest `done` event. */

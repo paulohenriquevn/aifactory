@@ -30,6 +30,7 @@ import {
   ActionRefused,
   approve,
   acknowledgeWatch,
+  conflictNote,
   resolveFinding,
   type FindingAction,
   releaseTask,
@@ -114,7 +115,7 @@ describe('listTasks', () => {
     const card = cards.find((c) => c.id === id)!
     expect(card).toMatchObject({
       stage: 'done',
-      column: 'review',
+      column: 'merge',
       attempts: 2,
       costUsd: 0.21,
       pullRequestUrl: 'https://github.com/paulo/app/pull/1',
@@ -124,7 +125,7 @@ describe('listTasks', () => {
       retryable: null,
     })
     expect(cards.find((c) => c.id !== id)?.column).toBe('attention')
-    expect(new Set(cards.map((c) => c.column))).toEqual(new Set(['review', 'attention']))
+    expect(new Set(cards.map((c) => c.column))).toEqual(new Set(['merge', 'attention']))
   })
 
   it('leaves a cancelled task off the board, since its issue was withdrawn and nobody has anything to do', async () => {
@@ -363,6 +364,52 @@ describe('listTasks and an integration that waits for the repository checks', ()
     })
     expect(cards.get(slow)?.waitingOnBase).toBeNull()
     expect(cards.get(stale)?.waitingOnBase).toBeNull()
+  })
+})
+
+describe('listTasks and a delivered task that went back', () => {
+  const conflict = { decision: 'request_changes', automatic: true, note: conflictNote('workspace') }
+
+  it('marks a task sent back from done with why, when and the note, until it is done again', async () => {
+    const back = await seed('intake', {}, [
+      { stage: 'done' },
+      { stage: 'intake', detail: conflict },
+    ])
+    const againDone = await seed('done', {}, [
+      { stage: 'done' },
+      { stage: 'intake', detail: conflict },
+      { stage: 'done' },
+    ])
+    const released = await seed('released', {}, [{ stage: 'done' }, { stage: 'released' }])
+    const neverDone = await seed('build', {}, [{ stage: 'intake' }, { stage: 'build' }])
+
+    const cards = new Map((await listTasks(getDb())).map((c) => [c.id, c]))
+
+    expect(cards.get(back)?.returned).toMatchObject({
+      reason: 'base_conflict',
+      note: conflict.note,
+    })
+    expect(Number.isNaN(Date.parse(cards.get(back)?.returned?.at ?? ''))).toBe(false)
+    expect(cards.get(againDone)?.returned).toBeNull()
+    expect(cards.get(released)?.returned).toBeNull()
+    expect(cards.get(neverDone)?.returned).toBeNull()
+  })
+
+  it('keeps the mark through the stages of the run that follows, and reads only its own events', async () => {
+    const working = await seed('verify', {}, [
+      { stage: 'done', detail: { integrationError: 'Pull Request has merge conflicts' } },
+      { stage: 'intake', detail: { decision: 'retry', automatic: true, note: '' } },
+      { stage: 'sandbox' },
+      { stage: 'verify' },
+    ])
+    await seed('intake', {}, [
+      { stage: 'done' },
+      { stage: 'intake', detail: { decision: 'retry' } },
+    ])
+
+    const cards = new Map((await listTasks(getDb())).map((c) => [c.id, c]))
+
+    expect(cards.get(working)?.returned).toMatchObject({ reason: 'base_conflict', note: null })
   })
 })
 
@@ -628,6 +675,16 @@ describe('the Delivered column', () => {
 
     expect(cards.filter((c) => c.column === 'review')).toEqual([])
     expect(cards.find((c) => c.id === unchanged)?.column).toBe('resolved')
+  })
+
+  it('leaves approved work that is not integrated yet to the Merge column, waiting for CI or not', async () => {
+    const waiting = await seed('done', { headSha: 'abc', awaitingCiSha: 'abc' })
+    const refused = await seed('done', { headSha: 'def' })
+
+    const cards = new Map((await listTasks(getDb())).map((c) => [c.id, c]))
+
+    expect(cards.get(waiting)?.column).toBe('merge')
+    expect(cards.get(refused)?.column).toBe('merge')
   })
 
   it('counts a task integrated and not released yet', async () => {

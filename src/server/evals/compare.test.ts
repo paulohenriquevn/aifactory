@@ -112,7 +112,24 @@ describe('compareWithBaseline', () => {
     expect(compareWithBaseline(at, before).ok).toBe(true)
     const refused = compareWithBaseline(above, before)
     expect(refused.ok).toBe(false)
-    expect(refused.reasons).toEqual(['the mean cost per case rose from US$ 0.50 to US$ 0.64'])
+    expect(refused.reasons).toEqual(['the mean cost per case rose from US$ 0.50 to US$ 1.01'])
+  })
+
+  it('accepts a run that costs more for the same pass rate, as the owner prefers cost to slowness', () => {
+    // 2026-11-19: the review-convergence change failed the gate at US$ 0.37 -> 0.58 (one case took a second
+    // review round, which that case does in about half of its runs) with the same 4 of 5 passing. The owner
+    // decided that a higher cost is better than a slower factory; only a cost out of control still refuses.
+    const pricier = before.results.map((r) => ({ ...r, costUsd: 0.5 * 1.57 }))
+
+    expect(compareWithBaseline(pricier, before).ok).toBe(true)
+  })
+
+  it('still refuses a mean cost more than twice the baseline', () => {
+    const runaway = before.results.map((r) => ({ ...r, costUsd: 0.5 * 2 + 0.01 }))
+
+    expect(compareWithBaseline(runaway, before).reasons).toEqual([
+      'the mean cost per case rose from US$ 0.50 to US$ 1.01',
+    ])
   })
 
   it('does not judge cost against a baseline that cost nothing', () => {

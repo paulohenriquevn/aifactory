@@ -21,7 +21,14 @@ import {
 import { BaseProbe, sameChecks } from '../factory/base-checks'
 import { cloneRepository } from '../factory/clone'
 import { uploadChangesetCheck } from '../factory/changeset-check'
-import { failingChecks, runChecks, type CheckResult } from '../factory/evidence'
+import {
+  failedInstall,
+  failingChecks,
+  prepareInstall,
+  runChecks,
+  type CheckResult,
+  type PreparedInstall,
+} from '../factory/evidence'
 import { FIX_COMMIT_MESSAGE, runFixes } from '../factory/fixes'
 import { diffFacts } from '../factory/diff-facts'
 import type { CheckRun, RequiredByCheck } from '../factory/required-files'
@@ -184,8 +191,12 @@ class CaseRun {
       askQuestions: false,
       knowledgeDir: this.knowledgeDir,
       checks: c.checks,
+      installFailed: failedInstall(this.installed),
     }
   }
+
+  /** The install before the builder's first pass, as `Run.installProject` keeps it. */
+  private installed: PreparedInstall | undefined
 
   /**
    * The builder's work, as `Run.build` does it: a builder that can continue a session first writes a plan
@@ -193,8 +204,15 @@ class CaseRun {
    */
   async build(): Promise<void> {
     const { builder, planner } = this.deps
+    this.installed = await prepareInstall(
+      this.backend,
+      this.repoDir,
+      this.c.checks,
+      this.limits.checkMs ?? DEFAULT_CHECK_MS,
+    )
     const apart = planner !== undefined && planner.name !== builder.name
-    const discarded = apart || builder.resume ? await this.planChange(apart ? planner : builder) : undefined
+    const discarded =
+      apart || builder.resume ? await this.planChange(apart ? planner : builder) : undefined
     const result = await this.agentCall(() => {
       if (apart && this.plan) {
         const prompt = givenPlanPrompt(this.buildInput(), this.plan, planner.name)
@@ -254,7 +272,10 @@ class CaseRun {
     kept: { sha: string; end: CaseEnd },
     failed: CheckResult[],
   ): Promise<CaseEnd> {
-    await must(this.backend, `git -C ${this.repoDir} restore --source=${kept.sha} --staged --worktree :/`)
+    await must(
+      this.backend,
+      `git -C ${this.repoDir} restore --source=${kept.sha} --staged --worktree :/`,
+    )
     if (!(await this.hasChange())) return checksFailed(failed)
     await this.commitAll(`evaluation of ${this.c.id}, ${kept.sha.slice(0, 7)} restored`)
     this.committed = (await must(this.backend, `${this.git} rev-parse HEAD`)).stdout.trim()
@@ -273,7 +294,7 @@ class CaseRun {
       findings,
       failedChecks: failed,
       checks: this.c.checks,
-      ...(reviewedSha ? { reviewedSha } : {}),
+      ...(reviewedSha ? { reviewedSha, changeBase: this.c.baseSha } : {}),
     })
     const result = await this.agentCall(() =>
       this.deps.builder.resume!(this.backend, this.sessionId!, this.agentInput(prompt)),
@@ -479,8 +500,15 @@ class CaseRun {
       const findings = [...guards, ...outside, ...read.findings]
       // The next round starts from these findings, as `Run.review` keeps them.
       this.earlier = { sha, findings }
-      // A rework that changed nothing ends the case as the factory hands it over: not reviewed again (#214).
-      if (!(await this.rework(findings, [], sha))) return handedOver
+      // A rework that changed nothing has the reviewer judge the builder's reasons on the same commit, once, as
+      // `Run.arbitrate` does; a review that still blocks ends the case as the factory hands it over.
+      if (!(await this.rework(findings, [], sha))) {
+        const judged = await this.review(sha, unplanned, required)
+        if (judged.verdict === 'approve' && blocking.length === 0) {
+          return { checksPassed: true, verdict: 'approve', blockingGuards: [] }
+        }
+        return judged.verdict === 'invalid' ? handedOver : { ...handedOver, verdict: judged.verdict }
+      }
       sha = await this.applyFixes(await this.commit())
     }
   }

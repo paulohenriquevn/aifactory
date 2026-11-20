@@ -15,6 +15,7 @@ import {
 
 import { diffFacts, reviewBase, samePatch } from './diff-facts'
 import { FakeBackend } from './fake-sandbox'
+import { changedSinceCommand } from './review'
 
 const plan = {
   files: [{ path: 'src/truncate.js', why: 'the function' }],
@@ -317,6 +318,29 @@ describe('reviewBase', () => {
       reviewBase(backend, '/w', { baseSha: 'abc', integration: 'workspace; rm -rf /' }),
     ).rejects.toThrow('not a plain branch name')
     expect(backend.commands).toEqual([])
+  })
+})
+
+describe('what a later review reads as changed since the earlier one', () => {
+  it('is the rework of the task, without what a merge of the integration branch brought in', async () => {
+    const repo = branchThatMergedAMovedBase((dir) => {
+      gitIn(dir, 'merge', '-q', '--no-edit', 'origin/workspace')
+      commit(dir, { 'src/rework.js': 'export const rework = 1\n' }, 'address feedback')
+    })
+    const backend = gitBackend(repo.dir)
+    const base = await reviewBase(backend, repo.dir, {
+      baseSha: repo.baseSha,
+      integration: 'workspace',
+    })
+    const inRepo = (command: string) =>
+      spawnSync('sh', ['-c', command], { encoding: 'utf8', cwd: repo.dir }).stdout
+
+    const since = inRepo(changedSinceCommand(repo.approved, base))
+
+    expect(since).toContain('src/rework.js')
+    expect(since).not.toContain('src/x.ts')
+    // The plain diff between the two commits holds the other task's file the merge brought in.
+    expect(inRepo(`git diff ${repo.approved} HEAD`)).toContain('src/x.ts')
   })
 })
 

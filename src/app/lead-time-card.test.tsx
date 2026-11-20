@@ -25,6 +25,7 @@ const task = (leadTime: LeadTime | null, over: Partial<TaskCard> = {}): TaskCard
   integrated: false,
   waitingForChecks: false,
   waitingOnBase: null,
+  returned: null,
   queue: null,
   resolved: false,
   retryable: null,

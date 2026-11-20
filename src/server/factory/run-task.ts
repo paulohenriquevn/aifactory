@@ -137,7 +137,7 @@ async function execute(
     })
     // A sandbox started: the provider accepts again, so a pause it caused ends for every process.
     await endPause(db)
-    prep.log()
+    // `start` logs the preparation once the install before the builder ends.
     const started = await run.start()
     return 'result' in started ? started.result : await run.loop(started.sha)
   } catch (error) {

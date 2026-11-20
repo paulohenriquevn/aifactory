@@ -18,7 +18,7 @@ export function LineAlerts({ lines, now = new Date() }: { lines: StoppedLine[]; 
       <ul className="space-y-1 text-sm font-medium text-destructive">
         {lines.map((l) => (
           <li key={l.repository} data-line-alert={l.repository}>
-            {t.lineAlert.line(
+            {(l.scope === 'fix_first' ? t.lineAlert.lineFixFirst : t.lineAlert.line)(
               l.repository,
               l.surface,
               duration((now.getTime() - Date.parse(l.since)) / 60_000),

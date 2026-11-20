@@ -15,6 +15,22 @@ import { PRE_RELEASE_BRANCH } from './branches'
 export const PROMOTION_HOLD_MS = 45 * 60_000
 
 /**
+ * The hold the factory applies: `FACTORY_PROMOTION_HOLD_MS` when set, `PROMOTION_HOLD_MS` otherwise. Zero turns
+ * it off, for an owner who integrates fast and fixes the promotion on its way to develop: the promotion's checks
+ * then start again on each new head, and develop advances less often.
+ */
+export function promotionHoldMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.FACTORY_PROMOTION_HOLD_MS
+  if (raw === undefined) return PROMOTION_HOLD_MS
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(
+      `FACTORY_PROMOTION_HOLD_MS must be a whole number of milliseconds, got ${JSON.stringify(raw)}`,
+    )
+  }
+  return Number(raw)
+}
+
+/**
  * Whether a pull request is the factory's promotion, the only one auto-merge is turned on for: from the
  * integration branch of the same repository (never a fork, never another head) into the pre-release branch.
  */
@@ -31,17 +47,22 @@ export const isFactoryPromotion = (
 export type HeldBy = { status: 'waiting' | 'merged' | 'closed'; holdUntil: Date }
 
 /** Whether a promotion still holds new integrations out: it waits, and its hold has not expired. */
-export const holdsIntegrations = (wait: HeldBy | undefined, now: Date): boolean =>
-  wait?.status === 'waiting' && now.getTime() < wait.holdUntil.getTime()
+export const holdsIntegrations = (
+  wait: HeldBy | undefined,
+  now: Date,
+  holdMs: number = promotionHoldMs(),
+): boolean => holdMs > 0 && wait?.status === 'waiting' && now.getTime() < wait.holdUntil.getTime()
 
 /**
  * The hold of a promotion pinned now: the one that still runs, so pinning a new head never extends it, or a
- * new one of `PROMOTION_HOLD_MS` once the last expired.
+ * new one of the configured hold once the last expired.
  */
-export const nextHoldUntil = (wait: HeldBy | undefined, now: Date): Date =>
-  wait && holdsIntegrations(wait, now)
-    ? wait.holdUntil
-    : new Date(now.getTime() + PROMOTION_HOLD_MS)
+export const nextHoldUntil = (
+  wait: HeldBy | undefined,
+  now: Date,
+  holdMs: number = promotionHoldMs(),
+): Date =>
+  wait && holdsIntegrations(wait, now, holdMs) ? wait.holdUntil : new Date(now.getTime() + holdMs)
 
 /** What a pass does with a waiting promotion. */
 export type PromotionStep =

@@ -141,6 +141,15 @@ export function checksRule(checks: CheckSpec[] | undefined): string {
     )}\n  Do not run them yourself: they are slow and your pass has a time limit. Run only the tests of the files you touched.\n  One exception: when your work changes what a generated, committed file is made from (a check such as \`generated-docs\` compares them), run the generator, and the build it needs, and commit the result.\n`
 }
 
+/** What the builder is told when the install the factory ran before its pass failed: what it cannot run. */
+export function installFailureRule(
+  failed: { command: string; output: string; timedOut: boolean } | undefined,
+): string {
+  if (!failed) return ''
+  const tail = failed.output.trim().split('\n').slice(-20).join('\n')
+  return `- The factory ran \`${failed.command}\` before your pass to install the project, and it ${failed.timedOut ? 'ran out of time' : 'failed'}. Dependencies may be missing, so tests, the typecheck and the linter may not run here. Its last lines:\n\`\`\`\n${tail}\n\`\`\`\n`
+}
+
 export function buildPrompt(input: {
   repo: string
   issueNumber: number
@@ -161,6 +170,8 @@ export function buildPrompt(input: {
   clarifications?: Clarification[]
   /** What the factory runs on the commit. */
   checks?: CheckSpec[]
+  /** The install the factory ran before the pass, when it failed. */
+  installFailed?: Parameters<typeof installFailureRule>[0]
 }): string {
   return `You are working on the repository ${input.repo}, on the branch ${input.branch}.
 
@@ -176,7 +187,7 @@ Rules:
 - Keep the change small and limited to what the issue asks.
 - Do not run git commit, git push or any other git command that writes. The factory commits and pushes.
 - Do not edit anything under .github/.
-${checksRule(input.checks)}${
+${checksRule(input.checks)}${installFailureRule(input.installFailed)}${
     input.askQuestions === false
       ? '- Nobody is there to answer a question, so do not ask one. When a decision is missing, choose the most reasonable option, say in your final message what you assumed, and go on.'
       : '- If you cannot go on without a decision only a person can make, do not guess. Leave the repository as it is and end your final message with a line that starts with `QUESTION:`, followed by one specific question (offer the options you see).'

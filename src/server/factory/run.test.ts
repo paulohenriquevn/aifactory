@@ -8,11 +8,17 @@ import { retryableFailure } from '../../shared/panel'
 import { GET } from '../routes/panel/codex/login'
 
 import { CREDENTIAL_RENEWAL_MS, githubEgress } from './credential-renewal'
-import { FakeSandbox } from './fake-sandbox'
+import { FakeBackend, FakeSandbox } from './fake-sandbox'
 import { codexHarness } from './harness-codex'
 import { heldFor, Run } from './run'
 import { StageFailure } from './run-support'
+import { Preparation } from './sandbox-prepared'
 import type { EgressRule } from './sandbox'
+
+vi.mock('./stages', async (original) => ({
+  ...(await original<typeof import('./stages')>()),
+  enterRunStage: async () => {},
+}))
 
 const NOW = 1_800_000_000_000
 const jwt = (claims: object) =>
@@ -221,5 +227,197 @@ describe('approved work the factory holds for its owner', () => {
 
   it('holds nothing when neither changed', () => {
     expect(heldFor([], [])).toBeUndefined()
+  })
+})
+
+describe('the install before the builder', () => {
+  class Stop extends Error {}
+  const PLAN = JSON.stringify({
+    files: [{ path: 'a.ts', why: 'x' }],
+    order: [],
+    risks: [],
+    proof: [],
+    outOfScope: [],
+  })
+
+  /**
+   * A Run with the real `start`, `planChange`, `firstPass` and `buildInput`; only the database, the transcript
+   * and the stop after the first pass are faked. The builder records what it was told and how many installs had run.
+   */
+  function starting(
+    checks: { name: string; command: string }[],
+    install: { exitCode?: number },
+    opts: { planFirst?: boolean; resuming?: object; dirtyAfterInstall?: boolean } = {},
+  ) {
+    const head = { sha: '' }
+    const backend: FakeBackend = new FakeBackend((command) => {
+      if (command.endsWith('rev-parse HEAD')) return { stdout: head.sha }
+      if (command.endsWith('status --porcelain')) {
+        const installed = backend.commands.some((c) => c.endsWith('&& pnpm install'))
+        const restored = backend.commands.some((c) => c.includes('restore --staged'))
+        return {
+          stdout: opts.dirtyAfterInstall && installed && !restored ? ' M pnpm-lock.yaml\n' : '',
+        }
+      }
+      return command.endsWith('&& pnpm install')
+        ? { ...install, stderr: 'tarball missing' }
+        : undefined
+    })
+    const calls: { how: string; installs: number; restoresBefore: number; prompt: string }[] = []
+    const installs = () => backend.commands.filter((c) => c.endsWith('&& pnpm install')).length
+    const restores = () => backend.commands.filter((c) => c.includes('restore --staged')).length
+    const answer = (how: string, prompt: string) => {
+      calls.push({ how, installs: installs(), restoresBefore: restores(), prompt })
+      return Promise.resolve({ ok: true, summary: `${PLAN}`, sessionId: 's1' })
+    }
+    const builder = {
+      name: 'fake-builder',
+      run: (_b: unknown, o: { prompt: string }) => answer('run', o.prompt),
+      resume: (_b: unknown, _s: string, o: { prompt: string }) => answer('resume', o.prompt),
+    }
+    const chain = { values: async () => {}, set: () => ({ where: async () => {} }) }
+    const db = {
+      insert: () => chain,
+      update: () => chain,
+      transaction: async () => {},
+    }
+    const run = Object.create(Run.prototype) as Record<string, unknown>
+    run.c = {
+      taskId: 1,
+      deps: { checks, sandbox: {}, db, planFirst: opts.planFirst },
+      repo: {},
+      row: { repository: 'o/r', issueNumber: 7 },
+      issue: { title: 'T', body: 'B' },
+      branch: 'factory/7',
+      state: { current: 'start' },
+      resuming: opts.resuming,
+    }
+    run.builder = builder
+    run.sandbox = { backend }
+    run.repoDir = '/work/repo'
+    run.baseSha = 'a'.repeat(40)
+    run.startedAt = Date.now()
+    run.sessionStartedAt = Date.now()
+    run.cost = 0
+    run.transcript = { sink: () => () => {}, drain: async () => {}, flush: async () => {} }
+    run.storedPlan = async () => undefined
+    run.failUnfinished = async () => {
+      throw new Stop()
+    }
+    run.keepLearned = async () => {
+      throw new Stop()
+    }
+    const start = () => (run as unknown as { start: () => Promise<unknown> }).start()
+    return { start, backend, calls, run, head }
+  }
+
+  const checks = [
+    { name: 'install', command: 'pnpm install' },
+    { name: 'test', command: 'pnpm test' },
+  ]
+
+  it('runs the install in the checkout once, before the builder is called, and not again for the session', async () => {
+    const { start, backend, calls } = starting(checks, {})
+    await expect(start()).rejects.toBeInstanceOf(Stop)
+    expect(backend.commands.filter((c) => c.includes('pnpm install'))).toEqual([
+      'cd /work/repo && pnpm install',
+    ])
+    expect(calls.map((c) => [c.how, c.installs])).toEqual([
+      ['run', 1],
+      ['resume', 1],
+    ])
+    expect(calls[0]!.prompt).not.toContain('before your pass to install')
+    // The factory's own clean is the checks' business, never the preparation's.
+    expect(backend.commands.some((c) => c.includes('git clean'))).toBe(false)
+  })
+
+  it('tells the builder a failed install, in the prompt it is called with, and goes on', async () => {
+    const { start, calls } = starting(checks, { exitCode: 1 })
+    await expect(start()).rejects.toBeInstanceOf(Stop)
+    expect(calls.map((c) => c.how)).toEqual(['run', 'resume'])
+    expect(calls[0]!.prompt).toContain('before your pass to install')
+    expect(calls[0]!.prompt).toContain('tarball missing')
+  })
+
+  it('gives the failure to a builder that is not planned first', async () => {
+    const { start, calls } = starting(checks, { exitCode: 1 }, { planFirst: false })
+    await expect(start()).rejects.toBeInstanceOf(Stop)
+    expect(calls.map((c) => c.how)).toEqual(['run'])
+    expect(calls[0]!.prompt).toContain('tarball missing')
+  })
+
+  it('does not install again a session resumed from a snapshot, whose checkout may hold uncommitted work', async () => {
+    const resuming = { sessionId: 's0', attempt: 2, body: 'q', answer: 'a', answeredBy: 'x' }
+    const { start, backend, calls } = starting(checks, { exitCode: 1 }, { resuming })
+    await expect(start()).rejects.toBeInstanceOf(Stop)
+    expect(calls.map((c) => [c.how, c.installs])).toEqual([['resume', 0]])
+    expect(calls[0]!.prompt).not.toContain('before your pass to install')
+    expect(backend.commands.some((c) => c.includes('restore') || c.includes('clean'))).toBe(false)
+  })
+
+  it('puts back what the install changed in the checkout before the builder is called', async () => {
+    const { start, backend, calls } = starting(checks, {}, { dirtyAfterInstall: true })
+    await expect(start()).rejects.toBeInstanceOf(Stop)
+    const at = (needle: string) => backend.commands.findIndex((c) => c.includes(needle))
+    expect(at('git -C /work/repo restore --staged --worktree :/')).toBeGreaterThan(
+      at('pnpm install'),
+    )
+    expect(backend.commands).toContain('git -C /work/repo clean -fdq')
+    // What git ignores, the dependencies, stays: never `clean -x` here.
+    expect(backend.commands.some((c) => c.includes('clean -fdxq'))).toBe(false)
+    expect(calls[0]!.restoresBefore).toBe(1)
+  })
+
+  it('lets the checks clean and install on their own after the preparatory install', async () => {
+    const SHA = 'a'.repeat(40)
+    const { start, backend, run, head } = starting(checks, {})
+    await expect(start()).rejects.toBeInstanceOf(Stop)
+    const r = run as Record<string, unknown>
+    r.checkRuns = async () => []
+    ;(r.c as { api: unknown }).api = { createCheckRun: async () => {} }
+    ;(r.c as { token: string }).token = 't'
+    const sentinel = backend.commands.length
+    head.sha = SHA
+    await (r as unknown as { verify: (sha: string, attempt: number) => Promise<unknown> }).verify(
+      SHA,
+      1,
+    )
+    const after = backend.commands.slice(sentinel)
+    const clean = after.findIndex((c) => c.includes('git -C /work/repo clean -fdxq'))
+    const install = after.findIndex((c) => c.endsWith('&& pnpm install'))
+    expect(clean).toBeGreaterThanOrEqual(0)
+    expect(install).toBeGreaterThan(clean)
+  })
+
+  it('times the install as the last step of the preparation and logs it before the builder runs', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const { start, run, calls } = starting(checks, {})
+    let at = 0
+    run.preparation = new Preparation(1, () => (at += 100))
+    const loggedBeforeBuilder: boolean[] = []
+    const builder = run.builder as { run: (b: unknown, o: { prompt: string }) => Promise<unknown> }
+    const inner = builder.run
+    builder.run = (b, o) => {
+      loggedBeforeBuilder.push(
+        log.mock.calls.some(([line]) => String(line).includes('sandbox_prepared')),
+      )
+      return inner(b, o)
+    }
+    await expect(start()).rejects.toBeInstanceOf(Stop)
+    const lines = log.mock.calls
+      .map(([line]) => String(line))
+      .filter((line) => line.includes('sandbox_prepared'))
+      .map((line) => JSON.parse(line))
+    log.mockRestore()
+    expect(lines).toEqual([expect.objectContaining({ taskId: 1, steps: { install: 100 } })])
+    expect(loggedBeforeBuilder).toEqual([true])
+    expect(calls.length).toBeGreaterThan(0)
+  })
+
+  it('runs nothing extra for a repository with no install check', async () => {
+    const { start, backend, calls } = starting([{ name: 'test', command: 'pnpm test' }], {})
+    await expect(start()).rejects.toBeInstanceOf(Stop)
+    expect(backend.commands.some((c) => c.includes('install'))).toBe(false)
+    expect(calls.length).toBeGreaterThan(0)
   })
 })

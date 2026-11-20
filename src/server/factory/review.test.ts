@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { diffGuards, parseNameStatus, testScriptOf } from './guards'
 import {
   blockingCount,
+  changedSinceCommand,
   notResolvedPrompt,
   parseVerdict,
   renderFindings,
@@ -119,9 +120,66 @@ describe('prompts', () => {
     expect(prompt).toContain('- **blocker** `src/a.ts`: drops the error')
     // A minor finding never blocked, so it is not carried into the next round.
     expect(prompt).not.toContain('a nicer name')
-    expect(prompt).toContain('git diff 1234567890abcdef HEAD')
+    expect(prompt).toContain(changedSinceCommand('1234567890abcdef', 'abc'))
     expect(prompt).toContain('A new blocker or major finding')
-    expect(prompt).toContain('would break code that is already in use')
+  })
+
+  const laterRound = (extra: Partial<Parameters<typeof reviewPrompt>[0]> = {}) =>
+    reviewPrompt({
+      repo: 'o/r',
+      issueNumber: 3,
+      title: 'T',
+      body: 'B',
+      branch: 'factory/3',
+      baseSha: 'abc',
+      earlier: { sha: '1234567890abcdef', findings: [{ severity: 'major', issue: 'x' }] },
+      ...extra,
+    })
+
+  it('in a later round, reads only what the task changed since, leaving out what a merge of the integration branch brought', () => {
+    const prompt = laterRound()
+    expect(prompt).toContain('`git log -p --no-merges 1234567890abcdef..HEAD ^abc`')
+    expect(prompt).not.toContain('git diff 1234567890abcdef HEAD')
+    expect(prompt).toContain('leaves out what a merge of the integration branch brought in')
+  })
+
+  it('in a later round, allows a new blocker only on code changed since, or on an instance of a class already named', () => {
+    const prompt = laterRound()
+    expect(prompt).toContain(
+      'A new blocker or major finding goes only on code the task changed since 1234567, or on another instance of a class of defect you already named',
+    )
+    expect(prompt).toContain(
+      'A concern about code that was already there, unchanged, that the change does not break is minor, not blocking',
+    )
+    expect(prompt).not.toContain('would break code that is already in use')
+  })
+
+  it('in a later round, still blocks on unchanged code the change breaks, with the evidence of what breaks', () => {
+    const prompt = laterRound()
+    expect(prompt).toContain(
+      'or on code that did not change when the change breaks it: a caller, a contract or a behaviour that worked on the review base and no longer does',
+    )
+    expect(prompt).toContain('give the evidence of what breaks')
+  })
+
+  it('in a later round, keeps a finding the builder declined blocking only by saying why its reason is wrong', () => {
+    const prompt = laterRound({ builderSummary: 'declined x: the spec says otherwise' })
+    expect(prompt).toContain(
+      'Keep it blocking only by saying, in the finding, why the reason is wrong',
+    )
+  })
+
+  it('asks the reviewer to name the class of a defect, the invariant the fix holds and every instance of it', () => {
+    const prompt = reviewPrompt({
+      repo: 'o/r',
+      issueNumber: 3,
+      title: 'T',
+      body: 'B',
+      branch: 'factory/3',
+      baseSha: 'abc',
+    })
+    expect(prompt).toContain('name its class and the invariant a fix must hold')
+    expect(prompt).toContain('list every instance of that class in the change, in this round')
   })
 
   it('tells a later round to judge the reason the builder gave for a finding it did not fix', () => {
@@ -273,8 +331,34 @@ describe('prompts', () => {
     })
 
     it('asks the builder to read its own diff since the reviewed commit before finishing', () => {
-      expect(prompt).toContain('`git diff abc1234def5678 HEAD`')
+      // The factory commits after the builder, so HEAD is still the reviewed commit while it works.
+      expect(prompt).toContain('`git diff abc1234def5678`')
+      expect(prompt).not.toContain('`git diff abc1234def5678 HEAD`')
       expect(prompt).toContain('new blockers only in what changed since abc1234')
+    })
+
+    it('asks the builder to fix the class of each finding, not only the line it quotes', () => {
+      expect(prompt).toContain('fix the class of defect it names, not only the line it quotes')
+      expect(prompt).toContain('a test for each instance')
+    })
+
+    it('asks the builder to read its whole change again for the same class before finishing', () => {
+      const withBase = reworkPrompt({
+        findings,
+        failedChecks: [],
+        reviewedSha: 'abc1234def5678',
+        changeBase: 'base000111222',
+      })
+      expect(withBase).toContain(
+        'read your whole change again with `git diff base000111222` and look for the same class',
+      )
+      expect(prompt).toContain('read your whole change again and look for the same class')
+    })
+
+    it('asks the builder to decline a finding only with a concrete reason and its evidence', () => {
+      expect(prompt).toContain(
+        'give the concrete reason and its evidence: a test, the specification, or the words of the issue',
+      )
     })
 
     it('asks to name a finding that cannot be fixed inside the issue instead of half-fixing it', () => {

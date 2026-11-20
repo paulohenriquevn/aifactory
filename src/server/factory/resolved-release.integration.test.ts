@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
 import { ingress, repository, stageEvent, task } from '../db/schema'
+import type { Issue } from '../github/issues'
 import { FakeGithub } from '../../test/fake-github'
 
 import { catchUpResolved, resolvedCatchUp } from './resolved-release'
@@ -37,6 +38,14 @@ function fakeGithub(onBranch: Record<string, string[]>) {
     },
     app: { installationToken: async () => ({ token: 't', expiresAt: new Date() }) },
     api,
+    /** Reads an issue's state from the fake, as `fetchIssue` reads it from GitHub. */
+    fetchIssue: async (repo: string, n: number): Promise<Issue> => ({
+      number: n,
+      title: '',
+      body: '',
+      labels: [],
+      state: api.repo(repo).issue(n).state,
+    }),
   }
 }
 
@@ -216,15 +225,29 @@ describe('catchUpResolved', () => {
     expect(await stageOf(broken)).toBe('done')
   })
 
-  it('releases without touching the issue: no tag is known in a catch-up', async () => {
-    const open = await resolved('paulo/app', 1, 'aaa111')
-    const gh = fakeGithub({ 'paulo/app:main': ['aaa111'] })
+  it('closes an issue a person left open, naming the release branch and the commit that resolved it', async () => {
+    const open = await resolved('paulo/app', 1, 'aaa1112222')
+    const gh = fakeGithub({ 'paulo/app:main': ['aaa1112222'] })
     gh.api.repo('paulo/app').issue(1, { state: 'open' })
 
     const result = await catchUpResolved({ db: getDb(), ...gh }, { after: 0, limit: 10 })
 
     expect(result.released).toEqual([open])
-    expect(gh.api.repo('paulo/app').issue(1).state).toBe('open')
+    expect(gh.api.repo('paulo/app').issue(1).state).toBe('closed')
+    expect(gh.api.repo('paulo/app').issue(1).comments).toEqual([
+      expect.objectContaining({
+        body: expect.stringContaining('`main` holds the commit that resolved it, `aaa1112`'),
+      }),
+    ])
+  })
+
+  it('leaves an issue the agent already closed without a comment', async () => {
+    await resolved('paulo/app', 1, 'aaa111')
+    const gh = fakeGithub({ 'paulo/app:main': ['aaa111'] })
+    gh.api.repo('paulo/app').issue(1, { state: 'closed' })
+
+    await catchUpResolved({ db: getDb(), ...gh }, { after: 0, limit: 10 })
+
     expect(gh.api.repo('paulo/app').issue(1).comments).toEqual([])
   })
 })

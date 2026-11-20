@@ -4,6 +4,8 @@ import { Link } from 'react-router'
 
 import {
   COLUMNS,
+  mergeBreakdown,
+  type MergeState,
   type AgentSeen,
   type Column as ColumnId,
   type LeadTime,
@@ -26,7 +28,7 @@ import {
   workingLine,
 } from '../lib/format'
 
-import { PriorityBadge, StageBadge } from './Badges'
+import { PriorityBadge, ReturnedBadge, StageBadge } from './Badges'
 
 /** The board's address with a task open in the side panel. */
 export const openTask = (id: number) => ({ pathname: '/work', search: `?task=${id}` })
@@ -261,6 +263,11 @@ export function Card({ task }: { task: TaskCard }) {
           {task.title}
         </div>
         {task.leadTime ? <LeadTimeLine lead={task.leadTime} /> : null}
+        {task.returned ? (
+          <div className="mt-1.5">
+            <ReturnedBadge returned={task.returned} />
+          </div>
+        ) : null}
         {task.mainRed ? (
           <div className="mt-1 text-xs font-medium text-destructive">
             {t.board.mainRedAfterRelease}
@@ -310,13 +317,33 @@ function ordered(id: ColumnId, tasks: TaskCard[]): TaskCard[] {
   return id === 'queued' ? inQueueOrder(tasks) : tasks
 }
 
-function Column({ title, tasks }: { title: string; tasks: TaskCard[] }) {
+const MERGE_STATES: MergeState[] = ['merging', 'opening_pr', 'waiting_for_checks', 'awaiting_merge']
+
+/** What the Merge column's cards wait for, counted, in one line under its title; the states with none are left out. */
+function MergeCounts({ tasks }: { tasks: TaskCard[] }) {
+  const { t } = useCopy()
+  const counts = mergeBreakdown(tasks)
+  const line = MERGE_STATES.filter((state) => counts[state] > 0)
+    .map((state) => t.board.merge[state](counts[state]))
+    .join(' · ')
+  if (line === '') return null
+  return (
+    <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">
+      {line}
+    </span>
+  )
+}
+
+function Column({ id, title, tasks }: { id: ColumnId; title: string; tasks: TaskCard[] }) {
   const { t } = useCopy()
   const head = tasks.filter((task) => topRank(task.queue) !== null).length
   return (
     <section aria-label={title} className="min-w-0">
-      <h2 className="sticky top-0 z-10 mb-2 truncate bg-background pb-1 text-sm font-semibold text-foreground">
-        {title} <span className="font-normal text-muted-foreground">{tasks.length}</span>
+      <h2 className="sticky top-0 z-10 mb-2 bg-background pb-1 text-sm font-semibold text-foreground">
+        <span className="block truncate">
+          {title} <span className="font-normal text-muted-foreground">{tasks.length}</span>
+        </span>
+        {id === 'merge' ? <MergeCounts tasks={tasks} /> : null}
       </h2>
       <div className="space-y-2">
         {tasks.map((task, i) => (
@@ -356,6 +383,7 @@ export function Board({ tasks }: { tasks: TaskCard[] }) {
         {COLUMNS.map((column) => (
           <Column
             key={column.id}
+            id={column.id}
             title={t.columns[column.id]}
             tasks={ordered(
               column.id,

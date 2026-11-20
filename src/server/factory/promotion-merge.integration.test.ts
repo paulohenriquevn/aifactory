@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { getStorageManager } from 'theokit/server/storage'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getDb, getPool, readDatabaseUrl } from '../db'
 import { storageFromUrl } from '../db/config'
@@ -358,6 +358,20 @@ describe('an integration a promotion held out', () => {
       awaitingCiSha: null,
       integrationHeld: false,
       mergedSha: integrated,
+    })
+  })
+
+  describe('with the hold turned off (FACTORY_PROMOTION_HOLD_MS=0)', () => {
+    beforeEach(() => vi.stubEnv('FACTORY_PROMOTION_HOLD_MS', '0'))
+    afterEach(() => vi.unstubAllEnvs())
+
+    it('is integrated at once, inside the hold its promotion recorded', async () => {
+      const id = await heldTask()
+
+      const pass = await pollAwaitingIntegrations(deps(new Date(NOW.getTime() + 60_000)))
+
+      expect(pass.merged).toEqual([id])
+      expect(await row(id)).toMatchObject({ awaitingCiSha: null, integrationHeld: false })
     })
   })
 

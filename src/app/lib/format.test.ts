@@ -433,3 +433,12 @@ describe('duration', () => {
     expect(duration(1440 + 4 * 60 + 30)).toBe('1d 4h')
   })
 })
+
+describe('duration', () => {
+  it('counts whole minutes, so a time measured to the millisecond never shows a fraction', () => {
+    expect(duration(5 * 60 + 9.406216666666694)).toBe('5h 9m')
+    expect(duration(3 * 60 + 5.019783333333322)).toBe('3h 5m')
+    expect(duration(59.99)).toBe('59m')
+    expect(duration(0.4)).toBe('0m')
+  })
+})

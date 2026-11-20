@@ -10,6 +10,7 @@ import { ingress, lineIncident, task } from '../db/schema'
 import { jobBackend } from '../factory/job-backend'
 import { integrationHeldUntil } from '../factory/promotion-merge'
 import { inTransactionForRun } from '../factory/resume-queue'
+import { listStoppedLines } from './incident'
 
 beforeAll(async () => {
   getStorageManager().configure(storageFromUrl(readDatabaseUrl()))
@@ -82,6 +83,14 @@ async function held(taskId: number): Promise<boolean> {
 }
 
 describe('a stopped line', () => {
+  it('tells the panel the line holds the rest of the repository back', async () => {
+    await stop(999)
+
+    const [line] = await listStoppedLines(getDb())
+
+    expect(line).toMatchObject({ repository: REPO, issueNumber: 999, scope: 'hold' })
+  })
+
   it('holds every other run of the repository and lets its fix run', async () => {
     const other = await queued()
     const fix = await queued()
@@ -180,6 +189,14 @@ describe('a stopped line whose scope is fix first', () => {
     const later = await queued()
 
     expect(await held(later.id)).toBe(false)
+  })
+
+  it('tells the panel the line holds nothing back, so the board does not say it does', async () => {
+    await stop(999)
+
+    const [line] = await listStoppedLines(getDb())
+
+    expect(line.scope).toBe('fix_first')
   })
 
   it('holds no integration of the repository', async () => {

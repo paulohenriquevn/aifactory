@@ -217,10 +217,10 @@ export function decideWaitingIntegration(input: WaitingIntegration): WaitingStep
   const runs = `${AUTOMATIC_RETRIES} automatic runs`
   if (input.pull.mergeableState === 'dirty') {
     return runsLeft
-      ? { kind: 'send_back_conflict', reason: 'the pull request conflicts with its base' }
+      ? { kind: 'send_back_conflict', reason: CONFLICTS_WITH_BASE }
       : {
           kind: 'person',
-          reason: `the pull request conflicts with its base after ${runs}`,
+          reason: `${CONFLICTS_WITH_BASE} after ${runs}`,
           stopAutoMerge: true,
           cause: 'pull_conflict',
         }
@@ -249,7 +249,7 @@ function decideOnChecks(input: WaitingIntegration, runsLeft: boolean, runs: stri
     if (!runsLeft) {
       return {
         kind: 'person',
-        reason: `the required checks still fail after ${runs}: ${blame.own.join(', ')}`,
+        reason: `${CHECKS_STILL_FAIL} ${runs}: ${blame.own.join(', ')}`,
         stopAutoMerge: true,
         reports,
         cause: 'ci_red',
@@ -270,7 +270,7 @@ function decideOnChecks(input: WaitingIntegration, runsLeft: boolean, runs: stri
     ? { kind: 'merge_base', checks: blame.fixed }
     : {
         kind: 'person',
-        reason: `the integration branch passes ${blame.fixed.join(', ')} again, and the pull request still has to merge it after ${runs}`,
+        reason: `${BASE_PASSES_AGAIN}${blame.fixed.join(', ')} again, and the pull request still has to merge it after ${runs}`,
         stopAutoMerge: true,
         cause: 'base_fixed',
       }
@@ -312,6 +312,15 @@ function blameOf(
   if (runs.length > 0) return blamedBefore ? 'fixed' : 'own'
   return blamedBefore || waitedMs <= CI_SILENCE_MS ? 'unsettled' : 'own'
 }
+
+/**
+ * How the reasons and notes this module writes start, so a reader of the record (the panel's `returned` mark)
+ * can tell them apart from the text alone, as for a handoff recorded before it carried a `cause`.
+ */
+export const CONFLICTS_WITH_BASE = 'the pull request conflicts with its base'
+export const CHECKS_STILL_FAIL = 'the required checks still fail after'
+export const BASE_PASSES_AGAIN = 'the integration branch passes '
+export const CHECKS_FEEDBACK_OPENING = "The repository's required checks failed on "
 
 const NOT_THIS_CHANGE = "so the failure was not this change's."
 
@@ -386,7 +395,7 @@ const said = (r: FailedReport) =>
  */
 export function checksFeedback(sha: string, failed: FailedReport[]): string {
   const head = [
-    `The repository's required checks failed on ${short(sha)}, so the pull request was not merged. Fix what they report:`,
+    `${CHECKS_FEEDBACK_OPENING}${short(sha)}, so the pull request was not merged. Fix what they report:`,
     ...failed.map((r) => `- ${r.name}: ${r.url}${remarks(r)}`),
   ].join('\n')
   // The reports that say something, in order; when they do not all fit, the last ones are left out (their

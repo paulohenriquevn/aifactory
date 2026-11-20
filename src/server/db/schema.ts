@@ -115,8 +115,12 @@ export const stageEvent = pgTable(
     at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
   },
   // The board reads each task's history through subqueries keyed on the task, a stage and the order of its
-  // events; without this index each one scans the whole table, and the panel's poll took 20 seconds.
-  (table) => [index('stage_event_task_stage_id').on(table.taskId, table.stage, table.id)],
+  // events; without this index each one scans the whole table, and the panel's poll took 20 seconds. Some of
+  // them look for the event just before or after another of any stage, which the second index answers.
+  (table) => [
+    index('stage_event_task_stage_id').on(table.taskId, table.stage, table.id),
+    index('stage_event_task_id_id').on(table.taskId, table.id),
+  ],
 )
 
 /**

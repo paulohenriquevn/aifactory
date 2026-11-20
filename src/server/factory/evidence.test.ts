@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { LocalBackend } from '../../test/local-backend'
 import { FakeBackend } from './fake-sandbox'
-import { failingChecks, gate, runChecks } from './evidence'
+import { failingChecks, gate, installDetail, prepareInstall, runChecks } from './evidence'
 
 const row = (name: string, sha: string, passed: boolean) => ({ name, sha, passed })
 
@@ -185,5 +191,156 @@ describe('what the checks default to and how they are timed', () => {
       open: false,
       reasons: ['no evidence for "a" at abcdef1', '"b" failed at abcdef1'],
     })
+  })
+})
+
+describe('prepareInstall', () => {
+  const dirs: string[] = []
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** A fresh clone: a tracked lockfile, and dependencies git ignores. */
+  function clone(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'preinstall-'))
+    dirs.push(dir)
+    const git = (...args: string[]) =>
+      execFileSync(
+        'git',
+        [
+          '-C',
+          dir,
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@e',
+          '-c',
+          'commit.gpgsign=false',
+          ...args,
+        ],
+        {
+          encoding: 'utf8',
+        },
+      )
+    git('init', '-q')
+    writeFileSync(join(dir, '.gitignore'), 'node_modules/\n')
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n')
+    git('add', '-A')
+    git('commit', '-qm', 'base')
+    return dir
+  }
+  const install = (command: string) => [
+    { name: 'install', command },
+    { name: 'test', command: 'true' },
+  ]
+  const CHANGES =
+    'echo resolved >> pnpm-lock.yaml && mkdir -p node_modules && touch node_modules/dep && touch generated.txt'
+
+  it('puts back what the install changed in the checkout, so the commit after it holds only the work', async () => {
+    const dir = clone()
+    const backend = new LocalBackend()
+
+    const done = await prepareInstall(backend, dir, install(CHANGES), 60_000)
+
+    expect(done?.result.passed).toBe(true)
+    expect(done?.restored).toEqual(['M pnpm-lock.yaml', '?? generated.txt'])
+    expect(readFileSync(join(dir, 'pnpm-lock.yaml'), 'utf8')).toBe('lockfileVersion: 9\n')
+    expect(existsSync(join(dir, 'generated.txt'))).toBe(false)
+    // What git ignores is what the builder needs to run the tests: it stays.
+    expect(existsSync(join(dir, 'node_modules', 'dep'))).toBe(true)
+
+    mkdirSync(join(dir, 'src'))
+    writeFileSync(join(dir, 'src', 'work.ts'), 'export {}\n')
+    const git = (...args: string[]) =>
+      execFileSync(
+        'git',
+        [
+          '-C',
+          dir,
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@e',
+          '-c',
+          'commit.gpgsign=false',
+          ...args,
+        ],
+        {
+          encoding: 'utf8',
+        },
+      )
+    git('add', '-A')
+    git('commit', '-qm', 'work')
+    expect(git('show', '--name-only', '--format=', 'HEAD').trim()).toBe('src/work.ts')
+  })
+
+  it('puts the checkout back after an install that failed too, and answers the failure', async () => {
+    const dir = clone()
+
+    const done = await prepareInstall(
+      new LocalBackend(),
+      dir,
+      install('echo resolved >> pnpm-lock.yaml; echo tarball missing >&2; exit 1'),
+      60_000,
+    )
+
+    expect(done?.result).toMatchObject({ passed: false, exitCode: 1 })
+    expect(done?.result.output).toContain('tarball missing')
+    expect(done?.restored).toEqual(['M pnpm-lock.yaml'])
+    expect(readFileSync(join(dir, 'pnpm-lock.yaml'), 'utf8')).toBe('lockfileVersion: 9\n')
+  })
+
+  it('touches nothing when the install changed nothing git tracks', async () => {
+    const backend = new FakeBackend((command) =>
+      command.includes('status --porcelain') ? { stdout: '' } : undefined,
+    )
+    const done = await prepareInstall(backend, '/w/r', install('pnpm install'), 1_000)
+    expect(done?.restored).toEqual([])
+    expect(backend.commands).toEqual(['cd /w/r && pnpm install', 'git -C /w/r status --porcelain'])
+  })
+
+  it('runs nothing for a repository with no install check', async () => {
+    const backend = new FakeBackend(() => ({}))
+    expect(await prepareInstall(backend, '/w/r', [{ name: 'test', command: 't' }], 1_000)).toBe(
+      undefined,
+    )
+    expect(backend.commands).toEqual([])
+  })
+
+  it('answers an install that could not start as a failure', async () => {
+    const backend = new FakeBackend((command) => {
+      if (command.includes('pnpm install')) throw new Error('sandbox gone')
+      return { stdout: '' }
+    })
+    const done = await prepareInstall(backend, '/w/r', install('pnpm install'), 1_000)
+    expect(done?.result).toMatchObject({ passed: false, exitCode: -1, output: 'sandbox gone' })
+  })
+})
+
+describe('installDetail', () => {
+  const result = (output: string, passed: boolean, durationMs = 61_400) => ({
+    name: 'install',
+    command: 'pnpm install',
+    exitCode: passed ? 0 : 1,
+    timedOut: false,
+    passed,
+    output,
+    durationMs,
+  })
+
+  it('records whether the install passed, its seconds and its last lines', () => {
+    const output = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n')
+    const detail = installDetail({ result: result(output, false), restored: [] })
+    expect(detail).toEqual({
+      ok: false,
+      seconds: 61,
+      tail: Array.from({ length: 15 }, (_, i) => `line ${i + 16}`).join('\n'),
+    })
+  })
+
+  it('names what it put back, when the install changed the checkout', () => {
+    expect(
+      installDetail({ result: result('ok\n', true, 400), restored: ['M pnpm-lock.yaml'] }),
+    ).toEqual({ ok: true, seconds: 0, tail: 'ok', restored: ['M pnpm-lock.yaml'] })
   })
 })

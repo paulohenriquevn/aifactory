@@ -302,6 +302,13 @@
       "when": 1795176578100,
       "tag": "0045_handoff_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1795262978100,
+      "tag": "0046_board_query_plan",
+      "breakpoints": true
     }
   ]
 }

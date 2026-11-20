@@ -45,7 +45,8 @@ export type Summary = {
 /**
  * How much worse a run may be than the baseline before it is refused (ADR 0008). A pass rate may fall by
  * one case in five, since a model answers differently from one run to the next; two cases in five is a
- * change. The mean cost may rise by a quarter.
+ * change. The mean cost may double: the owner prefers a factory that costs more to one that is slower, so only
+ * a cost out of control refuses a run.
  *
  * Two more rules, for a suite large enough to tell a change from chance. Cases that got worse are weighed
  * against cases that got better, and a run is refused when that many regressions would come by chance less
@@ -53,7 +54,7 @@ export type Summary = {
  * (a sandbox, the network, a provider's limit) says nothing about the agents and is left out of both, but a
  * run where that happened to more than one case in five measured too little and is refused.
  */
-export const THRESHOLDS = { passRateDrop: 0.2, costRise: 0.25, unmeasured: 0.2, pValue: 0.05 }
+export const THRESHOLDS = { passRateDrop: 0.2, costRise: 1, unmeasured: 0.2, pValue: 0.05 }
 
 const mean = (values: number[]) =>
   values.length === 0 ? 0 : values.reduce((sum, v) => sum + v, 0) / values.length

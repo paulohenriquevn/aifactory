@@ -8,6 +8,7 @@ import {
   isFactoryPromotion,
   nextHoldUntil,
   PROMOTION_HOLD_MS,
+  promotionHoldMs,
 } from './promotion-hold'
 
 const REPO = 'paulo/app'
@@ -124,5 +125,42 @@ describe('decidePromotionWait', () => {
 
   it('waits while the pinned head is the head', () => {
     expect(decidePromotionWait('h1', pull())).toEqual({ kind: 'wait' })
+  })
+})
+
+describe('promotionHoldMs', () => {
+  it('is PROMOTION_HOLD_MS when the environment says nothing', () => {
+    expect(promotionHoldMs({})).toBe(PROMOTION_HOLD_MS)
+  })
+
+  it('takes the milliseconds FACTORY_PROMOTION_HOLD_MS names', () => {
+    expect(promotionHoldMs({ FACTORY_PROMOTION_HOLD_MS: '600000' })).toBe(600_000)
+  })
+
+  it('takes zero, which turns the hold off', () => {
+    expect(promotionHoldMs({ FACTORY_PROMOTION_HOLD_MS: '0' })).toBe(0)
+  })
+
+  it.each(['-1', 'ten', '1.5', ''])('refuses %j, naming the variable', (value) => {
+    expect(() => promotionHoldMs({ FACTORY_PROMOTION_HOLD_MS: value })).toThrow(
+      /FACTORY_PROMOTION_HOLD_MS/,
+    )
+  })
+})
+
+describe('a hold turned off', () => {
+  // The owner's flow integrates fast and fixes the promotion on its way to develop: with the hold on, a
+  // promotion of usetheokit/theokit held 26 approved tasks out of workspace in two hours (2026-11-19), and
+  // the ones still waiting when it ended conflicted with the moved branch and went back to the queue.
+  it('holds nothing, even a promotion pinned before it was turned off', () => {
+    const wait = { status: 'waiting' as const, holdUntil: later(PROMOTION_HOLD_MS) }
+
+    expect(holdsIntegrations(wait, NOW, 0)).toBe(false)
+  })
+
+  it('starts no hold for a new pin', () => {
+    expect(
+      holdsIntegrations({ status: 'waiting', holdUntil: nextHoldUntil(undefined, NOW, 0) }, NOW, 0),
+    ).toBe(false)
   })
 })

@@ -151,6 +151,20 @@ export const ptBR: Copy = {
     mainRedAfterRelease: 'a main quebrou depois da versão',
     mainRed: 'main quebrada',
     waitingOnBase: (checks: string, branch: string) => `espera ${checks} passar em ${branch}`,
+    returned: {
+      base_conflict: 'Voltou: conflito com a base',
+      ci_red: 'Voltou: a CI falhou',
+      base_fixed: 'Voltou: trazendo a base corrigida',
+      review: 'Voltou: mudanças pedidas',
+      other: 'Voltou de Entregue',
+    },
+    returnedWhen: (label: string, when: string) => `${label} · ${when}`,
+    merge: {
+      merging: (n: number) => `${n} fazendo merge`,
+      opening_pr: (n: number) => `${n} abrindo o PR`,
+      waiting_for_checks: (n: number) => `${n} aguardando CI`,
+      awaiting_merge: (n: number) => `${n} aguardando merge`,
+    },
     queuePlace: (n: number) => `${n}ª na fila`,
     queueHeld: 'retida na fila',
     topRank: (n: number) => `${n}ª posição do top 10`,
@@ -218,6 +232,7 @@ export const ptBR: Copy = {
     alreadyResolved: 'já resolvida',
     integrated: 'integrada',
     waitingForChecks: 'esperando a CI',
+    awaitingMerge: 'aprovada, aguardando merge',
     waitingForLimit: 'esperando o limite',
     willRetry: 'vai tentar de novo',
     waitingForIssue: 'esperando outra issue',
@@ -560,6 +575,8 @@ export const ptBR: Copy = {
     region: 'Linhas paradas',
     line: (repository: string, surface: string, forHow: string) =>
       `${repository}: linha parada há ${forHow}, ${surface} está vermelha. Nada mais roda nem integra ali até ficar verde.`,
+    lineFixFirst: (repository: string, surface: string, forHow: string) =>
+      `${repository}: linha parada há ${forHow}, ${surface} está vermelha. A correção vai na frente; o resto continua rodando.`,
     fix: (issue: number, attempt: number) =>
       attempt > 1 ? `Correção #${issue}, tentativa ${attempt}` : `Correção #${issue}`,
     person: (issue: number) => `#${issue} precisa de uma pessoa`,

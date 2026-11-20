@@ -84,12 +84,13 @@ Review the work:
 - Decide whether it does what the issue asks, no more and no less.
 - Check that the tests test the behavior: not weakened, skipped, deleted or made to pass by changing the test command.
 - Look for bugs, missed edge cases, unrelated changes, secrets, and anything under .github/.
+- When you find a defect, name its class and the invariant a fix must hold (for example: every path operation is relative to a directory opened once), and list every instance of that class in the change, in this round, each with its file and line. Make that one finding, so the builder fixes the class at once instead of one instance per round.
 - You may run the project's tests. Do not edit, create or delete files, and do not run any git command that writes.
 ${
   input.knowledgeDir
     ? `- A change that breaks one of the owner's rules under ${input.knowledgeDir}/knowledge/ is a finding, at least major.\n\n${knowledgeRules(input.knowledgeDir)}\n`
     : ''
-}${input.earlier ? earlierSection(input.earlier) : ''}
+}${input.earlier ? earlierSection(input.earlier, input.baseSha) : ''}
 Finish with one JSON object on its own, and nothing after it:
 
 {"verdict":"approve"|"changes","summary":"one or two sentences","findings":[{"severity":"blocker"|"major"|"minor","file":"path or omit","issue":"what is wrong and what to do"}]}
@@ -102,26 +103,39 @@ Use "changes" when there is any blocker or major finding. Use "approve" only whe
 export type EarlierReview = { sha: string; findings: Finding[] }
 
 /**
+ * The command that shows what the task itself changed since the reviewed commit `earlier`: its own commits, with
+ * no merge commit and nothing reachable from `base`, the merge base of HEAD and the integration branch
+ * (`reviewBase`). A plain \`git diff earlier HEAD\` also holds every commit a merge of the integration branch
+ * brought in, which a later round then blames on the task.
+ */
+export function changedSinceCommand(earlier: string, base: string): string {
+  return `git log -p --no-merges ${earlier}..HEAD ^${base}`
+}
+
+/**
  * What a later round is told about the one before it. A review that reads the whole diff again every round
  * finds something new every round and never ends (the `review_plateau` handoffs), so a later round checks
- * the earlier findings first and raises a new blocker only in code that changed since, or one that would
- * break code already in use. Minor findings never blocked, so they are not carried.
+ * the earlier findings first, judges the reason the builder gave for one it declined, and raises a new blocker
+ * only in code the task changed since, on another instance of a class it already named, or on unchanged code the
+ * change breaks. Minor findings
+ * never blocked, so they are not carried.
  */
-function earlierSection(earlier: EarlierReview): string {
+function earlierSection(earlier: EarlierReview, base: string): string {
   const blocking = earlier.findings.filter((f) => f.severity !== 'minor')
   const listed = blocking.length > 0 ? renderFindings(blocking) : '(none that blocked)'
+  const short = earlier.sha.slice(0, 7)
   return `
-# Your earlier review of ${earlier.sha.slice(0, 7)}
+# Your earlier review of ${short}
 
-You asked for changes on ${earlier.sha.slice(0, 7)}. What blocked it then:
+You asked for changes on ${short}. What blocked it then:
 
 ${listed}
 
 In this round:
 - First check each of those findings at HEAD. One that is not fixed stays, unless the builder answered it (see what the builder said, when it is given): the builder may have declined it with a reason.
-- For each finding the builder declined, judge the reason, and do not repeat the finding without answering it. When the reason is that the fix is outside the issue or the plan, either say in the finding why the issue still needs it, or lower it to minor with a note for the owner. A finding the builder did not answer and did not fix stays, in the same words.
-- Read what changed since then with \`git diff ${earlier.sha} HEAD\`.
-- A new blocker or major finding goes only on code that changed since ${earlier.sha.slice(0, 7)}, or on a bug that would break code that is already in use; say which in the finding. Anything else you notice now and did not raise before is minor.
+- For each finding the builder declined, judge the reason, and do not repeat the finding without answering it. Keep it blocking only by saying, in the finding, why the reason is wrong; otherwise lower it to minor with a note for the owner. A finding the builder did not answer and did not fix stays, in the same words.
+- Read what the task changed since then with \`${changedSinceCommand(earlier.sha, base)}\`. It leaves out what a merge of the integration branch brought in: that is other work, not this task's.
+- A new blocker or major finding goes only on code the task changed since ${short}, or on another instance of a class of defect you already named, or on code that did not change when the change breaks it: a caller, a contract or a behaviour that worked on the review base and no longer does. Say which in the finding, and for a break give the evidence of what breaks. A concern about code that was already there, unchanged, that the change does not break is minor, not blocking. Anything else you notice now and did not raise before is minor.
 `
 }
 
@@ -320,15 +334,22 @@ export function notResolvedPrompt(input: {
  * reads that same diff before it finishes, proves each fix with a test, and accounts for every finding and
  * every file outside its plan in the summary the reviewer reads.
  */
-function findingsMethod(reviewedSha: string | undefined): string {
+function findingsMethod(reviewedSha: string | undefined, changeBase: string | undefined): string {
+  // The factory commits after the builder, so while it works HEAD is still the reviewed commit and its edits
+  // are in the working tree: the diff is taken against the working tree, not HEAD.
   const diff = reviewedSha
-    ? `The reviewer looks for new blockers only in what changed since ${reviewedSha.slice(0, 7)}, so before you finish read your own change with \`git diff ${reviewedSha} HEAD\``
+    ? `The reviewer looks for new blockers only in what changed since ${reviewedSha.slice(0, 7)}, so before you finish read your own change with \`git diff ${reviewedSha}\``
     : 'Before you finish, read your own change with `git diff HEAD`'
+  const whole = changeBase
+    ? `read your whole change again with \`git diff ${changeBase}\` and look for the same class`
+    : 'read your whole change again and look for the same class'
   return [
     'Work through the findings one by one:',
-    '- For a finding about behaviour (a bug, a missed case), first write a test that fails without the fix, then fix it at its cause with the smallest change that does it, and run that test.',
+    '- For each finding, fix the class of defect it names, not only the line it quotes: find every place in your change that breaks the same invariant and fix them all, with a test for each instance. For each one, first write a test that fails without the fix, then fix it at its cause with the smallest change that does it, and run that test.',
     `- ${diff} the way the reviewer will: errors swallowed, races, input not checked, cases the new code misses. Fix what you find.`,
+    `- Before you finish, ${whole} of defect in code the reviewer did not quote. A fix that brings a new instance of the class back is the most common reason a review does not end.`,
     '- A finding you cannot fix inside this issue, because it needs a release, another package or a decision only the owner can make: change nothing for it and say what is missing. Do not half-fix it.',
+    '- A finding you decline: give the concrete reason and its evidence: a test, the specification, or the words of the issue. The reviewer keeps it blocking unless it can say why that reason is wrong.',
     '- In your summary, list each finding with what you changed and the test that shows it, and give the reason for every file you changed that your plan did not name.',
   ].join('\n')
 }
@@ -340,6 +361,8 @@ export function reworkPrompt(input: {
   checks?: CheckSpec[]
   /** The commit the reviewer read, when the work comes back from a review. */
   reviewedSha?: string
+  /** Where the task's change starts, as the review measured it: the builder reads the whole change from there. */
+  changeBase?: string
 }): string {
   const parts = [
     'Your change was not accepted. Fix what follows, then finish with a short summary.',
@@ -356,7 +379,7 @@ export function reworkPrompt(input: {
     parts.push(
       'A reviewer found:',
       renderFindings(input.findings),
-      findingsMethod(input.reviewedSha),
+      findingsMethod(input.reviewedSha, input.changeBase),
     )
   }
   if (input.checks?.length) parts.push(checksRule(input.checks).trimEnd())

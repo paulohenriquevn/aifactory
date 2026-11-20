@@ -38,7 +38,11 @@ import {
   failingChecks,
   gate,
   runChecks,
+  failedInstall,
+  installDetail,
+  prepareInstall,
   type CheckResult,
+  type PreparedInstall,
   type Verdict,
 } from './evidence'
 import { FIX_COMMIT_MESSAGE, fixDetail, runFixes, type FixedRound } from './fixes'
@@ -210,6 +214,8 @@ export class Run {
   summary = ''
   /** What the builder said to the findings of the last review, kept while checks rework the same commit. */
   reviewAnswer: string | undefined
+  /** Where the last review measured the change from (`reviewBase`): a review rework reads the whole change from there. */
+  private reviewedFrom: string | undefined
   sessionId: string | undefined
   /** The knowledge base in the sandbox, kept current while the run goes; the same for every agent. */
   feed?: KnowledgeFeed
@@ -498,6 +504,7 @@ export class Run {
       const run = new Run(told, builder, reviewer, attached, spec, repoDir, baseSha, startedAt)
       run.planner = planner
       run.feed = feed
+      run.preparation = prep
       run.remoteHead = await Run.remoteHeadOf(sandbox.backend, repoDir, c.branch)
       run.usesChangesets = await Run.publishesWithChangesets(sandbox.backend, repoDir)
       // Before the builder's first pass, so it can run the check it is told to run.
@@ -914,6 +921,7 @@ export class Run {
       attempt: 1,
       ...(this.feed?.delivered ? { knowledge: this.feed.delivered } : {}),
       ...(this.planned ? { planned: true } : {}),
+      ...(this.installed ? { install: installDetail(this.installed) } : {}),
     })
     if (this.plan && this.plannedBy) {
       const prompt = givenPlanPrompt(this.buildInput(), this.plan, this.plannedBy)
@@ -938,6 +946,28 @@ export class Run {
     )
   }
 
+  /** The install the factory ran before the builder's first pass, when the repository has one. */
+  private installed: PreparedInstall | undefined
+
+  /** The preparation `open` timed; `start` adds the install to it and logs it. */
+  private preparation: Preparation | undefined
+
+  /**
+   * Installs the project before the builder's first pass, so it can run the tests it is told to run. A failure
+   * does not fail the run: the builder is told, and `verify` cleans and installs on its own. A run resumed from
+   * a snapshot is not installed again: its disk was installed before it parked, and its checkout may hold the
+   * builder's uncommitted work, which putting the checkout back after the install would throw away.
+   */
+  private async installProject(): Promise<void> {
+    if (this.c.resuming) return
+    this.installed = await prepareInstall(
+      this.backend,
+      this.repoDir,
+      this.checks,
+      this.timeouts.checkMs ?? DEFAULT_CHECK_MS,
+    )
+  }
+
   /** What the builder is told about the issue and its rules, the same for the plan and the work. */
   private buildInput(): Parameters<typeof buildPrompt>[0] {
     const { row, issue, branch, startingOver } = this.c
@@ -955,6 +985,7 @@ export class Run {
       knowledgeDir: this.feed?.dir,
       checks: this.checks,
       clarifications: this.c.clarifications,
+      installFailed: failedInstall(this.installed),
     }
   }
 
@@ -1380,7 +1411,14 @@ export class Run {
    * something (the run parks) or when a person's requested change needed no change.
    */
   async start(): Promise<{ result: RunResult } | { sha: string }> {
-    if (this.c.continuation?.mergeBase) return { sha: await this.mergeBase() }
+    const prep = this.preparation
+    if (this.c.continuation?.mergeBase) {
+      prep?.log()
+      return { sha: await this.mergeBase() }
+    }
+    await (prep ? prep.step('install', () => this.installProject()) : this.installProject())
+    // The install is the last step of the preparation, so the line is logged once it ends.
+    prep?.log()
     await this.planChange()
     this.c.state.current = 'build'
     const first = await this.firstPass()
@@ -1483,6 +1521,7 @@ export class Run {
           failedChecks: failed,
           checks: this.checks,
           ...(reviewedSha ? { reviewedSha } : {}),
+          ...(reviewedSha && this.reviewedFrom ? { changeBase: this.reviewedFrom } : {}),
         }),
       }),
     )
@@ -1606,6 +1645,7 @@ export class Run {
       baseSha: this.baseSha,
       integration: integrationBranch(this.c.repo),
     })
+    this.reviewedFrom = base
     const { guards, unplanned, required, touched } = await diffFacts(this.backend, this.repoDir, {
       baseSha: base,
       plan: this.plan,
@@ -1830,7 +1870,28 @@ export class Run {
     })
   }
 
-  /** The builder changed nothing in answer to a review and said why: a person reads both sides. */
+  /**
+   * The builder changed nothing in answer to a review and said why. The reviewer reads those reasons on the same
+   * commit, once: its earlier findings and the builder's answer are in its prompt, and it lowers a finding whose
+   * reason holds. An approval goes on like any other; a review that still blocks goes to a person, with both sides.
+   */
+  private async arbitrate(
+    sha: string,
+    attempt: number,
+    here: StoredCheck[],
+    outcome: ReviewVerdict,
+    counts: number[],
+  ): Promise<RunResult> {
+    const judged = await this.review(sha, attempt + 1)
+    if (judged.verdict === 'approve') return this.approved(sha, attempt + 1, here, judged)
+    if (judged.verdict === 'invalid') return this.disputed(sha, attempt, here, outcome, counts)
+    return this.disputed(sha, attempt + 1, here, judged, [
+      ...counts,
+      blockingCount(judged.findings),
+    ])
+  }
+
+  /** The builder changed nothing in answer to a review, and the reviewer still blocks: a person reads both sides. */
   private disputed(
     sha: string,
     attempt: number,
@@ -2016,9 +2077,8 @@ export class Run {
         reviewAllowsRework(counts.length, counts)
       if (outcome.verdict === 'changes' && mayRework) {
         const reworked = await this.rework(attempt + 1, outcome.findings, [], sha)
-        // Reviewing the same commit again would get the same verdict: the disagreement goes to a person.
         if (reworked === undefined)
-          return this.disputed(sha, attempt, checked.here, outcome, counts)
+          return this.arbitrate(sha, attempt, checked.here, outcome, counts)
         sha = reworked
         continue
       }

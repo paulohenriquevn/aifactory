@@ -45,6 +45,7 @@ const base: TaskCard = {
   integrated: false,
   waitingForChecks: false,
   waitingOnBase: null,
+  returned: null,
   queue: null,
   resolved: false,
   retryable: null,
